@@ -21,7 +21,8 @@ pub struct Pipeline {
     sc_envelope:  Vec<f32>,   // smoothed sidechain magnitude per bin
     sc_env_state: Vec<f32>,   // one-pole LP state (separate from main envelope)
     sc_complex_buf: Vec<Complex<f32>>,
-    engine: Box<dyn SpectralEngine>,
+    engine:   Box<dyn SpectralEngine>,
+    engine_r: Box<dyn SpectralEngine>,  // right-channel engine for Independent mode
     bp_threshold: Vec<f32>,
     bp_ratio:     Vec<f32>,
     bp_attack:    Vec<f32>,
@@ -48,6 +49,8 @@ impl Pipeline {
 
         let mut engine = create_engine(EngineSelection::SpectralCompressor);
         engine.reset(sample_rate, FFT_SIZE);
+        let mut engine_r = create_engine(EngineSelection::SpectralCompressor);
+        engine_r.reset(sample_rate, FFT_SIZE);
 
         Self {
             stft: StftHelper::new(num_channels, FFT_SIZE, 0),
@@ -63,6 +66,7 @@ impl Pipeline {
             channel_supp_buf: vec![0.0; NUM_BINS],
             complex_buf,
             engine,
+            engine_r,
             bp_threshold: vec![-20.0; NUM_BINS],
             bp_ratio:     vec![4.0;   NUM_BINS],
             bp_attack:    vec![10.0;  NUM_BINS],
@@ -81,6 +85,7 @@ impl Pipeline {
         self.sc_envelope  = vec![0.0f32; NUM_BINS];
         self.sc_env_state = vec![0.0f32; NUM_BINS];
         self.engine.reset(sample_rate, FFT_SIZE);
+        self.engine_r.reset(sample_rate, FFT_SIZE);
     }
 
     pub fn process(
@@ -192,6 +197,12 @@ impl Pipeline {
             self.bp_mix[k] = (mx * global_mix).clamp(0.0, 1.0);
         }
 
+        // Read stereo link mode
+        use crate::params::StereoLink;
+        let stereo_link    = params.stereo_link.value();
+        let is_independent = stereo_link == StereoLink::Independent;
+        let is_mid_side    = stereo_link == StereoLink::MidSide;
+
         // Precompute input/output linear gains for capture into STFT closure
         let input_linear  = 10.0f32.powf(input_gain_db  / 20.0);
         let output_linear = 10.0f32.powf(output_gain_db / 20.0);
@@ -200,12 +211,27 @@ impl Pipeline {
         let sc_envelope = &self.sc_envelope;
         let sidechain_arg: Option<&[f32]> = if sc_active { Some(sc_envelope) } else { None };
 
+        // M/S encode: L/R → Mid/Side (before STFT)
+        if is_mid_side {
+            const SQRT2_INV: f32 = std::f32::consts::FRAC_1_SQRT_2;
+            for mut sample_block in buffer.iter_samples() {
+                let mut ch = sample_block.iter_mut();
+                if let (Some(l), Some(r)) = (ch.next(), ch.next()) {
+                    let m = (*l + *r) * SQRT2_INV;
+                    let s = (*l - *r) * SQRT2_INV;
+                    *l = m;
+                    *r = s;
+                }
+            }
+        }
+
         // Reborrow fields as locals so the closure can capture them without
         // conflicting with the &mut self.stft borrow inside process_overlap_add.
         let fft_plan  = self.fft_plan.clone();
         let ifft_plan = self.ifft_plan.clone();
         let window         = &self.window;
         let engine            = &mut self.engine;
+        let engine_r          = &mut self.engine_r;
         let complex_buf       = &mut self.complex_buf;
         let spectrum_buf      = &mut self.spectrum_buf;
         let suppression_buf   = &mut self.suppression_buf;
@@ -227,7 +253,7 @@ impl Pipeline {
         // Combined normalization: 1 / (FFT_SIZE * 1.5) = 2 / (3 * FFT_SIZE)
         let norm = 2.0_f32 / (3.0 * FFT_SIZE as f32);
 
-        self.stft.process_overlap_add(buffer, OVERLAP, |_channel, block| {
+        self.stft.process_overlap_add(buffer, OVERLAP, |channel, block| {
             // Analysis window + input gain
             for (s, &w) in block.iter_mut().zip(window.iter()) {
                 *s *= w * input_linear;
@@ -254,7 +280,13 @@ impl Pipeline {
                 relative_mode,
             };
 
-            engine.process_bins(complex_buf, sidechain_arg, &params, sample_rate, channel_supp_buf);
+            // Select engine: Independent mode uses engine_r for channel 1
+            let active_engine: &mut Box<dyn SpectralEngine> = if is_independent && channel == 1 {
+                engine_r
+            } else {
+                engine
+            };
+            active_engine.process_bins(complex_buf, sidechain_arg, &params, sample_rate, channel_supp_buf);
             for k in 0..channel_supp_buf.len() {
                 if channel_supp_buf[k] > suppression_buf[k] { suppression_buf[k] = channel_supp_buf[k]; }
             }
@@ -266,6 +298,20 @@ impl Pipeline {
                 *s *= w * norm * output_linear;
             }
         });
+
+        // M/S decode: Mid/Side → L/R (after STFT)
+        if is_mid_side {
+            const SQRT2_INV: f32 = std::f32::consts::FRAC_1_SQRT_2;
+            for mut sample_block in buffer.iter_samples() {
+                let mut ch = sample_block.iter_mut();
+                if let (Some(m), Some(s)) = (ch.next(), ch.next()) {
+                    let l = (*m + *s) * SQRT2_INV;
+                    let r = (*m - *s) * SQRT2_INV;
+                    *m = l;
+                    *s = r;
+                }
+            }
+        }
 
         // Push latest spectra to GUI triple-buffers (allocation-free: mutate in-place then publish)
         shared.spectrum_tx.input_buffer_mut().copy_from_slice(spectrum_buf);
