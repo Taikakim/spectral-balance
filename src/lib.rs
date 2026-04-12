@@ -42,8 +42,16 @@ impl Plugin for SpectralForge {
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
+        // Layout 0: stereo with sidechain
         AudioIOLayout {
-            main_input_channels: NonZeroU32::new(2),
+            main_input_channels:  NonZeroU32::new(2),
+            main_output_channels: NonZeroU32::new(2),
+            aux_input_ports: &[new_nonzero_u32(2)],
+            ..AudioIOLayout::const_default()
+        },
+        // Layout 1: stereo without sidechain
+        AudioIOLayout {
+            main_input_channels:  NonZeroU32::new(2),
             main_output_channels: NonZeroU32::new(2),
             ..AudioIOLayout::const_default()
         },
@@ -92,12 +100,12 @@ impl Plugin for SpectralForge {
     fn process(
         &mut self,
         buffer: &mut Buffer,
-        _aux: &mut AuxiliaryBuffers,
+        aux: &mut AuxiliaryBuffers,
         _ctx: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         dsp::guard::flush_denormals();
         if let (Some(pipeline), Some(shared)) = (&mut self.pipeline, &mut self.shared) {
-            pipeline.process(buffer, shared, &self.params);
+            pipeline.process(buffer, aux, shared, &self.params);
         }
         ProcessStatus::Normal
     }

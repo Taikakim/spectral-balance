@@ -17,6 +17,10 @@ pub struct Pipeline {
     suppression_buf: Vec<f32>,
     channel_supp_buf: Vec<f32>,
     complex_buf:     Vec<Complex<f32>>,
+    sc_stft:      StftHelper,
+    sc_envelope:  Vec<f32>,   // smoothed sidechain magnitude per bin
+    sc_env_state: Vec<f32>,   // one-pole LP state (separate from main envelope)
+    sc_complex_buf: Vec<Complex<f32>>,
     engine: Box<dyn SpectralEngine>,
     bp_threshold: Vec<f32>,
     bp_ratio:     Vec<f32>,
@@ -39,13 +43,18 @@ impl Pipeline {
                 / (FFT_SIZE - 1) as f32).cos()))
             .collect();
 
-        let complex_buf = fft_plan.make_output_vec();
+        let complex_buf    = fft_plan.make_output_vec();
+        let sc_complex_buf = fft_plan.make_output_vec();
 
         let mut engine = create_engine(EngineSelection::SpectralCompressor);
         engine.reset(sample_rate, FFT_SIZE);
 
         Self {
             stft: StftHelper::new(num_channels, FFT_SIZE, 0),
+            sc_stft:      StftHelper::new(2, FFT_SIZE, 0),
+            sc_envelope:  vec![0.0f32; NUM_BINS],
+            sc_env_state: vec![0.0f32; NUM_BINS],
+            sc_complex_buf,
             fft_plan,
             ifft_plan,
             window,
@@ -67,13 +76,17 @@ impl Pipeline {
 
     pub fn reset(&mut self, sample_rate: f32, num_channels: usize) {
         self.sample_rate = sample_rate;
-        self.stft = StftHelper::new(num_channels, FFT_SIZE, 0);
+        self.stft    = StftHelper::new(num_channels, FFT_SIZE, 0);
+        self.sc_stft = StftHelper::new(2, FFT_SIZE, 0);
+        self.sc_envelope  = vec![0.0f32; NUM_BINS];
+        self.sc_env_state = vec![0.0f32; NUM_BINS];
         self.engine.reset(sample_rate, FFT_SIZE);
     }
 
     pub fn process(
         &mut self,
         buffer: &mut nih_plug::buffer::Buffer,
+        aux: &mut nih_plug::prelude::AuxiliaryBuffers,
         shared: &mut SharedState,
         params: &crate::params::SpectralForgeParams,
     ) {
@@ -95,6 +108,52 @@ impl Pipeline {
         let knee_curve:    Vec<f32> = shared.curve_rx[4].read().clone();
         let makeup_curve:  Vec<f32> = shared.curve_rx[5].read().clone();
         let mix_curve:     Vec<f32> = shared.curve_rx[6].read().clone();
+
+        // --- Sidechain processing ---
+        let sc_active = !aux.inputs.is_empty();
+        shared.sidechain_active.store(sc_active, std::sync::atomic::Ordering::Relaxed);
+
+        let sc_gain_db    = params.sc_gain.smoothed.next();
+        let sc_gain_lin   = 10.0f32.powf(sc_gain_db / 20.0);
+        let sc_attack_ms  = params.sc_attack_ms.smoothed.next();
+        let sc_release_ms = params.sc_release_ms.smoothed.next();
+
+        if sc_active {
+            for v in self.sc_envelope.iter_mut() { *v = 0.0; }
+
+            let sc_stft      = &mut self.sc_stft;
+            let sc_envelope  = &mut self.sc_envelope;
+            let sc_env_state = &mut self.sc_env_state;
+            let sc_complex   = &mut self.sc_complex_buf;
+            let sample_rate  = self.sample_rate;
+            let hop = FFT_SIZE / OVERLAP;
+
+            let fft_plan = self.fft_plan.clone();
+            let window   = &self.window;
+
+            sc_stft.process_overlap_add(&mut aux.inputs[0], OVERLAP, |_ch, block| {
+                for (s, &w) in block.iter_mut().zip(window.iter()) {
+                    *s *= w * sc_gain_lin;
+                }
+                crate::dsp::guard::sanitize(block);
+                fft_plan.process(block, sc_complex).unwrap();
+
+                for k in 0..sc_complex.len() {
+                    let mag = sc_complex[k].norm();
+                    let coeff = if mag > sc_env_state[k] {
+                        let hops_per_sec = sample_rate / hop as f32;
+                        let time_hops = sc_attack_ms.max(0.1) * 0.001 * hops_per_sec;
+                        (-1.0_f32 / time_hops).exp()
+                    } else {
+                        let hops_per_sec = sample_rate / hop as f32;
+                        let time_hops = sc_release_ms.max(1.0) * 0.001 * hops_per_sec;
+                        (-1.0_f32 / time_hops).exp()
+                    };
+                    sc_env_state[k] = coeff * sc_env_state[k] + (1.0 - coeff) * mag;
+                    if sc_env_state[k] > sc_envelope[k] { sc_envelope[k] = sc_env_state[k]; }
+                }
+            });
+        }
 
         // Map to physical units, bin by bin
         let sample_rate = self.sample_rate;
@@ -137,6 +196,10 @@ impl Pipeline {
         // Precompute input/output linear gains for capture into STFT closure
         let input_linear  = 10.0f32.powf(input_gain_db  / 20.0);
         let output_linear = 10.0f32.powf(output_gain_db / 20.0);
+
+        // Capture sc_envelope before the mutable borrow of self.stft
+        let sc_envelope = &self.sc_envelope;
+        let sidechain_arg: Option<&[f32]> = if sc_active { Some(sc_envelope) } else { None };
 
         // Reborrow fields as locals so the closure can capture them without
         // conflicting with the &mut self.stft borrow inside process_overlap_add.
@@ -192,7 +255,7 @@ impl Pipeline {
                 relative_mode,
             };
 
-            engine.process_bins(complex_buf, None, &params, sample_rate, channel_supp_buf);
+            engine.process_bins(complex_buf, sidechain_arg, &params, sample_rate, channel_supp_buf);
             for k in 0..channel_supp_buf.len() {
                 if channel_supp_buf[k] > suppression_buf[k] { suppression_buf[k] = channel_supp_buf[k]; }
             }
