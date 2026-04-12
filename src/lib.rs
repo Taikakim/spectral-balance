@@ -18,6 +18,9 @@ pub struct SpectralForge {
     gui_num_bins:       usize,
     gui_spectrum_rx:    Option<Arc<parking_lot::Mutex<triple_buffer::Output<Vec<f32>>>>>,
     gui_suppression_rx: Option<Arc<parking_lot::Mutex<triple_buffer::Output<Vec<f32>>>>>,
+    // Stored for reset()
+    num_channels: usize,
+    sample_rate:  f32,
 }
 
 impl Default for SpectralForge {
@@ -31,6 +34,8 @@ impl Default for SpectralForge {
             gui_num_bins:       0,
             gui_spectrum_rx:    None,
             gui_suppression_rx: None,
+            num_channels: 2,
+            sample_rate:  44100.0,
         }
     }
 }
@@ -81,6 +86,8 @@ impl Plugin for SpectralForge {
         let sr = buffer_config.sample_rate;
         let num_ch = audio_io_layout.main_output_channels
             .map(|c| c.get() as usize).unwrap_or(2);
+        self.num_channels = num_ch;
+        self.sample_rate  = sr;
         let num_bins = dsp::pipeline::FFT_SIZE / 2 + 1;
         self.shared   = Some(bridge::SharedState::new(num_bins, sr));
         self.pipeline = Some(dsp::pipeline::Pipeline::new(sr, num_ch));
@@ -95,7 +102,11 @@ impl Plugin for SpectralForge {
         true
     }
 
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        if let Some(pipeline) = &mut self.pipeline {
+            pipeline.reset(self.sample_rate, self.num_channels);
+        }
+    }
 
     fn process(
         &mut self,

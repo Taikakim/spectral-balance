@@ -25,7 +25,7 @@ pub fn create_editor(
             visuals.panel_fill = th::BG;
             ctx.set_visuals(visuals);
         },
-        move |ctx, _setter, _state| {
+        move |ctx, setter, _state| {
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE.fill(th::BG))
                 .show(ctx, |ui| {
@@ -60,8 +60,13 @@ pub fn create_editor(
                         egui::Stroke::new(th::STROKE_BORDER, th::BORDER),
                     );
 
-                    // Curve area
-                    let curve_rect = ui.available_rect_before_wrap();
+                    // Curve area (reserve 64px at the bottom for the control strip)
+                    let strip_height = 64.0;
+                    let avail = ui.available_rect_before_wrap();
+                    let curve_rect = egui::Rect::from_min_max(
+                        avail.min,
+                        egui::pos2(avail.max.x, (avail.max.y - strip_height).max(avail.min.y)),
+                    );
                     ui.allocate_rect(curve_rect, egui::Sense::hover());
                     let mut nodes = params.curve_nodes.lock()[active_idx];
                     let sr = sample_rate.as_ref().map(|a| a.load()).unwrap_or(44100.0);
@@ -118,6 +123,73 @@ pub fn create_editor(
                             }
                         }
                     }
+
+                    // Control strip
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(2.0);
+
+                    ui.horizontal(|ui| {
+                        use nih_plug_egui::widgets::ParamSlider;
+
+                        // Float param sliders
+                        macro_rules! knob {
+                            ($param:expr, $label:expr) => {{
+                                ui.vertical(|ui| {
+                                    ui.add(ParamSlider::for_param($param, setter).with_width(50.0));
+                                    ui.label(
+                                        egui::RichText::new($label)
+                                            .color(th::LABEL_DIM)
+                                            .size(9.0),
+                                    );
+                                });
+                            }};
+                        }
+
+                        knob!(&params.input_gain,  "IN");
+                        knob!(&params.output_gain, "OUT");
+                        ui.add_space(8.0);
+                        knob!(&params.attack_ms,  "ATK");
+                        knob!(&params.release_ms, "REL");
+                        knob!(&params.freq_scale, "FREQ");
+                        ui.add_space(8.0);
+                        knob!(&params.mix, "MIX");
+                        ui.add_space(8.0);
+                        knob!(&params.sc_gain, "SC GAIN");
+                        ui.add_space(8.0);
+
+                        // Toggle button helper (returns whether clicked)
+                        let toggle = |ui: &mut egui::Ui, val: bool, label: &str| -> bool {
+                            let (fill, text_color) = if val {
+                                (th::BTN_ACTIVE, th::BTN_TEXT_ON)
+                            } else {
+                                (th::BTN_INACTIVE, th::BTN_TEXT_OFF)
+                            };
+                            let btn = egui::Button::new(
+                                egui::RichText::new(label).color(text_color).size(9.0),
+                            )
+                            .fill(fill)
+                            .stroke(egui::Stroke::new(th::STROKE_BORDER, th::BORDER));
+                            ui.add(btn).clicked()
+                        };
+
+                        // Auto makeup toggle
+                        let auto_mk = params.auto_makeup.value();
+                        if toggle(ui, auto_mk, "AUTO MK") {
+                            setter.begin_set_parameter(&params.auto_makeup);
+                            setter.set_parameter(&params.auto_makeup, !auto_mk);
+                            setter.end_set_parameter(&params.auto_makeup);
+                        }
+                        ui.add_space(4.0);
+
+                        // Delta monitor toggle
+                        let delta = params.delta_monitor.value();
+                        if toggle(ui, delta, "DELTA") {
+                            setter.begin_set_parameter(&params.delta_monitor);
+                            setter.set_parameter(&params.delta_monitor, !delta);
+                            setter.end_set_parameter(&params.delta_monitor);
+                        }
+                    });
                 });
         },
     )
