@@ -12,6 +12,10 @@ pub struct SpectralForge {
     params:   Arc<SpectralForgeParams>,
     pipeline: Option<dsp::pipeline::Pipeline>,
     shared:   Option<bridge::SharedState>,
+    // Cloned Arc handles for the GUI — set in initialize(), before editor() is called
+    gui_curve_tx:    Vec<Arc<parking_lot::Mutex<triple_buffer::Input<Vec<f32>>>>>,
+    gui_sample_rate: Option<Arc<bridge::AtomicF32>>,
+    gui_num_bins:    usize,
 }
 
 impl Default for SpectralForge {
@@ -20,6 +24,9 @@ impl Default for SpectralForge {
             params:   Arc::new(SpectralForgeParams::default()),
             pipeline: None,
             shared:   None,
+            gui_curve_tx:    Vec::new(),
+            gui_sample_rate: None,
+            gui_num_bins:    0,
         }
     }
 }
@@ -43,7 +50,12 @@ impl Plugin for SpectralForge {
     fn params(&self) -> Arc<dyn Params> { self.params.clone() }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        editor_ui::create_editor(self.params.clone())
+        editor_ui::create_editor(
+            self.params.clone(),
+            self.gui_curve_tx.clone(),
+            self.gui_sample_rate.clone(),
+            self.gui_num_bins,
+        )
     }
 
     fn initialize(
@@ -59,6 +71,11 @@ impl Plugin for SpectralForge {
         self.shared   = Some(bridge::SharedState::new(num_bins, sr));
         self.pipeline = Some(dsp::pipeline::Pipeline::new(sr, num_ch));
         context.set_latency_samples(dsp::pipeline::FFT_SIZE as u32);
+        if let Some(ref sh) = self.shared {
+            self.gui_curve_tx    = sh.curve_tx.clone();
+            self.gui_sample_rate = Some(sh.sample_rate.clone());
+            self.gui_num_bins    = sh.num_bins;
+        }
         true
     }
 

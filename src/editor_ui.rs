@@ -1,5 +1,7 @@
 use nih_plug::prelude::*;
 use nih_plug_egui::{create_egui_editor, egui};
+use parking_lot::Mutex;
+use triple_buffer::Input as TbInput;
 use std::sync::Arc;
 use crate::params::{SpectralForgeParams, NUM_CURVE_SETS};
 use crate::editor::theme as th;
@@ -9,6 +11,9 @@ const CURVE_LABELS: [&str; NUM_CURVE_SETS] =
 
 pub fn create_editor(
     params: Arc<SpectralForgeParams>,
+    curve_tx: Vec<Arc<Mutex<TbInput<Vec<f32>>>>>,
+    sample_rate: Option<Arc<crate::bridge::AtomicF32>>,
+    num_bins: usize,
 ) -> Option<Box<dyn Editor>> {
     create_egui_editor(
         params.editor_state.clone(),
@@ -52,17 +57,36 @@ pub fn create_editor(
                         egui::Stroke::new(th::STROKE_BORDER, th::BORDER),
                     );
 
-                    // Curve area placeholder — filled in Task 12
+                    // Curve area
                     let curve_rect = ui.available_rect_before_wrap();
-                    ui.painter().rect_filled(curve_rect, 0.0, th::BG);
-                    ui.painter().text(
-                        curve_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "curve editor — coming soon",
-                        egui::FontId::monospace(12.0),
-                        th::LABEL_DIM,
-                    );
                     ui.allocate_rect(curve_rect, egui::Sense::hover());
+
+                    let active_idx = *params.active_curve.lock() as usize;
+                    let mut nodes = params.curve_nodes.lock()[active_idx];
+                    let sr = sample_rate.as_ref().map(|a| a.load()).unwrap_or(44100.0);
+
+                    // Paint response curve (using display resolution of 512 bins)
+                    let display_gains = crate::editor::curve::compute_curve_response(
+                        &nodes, 512, sr, 2048,
+                    );
+                    crate::editor::curve::paint_response_curve(ui, curve_rect, &display_gains);
+
+                    // Handle node interaction
+                    if crate::editor::curve::curve_widget(ui, curve_rect, &mut nodes) {
+                        params.curve_nodes.lock()[active_idx] = nodes;
+                        // Push full-resolution gains to audio bridge
+                        if num_bins > 0 {
+                            let full_gains = crate::editor::curve::compute_curve_response(
+                                &nodes, num_bins, sr, 2048,
+                            );
+                            if let Some(tx_arc) = curve_tx.get(active_idx) {
+                                if let Some(mut tx) = tx_arc.try_lock() {
+                                    tx.input_buffer_mut().copy_from_slice(&full_gains);
+                                    tx.publish();
+                                }
+                            }
+                        }
+                    }
                 });
         },
     )

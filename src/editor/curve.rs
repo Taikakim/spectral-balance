@@ -111,3 +111,115 @@ pub fn compute_curve_response(
     for g in &mut gains { *g = g.max(0.0); }
     gains
 }
+
+// ── GUI helpers ────────────────────────────────────────────────────────────
+
+fn x_to_screen(x: f32, rect: nih_plug_egui::egui::Rect) -> f32 {
+    rect.left() + x * rect.width()
+}
+#[allow(dead_code)]
+fn screen_to_x(px: f32, rect: nih_plug_egui::egui::Rect) -> f32 {
+    ((px - rect.left()) / rect.width()).clamp(0.0, 1.0)
+}
+fn y_to_screen(y: f32, rect: nih_plug_egui::egui::Rect) -> f32 {
+    rect.top() + (1.0 - (y + 1.0) / 2.0) * rect.height()
+}
+#[allow(dead_code)]
+fn screen_to_y(py: f32, rect: nih_plug_egui::egui::Rect) -> f32 {
+    let norm = 1.0 - (py - rect.top()) / rect.height();
+    (norm * 2.0 - 1.0).clamp(-1.0, 1.0)
+}
+
+/// Draw the 6-node EQ curve and handle drag/scroll/double-click interaction.
+/// Returns true if any node was changed.
+pub fn curve_widget(
+    ui: &mut nih_plug_egui::egui::Ui,
+    rect: nih_plug_egui::egui::Rect,
+    nodes: &mut [CurveNode; 6],
+) -> bool {
+    use nih_plug_egui::egui::{Pos2, Rect as ERect, Sense, Stroke, Vec2};
+    use crate::editor::theme as th;
+
+    let mut changed = false;
+
+    // 0 dB centre line
+    let centre_y = y_to_screen(0.0, rect);
+    ui.painter().line_segment(
+        [Pos2::new(rect.left(), centre_y), Pos2::new(rect.right(), centre_y)],
+        Stroke::new(th::STROKE_THIN, th::GRID),
+    );
+
+    for i in 0..6 {
+        let sx = x_to_screen(nodes[i].x, rect);
+        let sy = y_to_screen(nodes[i].y, rect);
+        let node_pos = Pos2::new(sx, sy);
+        let node_rect = ERect::from_center_size(node_pos, Vec2::splat(th::NODE_RADIUS * 3.0));
+        let resp = ui.interact(node_rect, ui.id().with(("node", i)), Sense::drag());
+
+        if resp.dragged() {
+            let delta = resp.drag_delta();
+            nodes[i].x = (nodes[i].x + delta.x / rect.width()).clamp(0.0, 1.0);
+            nodes[i].y = (nodes[i].y - delta.y / rect.height() * 2.0).clamp(-1.0, 1.0);
+            changed = true;
+        }
+
+        let scroll = ui.input(|inp| {
+            if node_rect.contains(inp.pointer.hover_pos().unwrap_or(Pos2::ZERO)) {
+                inp.smooth_scroll_delta.y
+            } else {
+                0.0
+            }
+        });
+        if scroll.abs() > 0.01 {
+            nodes[i].q = (nodes[i].q + scroll * 0.01).clamp(0.0, 1.0);
+            changed = true;
+        }
+
+        if resp.double_clicked() {
+            let defaults = default_nodes();
+            nodes[i] = defaults[i];
+            changed = true;
+        }
+
+        let color = if resp.hovered() { th::NODE_HOVER } else { th::NODE_FILL };
+        ui.painter().circle_filled(node_pos, th::NODE_RADIUS, color);
+        ui.painter().circle_stroke(
+            node_pos,
+            th::NODE_RADIUS,
+            Stroke::new(th::STROKE_BORDER, th::BORDER),
+        );
+    }
+
+    changed
+}
+
+/// Paint the combined gain response curve from pre-computed gains.
+/// gains[k] is linear gain; displayed as dB in ±18 dB range.
+pub fn paint_response_curve(
+    ui: &nih_plug_egui::egui::Ui,
+    rect: nih_plug_egui::egui::Rect,
+    gains: &[f32],
+) {
+    use nih_plug_egui::egui::{Pos2, Shape, Stroke};
+    use crate::editor::theme as th;
+
+    if gains.is_empty() {
+        return;
+    }
+    let n = gains.len();
+    let db_range = 18.0f32;
+    let points: Vec<Pos2> = (0..n)
+        .map(|k| {
+            let x_norm = k as f32 / (n - 1) as f32;
+            let db = if gains[k] > 1e-6 {
+                20.0 * gains[k].log10()
+            } else {
+                -db_range
+            };
+            let y_norm = (db / db_range).clamp(-1.0, 1.0);
+            Pos2::new(x_to_screen(x_norm, rect), y_to_screen(y_norm, rect))
+        })
+        .collect();
+    ui.painter()
+        .add(Shape::line(points, Stroke::new(th::STROKE_CURVE, th::CURVE)));
+}
