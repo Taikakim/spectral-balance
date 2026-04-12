@@ -8,12 +8,18 @@ use params::SpectralForgeParams;
 use std::sync::Arc;
 
 pub struct SpectralForge {
-    params: Arc<SpectralForgeParams>,
+    params:   Arc<SpectralForgeParams>,
+    pipeline: Option<dsp::pipeline::Pipeline>,
+    shared:   Option<bridge::SharedState>,
 }
 
 impl Default for SpectralForge {
     fn default() -> Self {
-        Self { params: Arc::new(SpectralForgeParams::default()) }
+        Self {
+            params:   Arc::new(SpectralForgeParams::default()),
+            pipeline: None,
+            shared:   None,
+        }
     }
 }
 
@@ -35,10 +41,34 @@ impl Plugin for SpectralForge {
 
     fn params(&self) -> Arc<dyn Params> { self.params.clone() }
 
+    fn initialize(
+        &mut self,
+        audio_io_layout: &AudioIOLayout,
+        buffer_config: &BufferConfig,
+        context: &mut impl InitContext<Self>,
+    ) -> bool {
+        let sr = buffer_config.sample_rate;
+        let num_ch = audio_io_layout.main_output_channels
+            .map(|c| c.get() as usize).unwrap_or(2);
+        let num_bins = dsp::pipeline::FFT_SIZE / 2 + 1;
+        self.shared   = Some(bridge::SharedState::new(num_bins, sr));
+        self.pipeline = Some(dsp::pipeline::Pipeline::new(sr, num_ch));
+        context.set_latency_samples(dsp::pipeline::FFT_SIZE as u32);
+        true
+    }
+
+    fn reset(&mut self) {}
+
     fn process(
-        &mut self, _buffer: &mut Buffer, _aux: &mut AuxiliaryBuffers,
+        &mut self,
+        buffer: &mut Buffer,
+        _aux: &mut AuxiliaryBuffers,
         _ctx: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        dsp::guard::flush_denormals();
+        if let (Some(pipeline), Some(shared)) = (&mut self.pipeline, &mut self.shared) {
+            pipeline.process(buffer, shared);
+        }
         ProcessStatus::Normal
     }
 }
