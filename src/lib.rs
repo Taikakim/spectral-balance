@@ -12,7 +12,8 @@ pub struct SpectralForge {
     params:   Arc<SpectralForgeParams>,
     pipeline: Option<dsp::pipeline::Pipeline>,
     shared:   Option<bridge::SharedState>,
-    // Cloned Arc handles for the GUI — set in initialize(), before editor() is called
+    // Cloned Arc handles for the GUI — wired up in Default::default() so editor()
+    // always has live handles regardless of whether the host calls it before initialize().
     gui_curve_tx:       Vec<Arc<parking_lot::Mutex<triple_buffer::Input<Vec<f32>>>>>,
     gui_sample_rate:    Option<Arc<bridge::AtomicF32>>,
     gui_num_bins:       usize,
@@ -25,17 +26,27 @@ pub struct SpectralForge {
 
 impl Default for SpectralForge {
     fn default() -> Self {
+        let dummy_sr = 44100.0;
+        let num_bins = dsp::pipeline::FFT_SIZE / 2 + 1;
+        let shared = bridge::SharedState::new(num_bins, dummy_sr);
+
+        let gui_curve_tx       = shared.curve_tx.clone();
+        let gui_sample_rate    = Some(shared.sample_rate.clone());
+        let gui_num_bins       = shared.num_bins;
+        let gui_spectrum_rx    = Some(shared.spectrum_rx.clone());
+        let gui_suppression_rx = Some(shared.suppression_rx.clone());
+
         Self {
             params:   Arc::new(SpectralForgeParams::default()),
             pipeline: None,
-            shared:   None,
-            gui_curve_tx:       Vec::new(),
-            gui_sample_rate:    None,
-            gui_num_bins:       0,
-            gui_spectrum_rx:    None,
-            gui_suppression_rx: None,
+            shared:   Some(shared),
+            gui_curve_tx,
+            gui_sample_rate,
+            gui_num_bins,
+            gui_spectrum_rx,
+            gui_suppression_rx,
             num_channels: 2,
-            sample_rate:  44100.0,
+            sample_rate:  dummy_sr,
         }
     }
 }
@@ -89,15 +100,10 @@ impl Plugin for SpectralForge {
         self.num_channels = num_ch;
         self.sample_rate  = sr;
         let num_bins = dsp::pipeline::FFT_SIZE / 2 + 1;
-        self.shared   = Some(bridge::SharedState::new(num_bins, sr));
         self.pipeline = Some(dsp::pipeline::Pipeline::new(sr, num_ch));
         context.set_latency_samples(dsp::pipeline::FFT_SIZE as u32);
         if let Some(ref sh) = self.shared {
-            self.gui_curve_tx       = sh.curve_tx.clone();
-            self.gui_sample_rate    = Some(sh.sample_rate.clone());
-            self.gui_num_bins       = sh.num_bins;
-            self.gui_spectrum_rx    = Some(sh.spectrum_rx.clone());
-            self.gui_suppression_rx = Some(sh.suppression_rx.clone());
+            sh.sample_rate.store(sr);
 
             // Push initial per-bin curves computed from persisted curve_nodes so
             // restored sessions start with the correct gain values on the first block.

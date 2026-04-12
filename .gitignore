@@ -1,0 +1,15 @@
+# Rust build output
+/target/
+
+# Python tooling (research/prototyping scripts, not part of plugin)
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv
+/uv.lock
+/pyproject.toml
+/main.py
+/.python-version
