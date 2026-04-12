@@ -75,8 +75,10 @@ fn magnitude_shelf_curve(f_hz: f32, f0: f32, gain_db: f32, bw_oct: f32, is_high:
 }
 
 /// Compute magnitude response for a single EQ band.
-fn biquad_magnitude(f_hz: f32, f0: f32, gain_db: f32, bw_oct: f32,
-                    band: BandType) -> f32 {
+/// Note: uses Gaussian/Hermite log-frequency approximations, not time-domain IIR biquad.
+/// This is intentional — the curve feeds a frequency-domain gain array, not a sample-rate filter.
+fn eq_band_magnitude(f_hz: f32, f0: f32, gain_db: f32, bw_oct: f32,
+                     band: BandType) -> f32 {
     match band {
         BandType::Bell => magnitude_bell_curve(f_hz, f0, gain_db, bw_oct),
         BandType::LowShelf => magnitude_shelf_curve(f_hz, f0, gain_db, bw_oct, false),
@@ -101,7 +103,7 @@ pub fn compute_curve_response(
 
         for k in 0..num_bins {
             let f_bin = (k as f32 * sample_rate / fft_size as f32).max(1.0);
-            let mag = biquad_magnitude(f_bin, freq_hz, gain_db, bw_oct, band);
+            let mag = eq_band_magnitude(f_bin, freq_hz, gain_db, bw_oct, band);
             gains[k] *= mag;
         }
     }
