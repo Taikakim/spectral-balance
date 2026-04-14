@@ -403,16 +403,68 @@ pub fn create_editor(
                         }
                     });
                     } else if active_tab == 1 {
-                        // Effects tab — placeholder
-                        let avail = ui.available_rect_before_wrap();
-                        ui.allocate_rect(avail, egui::Sense::hover());
-                        ui.painter().text(
-                            avail.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "Effects — coming soon",
-                            egui::FontId::proportional(14.0),
-                            th::LABEL_DIM,
-                        );
+                        // Effects tab
+                        use nih_plug_egui::widgets::ParamSlider;
+                        let cur_mode = params.effect_mode.value();
+
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(8.0);
+                            let modes: &[(&str, crate::params::EffectMode)] = &[
+                                ("BYPASS",   crate::params::EffectMode::Bypass),
+                                ("FREEZE",   crate::params::EffectMode::Freeze),
+                                ("PHASE",    crate::params::EffectMode::PhaseRand),
+                                ("CONTRAST", crate::params::EffectMode::SpectralContrast),
+                            ];
+                            for &(label, mode) in modes {
+                                let active = cur_mode == mode;
+                                let fill   = if active { th::BORDER } else { th::BG };
+                                let text_c = if active { th::BG } else { th::LABEL_DIM };
+                                if ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(label).color(text_c).size(10.0)
+                                    )
+                                    .fill(fill)
+                                    .stroke(egui::Stroke::new(1.0, th::BORDER))
+                                    .min_size(egui::vec2(64.0, 18.0))
+                                ).clicked() {
+                                    setter.begin_set_parameter(&params.effect_mode);
+                                    setter.set_parameter(&params.effect_mode, mode);
+                                    setter.end_set_parameter(&params.effect_mode);
+                                }
+                                ui.add_space(4.0);
+                            }
+                        });
+
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(8.0);
+                            match cur_mode {
+                                crate::params::EffectMode::Bypass
+                                | crate::params::EffectMode::Freeze => {
+                                    ui.label(
+                                        egui::RichText::new("No controls for this mode.")
+                                            .color(th::LABEL_DIM).size(10.0)
+                                    );
+                                }
+                                crate::params::EffectMode::PhaseRand => {
+                                    ui.vertical(|ui| {
+                                        ui.add(ParamSlider::for_param(
+                                            &params.phase_rand_amount, setter).with_width(80.0));
+                                        ui.label(egui::RichText::new("Amount")
+                                            .color(th::LABEL_DIM).size(9.0));
+                                    });
+                                }
+                                crate::params::EffectMode::SpectralContrast => {
+                                    ui.vertical(|ui| {
+                                        ui.add(ParamSlider::for_param(
+                                            &params.spectral_contrast_db, setter).with_width(80.0));
+                                        ui.label(egui::RichText::new("Depth")
+                                            .color(th::LABEL_DIM).size(9.0));
+                                    });
+                                }
+                            }
+                        });
                     } else {
                         // Harmonic tab — placeholder
                         let avail = ui.available_rect_before_wrap();
