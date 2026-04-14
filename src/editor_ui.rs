@@ -43,6 +43,7 @@ pub fn create_editor(
                     let atk_ms   = params.attack_ms.value();
                     let rel_ms   = params.release_ms.value();
                     let freq_sc  = params.freq_scale.value();
+                    let active_tab = *params.active_tab.lock() as usize;
 
                     // ── Top bar: curve selectors + dB range/falloff controls ──────
                     ui.horizontal(|ui| {
@@ -65,6 +66,33 @@ pub fn create_editor(
                                 *params.active_curve.lock() = i as u8;
                             }
                         }
+
+                        // Vertical divider
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+
+                        // Tab buttons
+                        const TAB_LABELS: [&str; 3] = ["DYNAMICS", "EFFECTS", "HARMONIC"];
+                        for (t, &tab_label) in TAB_LABELS.iter().enumerate() {
+                            let is_active = active_tab == t;
+                            let (fill, text_color) = if is_active {
+                                (th::BORDER, th::BG)
+                            } else {
+                                (th::BG, th::LABEL_DIM)
+                            };
+                            let btn = egui::Button::new(
+                                egui::RichText::new(tab_label).color(text_color).size(10.0),
+                            )
+                            .fill(fill)
+                            .stroke(egui::Stroke::new(th::STROKE_BORDER, th::BORDER));
+                            if ui.add(btn).clicked() {
+                                *params.active_tab.lock() = t as u8;
+                            }
+                        }
+
+                        ui.add_space(8.0);
+                        ui.separator();
 
                         ui.add_space(12.0);
                         ui.label(egui::RichText::new("Floor").color(th::LABEL_DIM).size(9.0));
