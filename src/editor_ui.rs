@@ -310,7 +310,7 @@ pub fn create_editor(
                         macro_rules! knob {
                             ($param:expr, $label:expr) => {{
                                 ui.vertical(|ui| {
-                                    ui.add(ParamSlider::for_param($param, setter).with_width(40.0));
+                                    ui.add(ParamSlider::for_param($param, setter).with_width(36.0));
                                     ui.label(
                                         egui::RichText::new($label)
                                             .color(th::LABEL_DIM)
@@ -323,7 +323,7 @@ pub fn create_editor(
                         knob!(&params.input_gain,  "IN");
                         knob!(&params.output_gain, "OUT");
                         knob!(&params.mix,         "MIX");
-                        knob!(&params.sc_gain,     "SC GAIN");
+                        knob!(&params.sc_gain,     "SC");
 
                         ui.add_space(8.0);
 
@@ -335,28 +335,24 @@ pub fn create_editor(
                         let dyn_resp = dyn_frame.show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.vertical(|ui| {
-                                    ui.add(ParamSlider::for_param(&params.attack_ms, setter).with_width(40.0));
+                                    ui.add(ParamSlider::for_param(&params.attack_ms, setter).with_width(36.0));
                                     ui.label(egui::RichText::new("Atk").color(th::LABEL_DIM).size(9.0));
                                 });
                                 ui.vertical(|ui| {
-                                    ui.add(ParamSlider::for_param(&params.release_ms, setter).with_width(40.0));
+                                    ui.add(ParamSlider::for_param(&params.release_ms, setter).with_width(36.0));
                                     ui.label(egui::RichText::new("Rel").color(th::LABEL_DIM).size(9.0));
                                 });
                                 ui.vertical(|ui| {
-                                    ui.add(ParamSlider::for_param(&params.freq_scale, setter).with_width(40.0));
+                                    ui.add(ParamSlider::for_param(&params.freq_scale, setter).with_width(36.0));
                                     ui.label(egui::RichText::new("Freq").color(th::LABEL_DIM).size(9.0));
                                 });
                                 ui.vertical(|ui| {
-                                    ui.add(ParamSlider::for_param(&params.sensitivity, setter).with_width(40.0));
+                                    ui.add(ParamSlider::for_param(&params.sensitivity, setter).with_width(36.0));
                                     ui.label(egui::RichText::new("Sens").color(th::LABEL_DIM).size(9.0));
                                 });
                                 ui.vertical(|ui| {
-                                    ui.add(ParamSlider::for_param(&params.suppression_width, setter).with_width(40.0));
+                                    ui.add(ParamSlider::for_param(&params.suppression_width, setter).with_width(36.0));
                                     ui.label(egui::RichText::new("Width").color(th::LABEL_DIM).size(9.0));
-                                });
-                                ui.vertical(|ui| {
-                                    ui.add(ParamSlider::for_param(&params.threshold_slope, setter).with_width(40.0));
-                                    ui.label(egui::RichText::new("Slope").color(th::LABEL_DIM).size(9.0));
                                 });
                             });
                         });
@@ -369,6 +365,18 @@ pub fn create_editor(
                             egui::FontId::proportional(8.0),
                             th::LABEL_DIM,
                         );
+
+                        ui.add_space(8.0);
+
+                        // Threshold shaping — outside Dynamics box for visibility
+                        ui.vertical(|ui| {
+                            ui.add(ParamSlider::for_param(&params.threshold_offset, setter).with_width(36.0));
+                            ui.label(egui::RichText::new("Th Off").color(th::LABEL_DIM).size(9.0));
+                        });
+                        ui.vertical(|ui| {
+                            ui.add(ParamSlider::for_param(&params.threshold_slope, setter).with_width(36.0));
+                            ui.label(egui::RichText::new("Tilt").color(th::LABEL_DIM).size(9.0));
+                        });
 
                         ui.add_space(8.0);
 

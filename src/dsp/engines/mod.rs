@@ -53,6 +53,7 @@ pub trait SpectralEngine: Send {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineSelection {
     SpectralCompressor,
+    SpectralContrast,
 }
 
 pub fn create_engine(sel: EngineSelection) -> Box<dyn SpectralEngine> {
@@ -60,7 +61,11 @@ pub fn create_engine(sel: EngineSelection) -> Box<dyn SpectralEngine> {
         EngineSelection::SpectralCompressor => {
             Box::new(spectral_compressor::SpectralCompressorEngine::new())
         }
+        EngineSelection::SpectralContrast => {
+            Box::new(spectral_contrast::SpectralContrastEngine::new())
+        }
     }
 }
 
 pub mod spectral_compressor;
+pub mod spectral_contrast;

@@ -2,6 +2,50 @@ use serde::{Serialize, Deserialize};
 use nih_plug_egui::egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, Ui, Vec2};
 use crate::editor::theme as th;
 
+/// Paint a dashed polyline through `pts` with the given `stroke`.
+/// `dash` and `gap` are in pixels.
+fn paint_dashed_line(painter: &Painter, pts: &[Pos2], stroke: Stroke, dash: f32, gap: f32) {
+    if pts.len() < 2 { return; }
+    let cycle = dash + gap;
+    let mut dist = 0.0_f32;
+    let mut seg: Vec<Pos2> = Vec::new();
+
+    for i in 1..pts.len() {
+        let a = pts[i - 1];
+        let b = pts[i];
+        let step = (b - a).length();
+        if step < 0.001 { continue; }
+        let dir = (b - a) / step;
+        let mut t = 0.0_f32;
+        while t < step {
+            let phase = dist % cycle;
+            let in_dash = phase < dash;
+            // Gap portion spans [dash, cycle), so remaining = cycle - phase (not gap - phase).
+            // Using gap - phase would go negative whenever phase > gap, causing dist to
+            // decrement and the loop to oscillate forever.
+            let remaining_in_phase = if in_dash { dash - phase } else { cycle - phase };
+            let end_t = (t + remaining_in_phase).min(step);
+            let p0 = a + dir * t;
+            let p1 = a + dir * end_t;
+            if in_dash {
+                if seg.is_empty() { seg.push(p0); }
+                seg.push(p1);
+            } else {
+                if seg.len() >= 2 {
+                    painter.add(Shape::line(std::mem::take(&mut seg), stroke));
+                } else {
+                    seg.clear();
+                }
+            }
+            dist += end_t - t;
+            t = end_t;
+        }
+    }
+    if seg.len() >= 2 {
+        painter.add(Shape::line(seg, stroke));
+    }
+}
+
 // ─── Data types ───────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -404,7 +448,7 @@ pub fn paint_response_curve(
         painter.add(Shape::line(grey_pts, Stroke::new(th::STROKE_CURVE, th::TRUE_TIME_LINE)));
     }
 
-    // Coloured response line
+    // Coloured response line — dashed for attack/release, solid for all other curves
     let pts: Vec<Pos2> = (0..n).map(|k| {
         let f_hz = (k as f32 * sample_rate / fft_size as f32).max(20.0);
         let x    = freq_to_x_max(f_hz, max_hz, rect);
@@ -412,7 +456,12 @@ pub fn paint_response_curve(
         let y    = physical_to_y(v, curve_idx, db_min, db_max, rect);
         Pos2::new(x, y)
     }).collect();
-    painter.add(Shape::line(pts, Stroke::new(stroke_width, color)));
+    let line_stroke = Stroke::new(stroke_width, color);
+    if curve_idx == 2 || curve_idx == 3 {
+        paint_dashed_line(painter, &pts, line_stroke, 4.0, 2.0);
+    } else {
+        painter.add(Shape::line(pts, line_stroke));
+    }
 }
 
 // ─── Interactive widget ───────────────────────────────────────────────────────
@@ -469,24 +518,39 @@ pub fn curve_widget(
         let node_rect = Rect::from_center_size(node_pos, Vec2::splat(th::NODE_RADIUS * 3.0));
         let resp = ui.interact(node_rect, ui.id().with(("node", i)), Sense::drag());
 
-        if resp.dragged() {
+        // Dual-button drag for Q — when both primary and secondary mouse buttons are held,
+        // dragging up/down adjusts Q smoothly.  Scale: 500px → full Q range (0→1),
+        // corresponding roughly to the distance from the centre to the top of a mouse mat.
+        let (both_down, ptr_delta, hover_here) = ui.input(|inp| {
+            let hov = inp.pointer.hover_pos().unwrap_or(Pos2::ZERO);
+            (
+                inp.pointer.primary_down() && inp.pointer.secondary_down(),
+                inp.pointer.delta(),
+                node_rect.contains(hov),
+            )
+        });
+
+        if both_down && hover_here {
+            // Both buttons → Q drag, suppress position drag.
+            if ptr_delta.y.abs() > 0.0 {
+                nodes[i].q = (nodes[i].q - ptr_delta.y / 500.0).clamp(0.0, 1.0);
+                changed = true;
+            }
+        } else if resp.dragged() {
+            // Single primary button → move node position.
             let delta = resp.drag_delta();
             nodes[i].x = (nodes[i].x + delta.x / rect.width()).clamp(0.0, 1.0);
             nodes[i].y = (nodes[i].y - (delta.y / rect.height()) * 2.0).clamp(-1.0, 1.0);
             changed = true;
         }
 
-        // Smooth scroll wheel Q adjustment (0.002 per pixel — much smoother than before)
-        let scroll = ui.input(|inp| {
-            if node_rect.contains(inp.pointer.hover_pos().unwrap_or(Pos2::ZERO)) {
-                inp.raw_scroll_delta.y
-            } else {
-                0.0
+        // Scroll wheel Q — coarse jumps (kept for quick rough adjustment)
+        if hover_here && !both_down {
+            let scroll = ui.input(|inp| inp.raw_scroll_delta.y);
+            if scroll.abs() > 0.01 {
+                nodes[i].q = (nodes[i].q + scroll * 0.002).clamp(0.0, 1.0);
+                changed = true;
             }
-        });
-        if scroll.abs() > 0.01 {
-            nodes[i].q = (nodes[i].q + scroll * 0.002).clamp(0.0, 1.0);
-            changed = true;
         }
 
         if resp.double_clicked() {
@@ -495,12 +559,34 @@ pub fn curve_widget(
         }
 
         let color = if resp.hovered() { node_color_hover } else { node_color_lit };
-        ui.painter().circle_filled(draw_pos, th::NODE_RADIUS, color);
-        ui.painter().circle_stroke(
-            draw_pos,
-            th::NODE_RADIUS,
-            Stroke::new(th::STROKE_BORDER, th::BORDER),
-        );
+        let r = th::NODE_RADIUS;
+        match band_type_for(i) {
+            BandType::LowShelf => {
+                // Right-pointing equilateral triangle ▶
+                let pts = vec![
+                    draw_pos + Vec2::new( r,    0.0),
+                    draw_pos + Vec2::new(-r * 0.5,  r * 0.866),
+                    draw_pos + Vec2::new(-r * 0.5, -r * 0.866),
+                ];
+                ui.painter().add(Shape::convex_polygon(pts, color,
+                    Stroke::new(th::STROKE_BORDER, th::BORDER)));
+            }
+            BandType::HighShelf => {
+                // Left-pointing equilateral triangle ◀
+                let pts = vec![
+                    draw_pos + Vec2::new(-r,    0.0),
+                    draw_pos + Vec2::new( r * 0.5, -r * 0.866),
+                    draw_pos + Vec2::new( r * 0.5,  r * 0.866),
+                ];
+                ui.painter().add(Shape::convex_polygon(pts, color,
+                    Stroke::new(th::STROKE_BORDER, th::BORDER)));
+            }
+            BandType::Bell => {
+                ui.painter().circle_filled(draw_pos, r, color);
+                ui.painter().circle_stroke(draw_pos, r,
+                    Stroke::new(th::STROKE_BORDER, th::BORDER));
+            }
+        }
     }
 
     changed

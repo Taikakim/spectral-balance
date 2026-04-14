@@ -50,8 +50,8 @@ pub struct Pipeline {
     freeze_captured: bool,
     /// xorshift64 PRNG state for Phase Randomize. Must never be zero.
     rng_state: u64,
-    /// Per-bin smoothed magnitude envelope for Spectral Contrast (~200 ms window).
-    contrast_envelope: Vec<f32>,
+    /// Dedicated engine for Spectral Contrast (runs as post-compressor effects pass).
+    contrast_engine: Box<dyn SpectralEngine>,
     /// Pre-allocated curve read caches — populated via copy_from_slice each block
     /// so the audio thread never allocates. One Vec per curve channel (7 total).
     curve_cache: [Vec<f32>; 7],
@@ -76,6 +76,8 @@ impl Pipeline {
         engine.reset(sample_rate, FFT_SIZE);
         let mut engine_r = create_engine(EngineSelection::SpectralCompressor);
         engine_r.reset(sample_rate, FFT_SIZE);
+        let mut contrast_engine = create_engine(EngineSelection::SpectralContrast);
+        contrast_engine.reset(sample_rate, FFT_SIZE);
 
         Self {
             stft: StftHelper::new(num_channels, FFT_SIZE, 0),
@@ -104,7 +106,7 @@ impl Pipeline {
             frozen_bins:       vec![Complex::new(0.0f32, 0.0f32); NUM_BINS],
             freeze_captured:   false,
             rng_state:         0xdeadbeef_cafebabe_u64,
-            contrast_envelope: vec![0.0f32; NUM_BINS],
+            contrast_engine,
             curve_cache: std::array::from_fn(|_| vec![1.0f32; NUM_BINS]),
             sample_rate,
         }
@@ -121,9 +123,9 @@ impl Pipeline {
         for b in self.frozen_bins.iter_mut() { *b = Complex::new(0.0, 0.0); }
         self.freeze_captured = false;
         // rng_state intentionally not reset — continuity across SR changes is harmless
-        self.contrast_envelope.fill(0.0);
         self.engine.reset(sample_rate, FFT_SIZE);
         self.engine_r.reset(sample_rate, FFT_SIZE);
+        self.contrast_engine.reset(sample_rate, FFT_SIZE);
     }
 
     pub fn process(
@@ -144,8 +146,9 @@ impl Pipeline {
         let input_gain_db     = params.input_gain.smoothed.next_step(block_size);
         let output_gain_db    = params.output_gain.smoothed.next_step(block_size);
         let global_mix        = params.mix.smoothed.next_step(block_size);
-        let suppression_width  = params.suppression_width.smoothed.next_step(block_size);
-        let threshold_slope_db = params.threshold_slope.smoothed.next_step(block_size);
+        let suppression_width    = params.suppression_width.smoothed.next_step(block_size);
+        let threshold_slope_db   = params.threshold_slope.smoothed.next_step(block_size);
+        let threshold_offset_db  = params.threshold_offset.smoothed.next_step(block_size);
 
         let effect_mode          = params.effect_mode.value();
         let phase_rand_amount    = params.phase_rand_amount.smoothed.next_step(block_size);
@@ -222,11 +225,20 @@ impl Pipeline {
             let t_db = if t > 1e-10 { 20.0 * t.log10() } else { -120.0 };
             let f_k_hz = (k as f32 * sample_rate / FFT_SIZE as f32).max(20.0);
             let slope_offset = threshold_slope_db * (f_k_hz / 1000.0_f32).log2();
-            self.bp_threshold[k] = (-20.0 + t_db * (60.0 / 18.0) + slope_offset).clamp(-80.0, 0.0);
+            self.bp_threshold[k] = (-20.0 + t_db * (60.0 / 18.0) + slope_offset + threshold_offset_db).clamp(-80.0, 0.0);
 
-            // Ratio: curve gain 1.0 → ratio 1:1; gain 8.0 → ratio 8:1 (max)
+            // Ratio curve: different semantics per mode.
+            // Compressor: gain 1.0 → 1:1 (no compression); must stay ≥ 1.
+            // Contrast:   ratio = base_ratio * curve, where base_ratio comes from
+            //             spectral_contrast_db (0 dB → ratio 1, +6 dB → ratio 2, -6 → 0).
+            //             Allows 0..20 (0 = full flatten, >1 = expand deviations).
             let r = self.curve_cache[1].get(k).copied().unwrap_or(1.0);
-            self.bp_ratio[k] = r.clamp(1.0, 20.0);
+            if effect_mode == crate::params::EffectMode::SpectralContrast {
+                let base = (1.0 + spectral_contrast_db / 6.0).max(0.0);
+                self.bp_ratio[k] = (r * base).clamp(0.0, 20.0);
+            } else {
+                self.bp_ratio[k] = r.clamp(1.0, 20.0);
+            }
 
             // Frequency-dependent timing: lower frequencies get longer times
             let f_bin = (k as f32 * sample_rate / crate::dsp::pipeline::FFT_SIZE as f32).max(20.0);
@@ -340,10 +352,10 @@ impl Pipeline {
         // Combined normalization: 1 / (FFT_SIZE * 1.5) = 2 / (3 * FFT_SIZE)
         let norm = 2.0_f32 / (3.0 * FFT_SIZE as f32);
 
-        let frozen_bins       = &mut self.frozen_bins;
-        let freeze_captured   = &mut self.freeze_captured;
-        let rng_state         = &mut self.rng_state;
-        let contrast_envelope = &mut self.contrast_envelope;
+        let frozen_bins     = &mut self.frozen_bins;
+        let freeze_captured = &mut self.freeze_captured;
+        let rng_state       = &mut self.rng_state;
+        let contrast_engine = &mut self.contrast_engine;
 
         self.stft.process_overlap_add(buffer, OVERLAP, |channel, block| {
             // Analysis window + input gain
@@ -419,30 +431,17 @@ impl Pipeline {
                 }
 
                 crate::params::EffectMode::SpectralContrast => {
-                    let hop_sz = FFT_SIZE / OVERLAP;
-                    let time_hops = 0.2_f32 * sample_rate / hop_sz as f32;
-                    let coeff = (-1.0_f32 / time_hops).exp();
-                    let n = complex_buf.len();
-
-                    // Pass 1 — update temporal envelope from raw magnitudes.
-                    // All envelopes are computed from unmodified bins before any gain
-                    // is applied, so no bin's gain computation sees already-modified data.
-                    for k in 0..n {
-                        let mag = complex_buf[k].norm();
-                        contrast_envelope[k] = coeff * contrast_envelope[k] + (1.0 - coeff) * mag;
-                    }
-
-                    // Pass 2 — apply boost/cut relative to the now-updated envelopes.
-                    // Clamping depth to [-12, +12]: positive depth = expand contrast,
-                    // negative depth = flatten (bring peaks toward neighbours).
-                    let depth = spectral_contrast_db.clamp(-12.0, 12.0);
-                    let boost = 10.0f32.powf( depth / 20.0);
-                    let cut   = 10.0f32.powf(-depth / 20.0);
-                    for k in 0..n {
-                        let mag = complex_buf[k].norm();
-                        let env = contrast_envelope[k].max(1e-10);
-                        let gain = if mag >= env { boost } else { cut };
-                        complex_buf[k] *= gain;
+                    // Delegate to SpectralContrastEngine which handles the full
+                    // 4-pass algorithm: spatial mean → temporal tracking → gain mask
+                    // smoothing (anti-warbling) → apply with auto-makeup + mix.
+                    contrast_engine.process_bins(
+                        complex_buf, None, &params, sample_rate, channel_supp_buf,
+                    );
+                    // Fold contrast suppression into the peak-hold display buffer.
+                    for k in 0..channel_supp_buf.len() {
+                        if channel_supp_buf[k] > suppression_buf[k] {
+                            suppression_buf[k] = channel_supp_buf[k];
+                        }
                     }
                 }
             }

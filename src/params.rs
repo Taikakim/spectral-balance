@@ -97,6 +97,11 @@ pub struct SpectralForgeParams {
     #[id = "threshold_slope"]
     pub threshold_slope: FloatParam,
 
+    /// Master threshold offset in dB — shifts the entire threshold curve up or down
+    /// without changing its shape. Positive = higher threshold (less compression).
+    #[id = "threshold_offset"]
+    pub threshold_offset: FloatParam,
+
     #[id = "sensitivity"]
     pub sensitivity: FloatParam,
 
@@ -200,14 +205,20 @@ impl Default for SpectralForgeParams {
             ).with_smoother(SmoothingStyle::Linear(50.0))
              .with_unit(" dB/oct"),
 
+            threshold_offset: FloatParam::new(
+                "Threshold Offset", 0.0,
+                FloatRange::Linear { min: -40.0, max: 40.0 },
+            ).with_smoother(SmoothingStyle::Linear(50.0))
+             .with_unit(" dB"),
+
             sensitivity: FloatParam::new(
                 "Sensitivity", 0.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ).with_smoother(SmoothingStyle::Linear(50.0)),
 
             suppression_width: FloatParam::new(
-                "Suppression Width", 4.0,
-                FloatRange::Linear { min: 0.0, max: 24.0 },
+                "Suppression Width", 0.2,
+                FloatRange::Linear { min: 0.0, max: 0.5 },
             ).with_smoother(SmoothingStyle::Linear(50.0))
              .with_unit(" st"),
 

@@ -1,6 +1,18 @@
 use spectral_forge::dsp::engines::{
     BinParams, EngineSelection, SpectralEngine, create_engine,
 };
+
+fn make_contrast_params(n: usize, ratio: f32) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
+    (
+        vec![-20.0f32; n],  // threshold_db (unused by contrast engine)
+        vec![ratio;    n],  // ratio — contrast depth (1=no effect, 2=expand, 0=flatten)
+        vec![10.0f32;  n],  // attack_ms
+        vec![100.0f32; n],  // release_ms
+        vec![0.0f32;   n],  // knee_db
+        vec![0.0f32;   n],  // makeup_db
+        vec![1.0f32;   n],  // mix
+    )
+}
 use num_complex::Complex;
 
 fn make_params(n: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
@@ -140,4 +152,76 @@ fn loud_signal_gets_compressed() {
     // Suppression should be positive (gain reduction is happening)
     assert!(suppression[512] > 0.0,
         "suppression should be positive, got {}", suppression[512]);
+}
+
+// ── SpectralContrast engine tests ─────────────────────────────────────────────
+
+#[test]
+fn contrast_bypass_at_ratio_one() {
+    // ratio=1.0 → no effect: output magnitudes should be unchanged.
+    let mut engine = create_engine(EngineSelection::SpectralContrast);
+    engine.reset(44100.0, 2048);
+    let n = 1025;
+    let input_mag = 128.0f32;
+    let (th, ra, at, re, kn, mk, mx) = make_contrast_params(n, 1.0);
+    let params = BinParams {
+        threshold_db: &th, ratio: &ra, attack_ms: &at,
+        release_ms: &re, knee_db: &kn, makeup_db: &mk, mix: &mx,
+        sensitivity: 0.0, auto_makeup: false, smoothing_semitones: 4.0,
+    };
+    let mut suppression = vec![0.0f32; n];
+    let mut bins = vec![Complex::new(input_mag, 0.0f32); n];
+    // Run many hops so the envelope converges.
+    for _ in 0..200 {
+        let mut b = bins.clone();
+        engine.process_bins(&mut b, None, &params, 44100.0, &mut suppression);
+    }
+    let mut final_bins = bins.clone();
+    engine.process_bins(&mut final_bins, None, &params, 44100.0, &mut suppression);
+    // With flat spectrum and ratio=1, all bins should be at input_mag (no contrast).
+    for b in &final_bins {
+        assert!((b.norm() - input_mag).abs() < 1e-3,
+            "ratio=1 should pass through unchanged, got {}", b.norm());
+    }
+    // Suppression must be finite and non-negative.
+    for &s in &suppression {
+        assert!(s.is_finite() && s >= 0.0, "suppression contract violated: {s}");
+    }
+}
+
+#[test]
+fn contrast_expands_peaked_spectrum() {
+    // Single loud bin surrounded by quieter bins: ratio=2 should boost the loud bin.
+    let mut engine = create_engine(EngineSelection::SpectralContrast);
+    engine.reset(44100.0, 2048);
+    let n = 1025;
+    let (th, ra, at, re, kn, mk, mx) = make_contrast_params(n, 2.0);
+    let params = BinParams {
+        threshold_db: &th, ratio: &ra, attack_ms: &at,
+        release_ms: &re, knee_db: &kn, makeup_db: &mk, mix: &mx,
+        // smoothing_semitones=0: test the core contrast gain with no frequency averaging.
+        // Frequency averaging would dilute a single-bin peak into the surrounding floor,
+        // masking whether the contrast gain formula actually boosts the peak.
+        sensitivity: 0.0, auto_makeup: false, smoothing_semitones: 0.0,
+    };
+    let mut suppression = vec![0.0f32; n];
+    // Flat spectrum with one prominent peak at bin 512.
+    let floor_mag = 16.0f32;
+    let peak_mag  = 256.0f32;
+    let mut bins = vec![Complex::new(floor_mag, 0.0f32); n];
+    bins[512] = Complex::new(peak_mag, 0.0);
+    // Converge the envelope follower.
+    for _ in 0..300 {
+        let mut b = bins.clone();
+        engine.process_bins(&mut b, None, &params, 44100.0, &mut suppression);
+    }
+    let mut final_bins = bins.clone();
+    engine.process_bins(&mut final_bins, None, &params, 44100.0, &mut suppression);
+    // The peak bin should have been boosted (above input peak).
+    assert!(final_bins[512].norm() > peak_mag,
+        "contrast should boost the peak bin: {} <= {}", final_bins[512].norm(), peak_mag);
+    // Suppression contract: non-negative finite values.
+    for &s in &suppression {
+        assert!(s.is_finite() && s >= 0.0, "suppression contract violated: {s}");
+    }
 }
