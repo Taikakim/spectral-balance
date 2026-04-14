@@ -44,6 +44,14 @@ pub struct Pipeline {
     dry_delay: Vec<f32>,
     /// Current write head into dry_delay (wraps at DRY_DELAY_SIZE).
     dry_delay_write: usize,
+    /// Captured per-bin magnitudes for Spectral Freeze.
+    frozen_mags: Vec<f32>,
+    /// True once Freeze has captured its first frame; reset to false when mode changes.
+    freeze_captured: bool,
+    /// xorshift64 PRNG state for Phase Randomize. Must never be zero.
+    rng_state: u64,
+    /// Per-bin smoothed magnitude envelope for Spectral Contrast (~200 ms window).
+    contrast_envelope: Vec<f32>,
     /// Pre-allocated curve read caches — populated via copy_from_slice each block
     /// so the audio thread never allocates. One Vec per curve channel (7 total).
     curve_cache: [Vec<f32>; 7],
@@ -93,6 +101,10 @@ impl Pipeline {
             bp_mix:       vec![1.0;   NUM_BINS],
             dry_delay: vec![0.0f32; 2 * DRY_DELAY_SIZE],
             dry_delay_write: 0,
+            frozen_mags:       vec![0.0f32; NUM_BINS],
+            freeze_captured:   false,
+            rng_state:         0xdeadbeef_cafebabe_u64,
+            contrast_envelope: vec![0.0f32; NUM_BINS],
             curve_cache: std::array::from_fn(|_| vec![1.0f32; NUM_BINS]),
             sample_rate,
         }
@@ -106,6 +118,10 @@ impl Pipeline {
         self.sc_env_state = vec![0.0f32; NUM_BINS];
         self.dry_delay.fill(0.0);
         self.dry_delay_write = 0;
+        self.frozen_mags.fill(0.0);
+        self.freeze_captured = false;
+        // rng_state intentionally not reset — continuity across SR changes is harmless
+        self.contrast_envelope.fill(0.0);
         self.engine.reset(sample_rate, FFT_SIZE);
         self.engine_r.reset(sample_rate, FFT_SIZE);
     }
@@ -130,6 +146,10 @@ impl Pipeline {
         let global_mix        = params.mix.smoothed.next_step(block_size);
         let suppression_width  = params.suppression_width.smoothed.next_step(block_size);
         let threshold_slope_db = params.threshold_slope.smoothed.next_step(block_size);
+
+        let effect_mode          = params.effect_mode.value();
+        let phase_rand_amount    = params.phase_rand_amount.smoothed.next_step(block_size);
+        let spectral_contrast_db = params.spectral_contrast_db.smoothed.next_step(block_size);
 
         // Read all 7 curve channels into pre-allocated cache buffers (no allocation).
         // Each read() borrow ends before the next copy_from_slice begins.
@@ -320,6 +340,11 @@ impl Pipeline {
         // Combined normalization: 1 / (FFT_SIZE * 1.5) = 2 / (3 * FFT_SIZE)
         let norm = 2.0_f32 / (3.0 * FFT_SIZE as f32);
 
+        let frozen_mags       = &mut self.frozen_mags;
+        let freeze_captured   = &mut self.freeze_captured;
+        let rng_state         = &mut self.rng_state;
+        let contrast_envelope = &mut self.contrast_envelope;
+
         self.stft.process_overlap_add(buffer, OVERLAP, |channel, block| {
             // Analysis window + input gain
             for (s, &w) in block.iter_mut().zip(window.iter()) {
@@ -358,6 +383,57 @@ impl Pipeline {
             active_engine.process_bins(complex_buf, sidechain_arg, &params, sample_rate, channel_supp_buf);
             for k in 0..channel_supp_buf.len() {
                 if channel_supp_buf[k] > suppression_buf[k] { suppression_buf[k] = channel_supp_buf[k]; }
+            }
+
+            // Effects pass — modifies complex_buf in-place after compression.
+            match effect_mode {
+                crate::params::EffectMode::Bypass => {}
+
+                crate::params::EffectMode::Freeze => {
+                    if !*freeze_captured {
+                        for k in 0..complex_buf.len() {
+                            frozen_mags[k] = complex_buf[k].norm();
+                        }
+                        *freeze_captured = true;
+                    }
+                    for k in 0..complex_buf.len() {
+                        let phase = complex_buf[k].arg();
+                        complex_buf[k] = Complex::from_polar(frozen_mags[k], phase);
+                    }
+                }
+
+                crate::params::EffectMode::PhaseRand => {
+                    let scale = phase_rand_amount * std::f32::consts::PI;
+                    for k in 0..complex_buf.len() {
+                        *rng_state ^= *rng_state << 13;
+                        *rng_state ^= *rng_state >> 7;
+                        *rng_state ^= *rng_state << 17;
+                        let rand_phase = (*rng_state as f32 / u64::MAX as f32 * 2.0 - 1.0) * scale;
+                        let (mag, phase) = (complex_buf[k].norm(), complex_buf[k].arg());
+                        complex_buf[k] = Complex::from_polar(mag, phase + rand_phase);
+                    }
+                }
+
+                crate::params::EffectMode::SpectralContrast => {
+                    let hop_sz = FFT_SIZE / OVERLAP;
+                    let time_hops = 0.2_f32 * sample_rate / hop_sz as f32;
+                    let coeff = (-1.0_f32 / time_hops).exp();
+                    let boost = 10.0f32.powf( spectral_contrast_db / 20.0);
+                    let cut   = 10.0f32.powf(-spectral_contrast_db / 20.0);
+                    for k in 0..complex_buf.len() {
+                        let mag = complex_buf[k].norm();
+                        contrast_envelope[k] = coeff * contrast_envelope[k] + (1.0 - coeff) * mag;
+                        let env = contrast_envelope[k].max(1e-10);
+                        let gain = if mag >= env { boost } else { cut };
+                        complex_buf[k] *= gain;
+                    }
+                }
+            }
+
+            // When leaving Freeze mode, clear the captured flag so re-engaging always
+            // captures a fresh spectrum.
+            if effect_mode != crate::params::EffectMode::Freeze {
+                *freeze_captured = false;
             }
 
             ifft_plan.process(complex_buf, block).unwrap();
