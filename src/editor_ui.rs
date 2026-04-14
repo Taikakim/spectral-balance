@@ -144,6 +144,7 @@ pub fn create_editor(
                         );
                     }
 
+                    if active_tab == 0 {
                     // ── Curve area ───────────────────────────────────────────────
                     let strip_height = 80.0;
                     let avail = ui.available_rect_before_wrap();
@@ -393,6 +394,29 @@ pub fn create_editor(
                             setter.end_set_parameter(&params.delta_monitor);
                         }
                     });
+                    } else if active_tab == 1 {
+                        // Effects tab — placeholder
+                        let avail = ui.available_rect_before_wrap();
+                        ui.allocate_rect(avail, egui::Sense::hover());
+                        ui.painter().text(
+                            avail.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "Effects — coming soon",
+                            egui::FontId::proportional(14.0),
+                            th::LABEL_DIM,
+                        );
+                    } else {
+                        // Harmonic tab — placeholder
+                        let avail = ui.available_rect_before_wrap();
+                        ui.allocate_rect(avail, egui::Sense::hover());
+                        ui.painter().text(
+                            avail.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "Harmonic — coming soon",
+                            egui::FontId::proportional(14.0),
+                            th::LABEL_DIM,
+                        );
+                    }
                 });
         },
     )
