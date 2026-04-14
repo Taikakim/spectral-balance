@@ -128,7 +128,8 @@ impl Pipeline {
         let input_gain_db     = params.input_gain.smoothed.next_step(block_size);
         let output_gain_db    = params.output_gain.smoothed.next_step(block_size);
         let global_mix        = params.mix.smoothed.next_step(block_size);
-        let suppression_width = params.suppression_width.smoothed.next_step(block_size);
+        let suppression_width  = params.suppression_width.smoothed.next_step(block_size);
+        let threshold_slope_db = params.threshold_slope.smoothed.next_step(block_size);
 
         // Read all 7 curve channels into pre-allocated cache buffers (no allocation).
         // Each read() borrow ends before the next copy_from_slice begins.
@@ -196,9 +197,12 @@ impl Pipeline {
             //   y = -1 → gain ≈ 0.126 (−18 dB) → threshold = −80 dBFS
             //   y =  0 → gain = 1.0  (  0 dB) → threshold = −20 dBFS
             //   y = +1 → gain ≈ 7.94 (+18 dB) → threshold →  0 dBFS (clamped)
+            // threshold_slope_db adds a linear tilt (dB/octave, pivot 1 kHz).
             let t = self.curve_cache[0].get(k).copied().unwrap_or(1.0);
             let t_db = if t > 1e-10 { 20.0 * t.log10() } else { -120.0 };
-            self.bp_threshold[k] = (-20.0 + t_db * (60.0 / 18.0)).clamp(-80.0, 0.0);
+            let f_k_hz = (k as f32 * sample_rate / FFT_SIZE as f32).max(20.0);
+            let slope_offset = threshold_slope_db * (f_k_hz / 1000.0_f32).log2();
+            self.bp_threshold[k] = (-20.0 + t_db * (60.0 / 18.0) + slope_offset).clamp(-80.0, 0.0);
 
             // Ratio: curve gain 1.0 → ratio 1:1; gain 8.0 → ratio 8:1 (max)
             let r = self.curve_cache[1].get(k).copied().unwrap_or(1.0);

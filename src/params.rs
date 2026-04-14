@@ -83,6 +83,12 @@ pub struct SpectralForgeParams {
     #[id = "threshold_mode"]
     pub threshold_mode: EnumParam<ThresholdMode>,
 
+    /// Global threshold tilt in dB per octave, pivoting at 1 kHz.
+    /// Positive: threshold rises toward high frequencies (spares bright content).
+    /// Negative: threshold falls toward high frequencies (more aggressive on treble).
+    #[id = "threshold_slope"]
+    pub threshold_slope: FloatParam,
+
     #[id = "sensitivity"]
     pub sensitivity: FloatParam,
 
@@ -170,6 +176,12 @@ impl Default for SpectralForgeParams {
 
             stereo_link: EnumParam::new("Stereo Link", StereoLink::Linked),
             threshold_mode: EnumParam::new("Threshold Mode", ThresholdMode::Absolute),
+
+            threshold_slope: FloatParam::new(
+                "Threshold Slope", 0.0,
+                FloatRange::Linear { min: -6.0, max: 6.0 },
+            ).with_smoother(SmoothingStyle::Linear(50.0))
+             .with_unit(" dB/oct"),
 
             sensitivity: FloatParam::new(
                 "Sensitivity", 0.0,
