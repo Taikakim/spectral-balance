@@ -469,3 +469,9 @@ Curves are stored as `[CurveNode; 6]` arrays persisted in the plugin state. Defa
 - **Denormal protection:** `flush_denormals()` sets FTZ+DAZ CPU flags at the start of each process block.
 - **xorshift64 PRNG:** Used by the phase randomiser. Sequence: `state ^= state << 13; state ^= state >> 7; state ^= state << 17`. Full 2^64−1 period, no allocation.
 - **Prefix-sum box filter:** Both the compressor GR smoothing and the contrast local-mean computation use prefix sums for O(N) log-frequency box filtering per hop, regardless of kernel width.
+
+---
+
+## Credits
+
+See [CREDITS.md](CREDITS.md) for full attribution of frameworks, libraries, and algorithm references.

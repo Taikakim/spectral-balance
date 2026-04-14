@@ -120,3 +120,9 @@ cargo test            # all tests
 cargo test engine     # engine contract tests only
 cargo test stft       # STFT roundtrip test only
 ```
+
+---
+
+## Credits
+
+Built on [nih-plug](https://github.com/robbert-vdh/nih-plug) (Robbert van der Helm), [realfft](https://github.com/HEnquist/realfft) (Henrik Enquist), [triple_buffer](https://github.com/HadrienG2/triple-buffer), and the [CLAP plugin standard](https://github.com/free-audio/clap) (Alexandre Bique et al.). Phase vocoder algorithm references from [pvx](https://github.com/TheColby/pvx) (Colby Leider). See [CREDITS.md](CREDITS.md) for full details.
