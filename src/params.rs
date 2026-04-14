@@ -24,6 +24,14 @@ pub enum ThresholdMode { Absolute, Relative }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
 pub enum StereoLink { Independent, Linked, MidSide }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
+pub enum EffectMode {
+    Bypass,
+    Freeze,
+    PhaseRand,
+    SpectralContrast,
+}
+
 #[derive(Params)]
 pub struct SpectralForgeParams {
     #[persist = "editor_state"]
@@ -102,6 +110,15 @@ pub struct SpectralForgeParams {
 
     #[id = "delta_monitor"]
     pub delta_monitor: BoolParam,
+
+    #[id = "effect_mode"]
+    pub effect_mode: EnumParam<EffectMode>,
+
+    #[id = "phase_rand_amount"]
+    pub phase_rand_amount: FloatParam,
+
+    #[id = "spectral_contrast_db"]
+    pub spectral_contrast_db: FloatParam,
 }
 
 impl Default for SpectralForgeParams {
@@ -196,6 +213,19 @@ impl Default for SpectralForgeParams {
 
             auto_makeup: BoolParam::new("Auto Makeup", false),
             delta_monitor: BoolParam::new("Delta Monitor", false),
+
+            effect_mode: EnumParam::new("Effect Mode", EffectMode::Bypass),
+
+            phase_rand_amount: FloatParam::new(
+                "Phase Rand Amount", 0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ).with_smoother(SmoothingStyle::Linear(50.0)),
+
+            spectral_contrast_db: FloatParam::new(
+                "Spectral Contrast", 6.0,
+                FloatRange::Linear { min: 0.0, max: 12.0 },
+            ).with_smoother(SmoothingStyle::Linear(50.0))
+             .with_unit(" dB"),
         }
     }
 }
