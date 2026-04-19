@@ -11,9 +11,7 @@ const CURVE_LABELS: [&str; NUM_CURVE_SETS] =
 
 pub fn create_editor(
     params: Arc<SpectralForgeParams>,
-    curve_tx: Vec<Arc<Mutex<TbInput<Vec<f32>>>>>,
-    phase_curve_tx: Arc<Mutex<TbInput<Vec<f32>>>>,
-    freeze_curve_tx: Vec<Arc<Mutex<TbInput<Vec<f32>>>>>,
+    curve_tx: Vec<Vec<Arc<Mutex<TbInput<Vec<f32>>>>>>,
     sample_rate: Option<Arc<crate::bridge::AtomicF32>>,
     num_bins: usize,
     spectrum_rx: Option<Arc<parking_lot::Mutex<triple_buffer::Output<Vec<f32>>>>>,
@@ -283,15 +281,7 @@ pub fn create_editor(
                             crate::dsp::pipeline::FFT_SIZE, 0.0, 0.0,
                         ) {
                             *params.phase_curve_nodes.lock() = nodes;
-                            if num_bins > 0 {
-                                let full_gains = crv::compute_curve_response(
-                                    &nodes, num_bins, sr, crate::dsp::pipeline::FFT_SIZE,
-                                );
-                                if let Some(mut tx) = phase_curve_tx.try_lock() {
-                                    tx.input_buffer_mut().copy_from_slice(&full_gains);
-                                    tx.publish();
-                                }
-                            }
+                            // Phase curve has no dedicated bridge channel in D1; persisted only.
                         }
                     } else if is_freeze_mode {
                         // Freeze mode: show only the selected freeze curve.
@@ -316,17 +306,7 @@ pub fn create_editor(
                             crate::dsp::pipeline::FFT_SIZE, 0.0, 0.0,
                         ) {
                             params.freeze_curve_nodes.lock()[freeze_active] = nodes_mut;
-                            if num_bins > 0 {
-                                let full_gains = crv::compute_curve_response(
-                                    &nodes_mut, num_bins, sr, crate::dsp::pipeline::FFT_SIZE,
-                                );
-                                if let Some(tx_arc) = freeze_curve_tx.get(freeze_active) {
-                                    if let Some(mut tx) = tx_arc.try_lock() {
-                                        tx.input_buffer_mut().copy_from_slice(&full_gains);
-                                        tx.publish();
-                                    }
-                                }
-                            }
+                            // Freeze curves have no dedicated bridge channel in D1; persisted only.
                         }
                     } else {
                         // Dynamics / other tab: show all 7 dynamics response curves.
@@ -383,10 +363,13 @@ pub fn create_editor(
                                         &nodes, num_bins, sr,
                                         crate::dsp::pipeline::FFT_SIZE,
                                     );
-                                    if let Some(tx_arc) = curve_tx.get(active_idx) {
-                                        if let Some(mut tx) = tx_arc.try_lock() {
-                                            tx.input_buffer_mut().copy_from_slice(&full_gains);
-                                            tx.publish();
+                                    let editing_slot = *params.editing_slot.lock() as usize;
+                                    if let Some(slot_curves) = curve_tx.get(editing_slot) {
+                                        if let Some(tx_arc) = slot_curves.get(active_idx) {
+                                            if let Some(mut tx) = tx_arc.try_lock() {
+                                                tx.input_buffer_mut().copy_from_slice(&full_gains);
+                                                tx.publish();
+                                            }
                                         }
                                     }
                                 }

@@ -182,20 +182,17 @@ impl Pipeline {
         let phase_rand_amount    = params.phase_rand_amount.smoothed.next_step(block_size);
         let spectral_contrast_db = params.spectral_contrast_db.smoothed.next_step(block_size);
 
-        // Read all 7 curve channels into pre-allocated cache buffers (no allocation).
+        // Read all 7 curve channels for slot 0 into pre-allocated cache buffers (no allocation).
         // Each read() borrow ends before the next copy_from_slice begins.
-        self.curve_cache[0].copy_from_slice(shared.curve_rx[0].read());
-        self.curve_cache[1].copy_from_slice(shared.curve_rx[1].read());
-        self.curve_cache[2].copy_from_slice(shared.curve_rx[2].read());
-        self.curve_cache[3].copy_from_slice(shared.curve_rx[3].read());
-        self.curve_cache[4].copy_from_slice(shared.curve_rx[4].read());
-        self.curve_cache[5].copy_from_slice(shared.curve_rx[5].read());
-        self.curve_cache[6].copy_from_slice(shared.curve_rx[6].read());
-        self.phase_curve_cache.copy_from_slice(shared.phase_curve_rx.read());
-        self.freeze_curve_cache[0].copy_from_slice(shared.freeze_curve_rx[0].read());
-        self.freeze_curve_cache[1].copy_from_slice(shared.freeze_curve_rx[1].read());
-        self.freeze_curve_cache[2].copy_from_slice(shared.freeze_curve_rx[2].read());
-        self.freeze_curve_cache[3].copy_from_slice(shared.freeze_curve_rx[3].read());
+        // TODO(Task 5): route per-slot curves through fx_matrix instead of always using slot 0.
+        self.curve_cache[0].copy_from_slice(shared.curve_rx[0][0].read());
+        self.curve_cache[1].copy_from_slice(shared.curve_rx[0][1].read());
+        self.curve_cache[2].copy_from_slice(shared.curve_rx[0][2].read());
+        self.curve_cache[3].copy_from_slice(shared.curve_rx[0][3].read());
+        self.curve_cache[4].copy_from_slice(shared.curve_rx[0][4].read());
+        self.curve_cache[5].copy_from_slice(shared.curve_rx[0][5].read());
+        self.curve_cache[6].copy_from_slice(shared.curve_rx[0][6].read());
+        // Phase and freeze curves are no longer in bridge (removed in D1); caches retain last values.
 
         // Sync GUI routing matrix → DSP send matrix (non-blocking; skip if GUI holds lock).
         if let Some(matrix_guard) = params.fx_route_matrix.try_lock() {
@@ -330,7 +327,8 @@ impl Pipeline {
         // If the sidechain bus exists but is silent (e.g. nothing connected in DAW),
         // fall back to self-detection so normal compression still works.
         let sc_has_signal = sc_active && self.sc_envelope.iter().any(|&v| v > 1e-9);
-        shared.sidechain_active.store(sc_has_signal, std::sync::atomic::Ordering::Relaxed);
+        // Report sidechain activity for aux input 0 (the only one wired in legacy layout).
+        shared.sidechain_active[0].store(sc_has_signal, std::sync::atomic::Ordering::Relaxed);
 
         // Capture sc_envelope before the mutable borrow of self.stft
         let sc_envelope = &self.sc_envelope;
