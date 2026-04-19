@@ -3,11 +3,15 @@ use crate::params::{FxChannelTarget, StereoLink};
 use super::{GainMode, ModuleContext, ModuleType, SpectralModule};
 
 pub struct GainModule {
-    pub mode: GainMode,
+    pub(crate) mode: GainMode,
 }
 
 impl GainModule {
     pub fn new() -> Self { Self { mode: GainMode::Add } }
+}
+
+impl Default for GainModule {
+    fn default() -> Self { Self::new() }
 }
 
 impl SpectralModule for GainModule {

@@ -23,6 +23,10 @@ impl TsSplitModule {
     pub fn sustained_bins(&self) -> &[Complex<f32>] { &self.sustained_out }
 }
 
+impl Default for TsSplitModule {
+    fn default() -> Self { Self::new() }
+}
+
 impl SpectralModule for TsSplitModule {
     fn reset(&mut self, _sample_rate: f32, fft_size: usize) {
         self.fft_size = fft_size;

@@ -28,6 +28,10 @@ impl FreezeModule {
     }
 }
 
+impl Default for FreezeModule {
+    fn default() -> Self { Self::new() }
+}
+
 impl SpectralModule for FreezeModule {
     fn reset(&mut self, sample_rate: f32, fft_size: usize) {
         self.sample_rate    = sample_rate;
@@ -52,6 +56,9 @@ impl SpectralModule for FreezeModule {
         suppression_out: &mut [f32],
         _ctx: &ModuleContext,
     ) {
+        debug_assert_eq!(bins.len(), self.frozen_bins.len(),
+            "FreezeModule: bins/buffer size mismatch — call reset() before process()");
+
         use crate::dsp::pipeline::{FFT_SIZE, OVERLAP};
         let hop_ms = FFT_SIZE as f32 / (OVERLAP as f32 * self.sample_rate) * 1000.0;
 

@@ -18,6 +18,10 @@ impl PhaseSmearModule {
     }
 }
 
+impl Default for PhaseSmearModule {
+    fn default() -> Self { Self::new() }
+}
+
 impl SpectralModule for PhaseSmearModule {
     fn reset(&mut self, _sample_rate: f32, _fft_size: usize) {}
 
@@ -32,6 +36,7 @@ impl SpectralModule for PhaseSmearModule {
         suppression_out: &mut [f32],
         _ctx: &ModuleContext,
     ) {
+        if bins.is_empty() { suppression_out.fill(0.0); return; }
         let last = bins.len() - 1;
         for k in 0..bins.len() {
             // Always advance PRNG to keep the sequence independent of skipping.

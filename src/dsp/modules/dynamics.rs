@@ -35,6 +35,10 @@ impl DynamicsModule {
     }
 }
 
+impl Default for DynamicsModule {
+    fn default() -> Self { Self::new() }
+}
+
 impl SpectralModule for DynamicsModule {
     fn reset(&mut self, sample_rate: f32, fft_size: usize) {
         self.sample_rate = sample_rate;
@@ -76,6 +80,9 @@ impl SpectralModule for DynamicsModule {
             suppression_out.fill(0.0);
             return;
         }
+
+        debug_assert_eq!(bins.len(), self.num_bins,
+            "DynamicsModule: bins/buffer size mismatch — call reset() before process()");
 
         let n   = self.num_bins;
         let atk = ctx.attack_ms;

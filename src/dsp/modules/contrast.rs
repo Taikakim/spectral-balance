@@ -33,6 +33,10 @@ impl ContrastModule {
     }
 }
 
+impl Default for ContrastModule {
+    fn default() -> Self { Self::new() }
+}
+
 impl SpectralModule for ContrastModule {
     fn reset(&mut self, sample_rate: f32, fft_size: usize) {
         self.sample_rate = sample_rate;
