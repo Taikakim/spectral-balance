@@ -3,6 +3,7 @@ pub mod editor;
 pub mod editor_ui;
 pub mod params;
 pub mod bridge;
+pub mod presets;
 
 use nih_plug::prelude::*;
 use params::SpectralForgeParams;
