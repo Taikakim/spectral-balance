@@ -435,6 +435,21 @@ pub fn create_editor(
                         );
                     }
 
+                    // Graph header: "Editing: {module_name} — {channel_target}"
+                    {
+                        let edit_slot = *params.editing_slot.lock() as usize;
+                        let names  = params.fx_module_names.lock();
+                        let tgts   = params.fx_module_targets.lock();
+                        let header = format!("Editing: {} \u{2014} {}", names[edit_slot], tgts[edit_slot].label());
+                        ui.painter().text(
+                            curve_rect.min + egui::vec2(4.0, 4.0),
+                            egui::Align2::LEFT_TOP,
+                            &header,
+                            egui::FontId::proportional(10.0),
+                            th::LABEL_DIM,
+                        );
+                    }
+
                     // ── Bottom strip ─────────────────────────────────────────────
                     ui.add_space(4.0);
                     ui.separator();
