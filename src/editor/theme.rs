@@ -74,11 +74,17 @@ pub const SC_LINE_A:     Color32 = Color32::from_rgb(0xb8, 0xce, 0x95);
 pub const SC_LINE_B:     Color32 = Color32::from_rgb(0xee, 0xb5, 0xe1);
 
 pub const BG:            Color32 = Color32::from_rgb(0x12, 0x12, 0x14);
+pub const BG_RAISED:     Color32 = Color32::from_rgb(0x20, 0x20, 0x20);
+pub const BG_FEEDBACK:   Color32 = Color32::from_rgb(0x14, 0x14, 0x1e);
 pub const GRID_LINE:     Color32 = Color32::from_rgb(0x30, 0x30, 0x30);
 pub const GRID_TEXT:     Color32 = Color32::from_rgb(0x45, 0x45, 0x45);
 pub const TRUE_TIME_LINE:Color32 = Color32::from_rgb(0x80, 0x80, 0x80);
 pub const BORDER:        Color32 = Color32::from_rgb(0x00, 0x88, 0x80);
 pub const LABEL_DIM:     Color32 = Color32::from_rgb(0x44, 0x88, 0x80);
+/// Lit module slot color (Dynamics, selected).
+pub const MODULE_COLOR_LIT: Color32 = Color32::from_rgb(0x50, 0xc0, 0xc4);
+/// Dim module slot color (Dynamics, unselected).
+pub const MODULE_COLOR_DIM: Color32 = Color32::from_rgb(0x20, 0x40, 0x41);
 
 // ─── Freeze curve colours (4 equidistant, 30°, 120°, 210°, 300°) ─────────────
 

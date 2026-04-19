@@ -222,7 +222,7 @@ impl SpectralForgeParams {
 impl Default for SpectralForgeParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(900, 600),
+            editor_state: EguiState::from_size(900, 1010),
             curve_nodes: Arc::new(Mutex::new(
                 std::array::from_fn(|i| crate::editor::curve::default_nodes_for_curve(i))
             )),

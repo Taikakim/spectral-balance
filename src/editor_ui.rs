@@ -580,6 +580,39 @@ pub fn create_editor(
                             _ => {} // Harmonic: row 2 empty for now
                         }
                     });
+
+                    // ── FX Routing Matrix ────────────────────────────────────────
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("ROUTING MATRIX")
+                            .color(th::LABEL_DIM)
+                            .size(9.0),
+                    );
+                    ui.add_space(2.0);
+
+                    // Snapshot current state from params
+                    let edit_slot  = *params.editing_slot.lock() as usize;
+                    let types_snap = *params.fx_module_types.lock();
+                    let names_snap = params.fx_module_names.lock().clone();
+                    let mut matrix = *params.fx_route_matrix.lock();
+
+                    let clicked = crate::editor::fx_matrix_grid::paint_fx_matrix_grid(
+                        ui,
+                        &types_snap,
+                        &names_snap,
+                        &mut matrix,
+                        edit_slot,
+                    );
+
+                    // Write matrix changes back (DragValue may have mutated it)
+                    *params.fx_route_matrix.lock() = matrix;
+
+                    // Update editing slot if a module cell was clicked
+                    if let Some(new_slot) = clicked {
+                        *params.editing_slot.lock() = new_slot as u8;
+                    }
                 });
         },
     )
