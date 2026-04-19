@@ -124,20 +124,14 @@ impl Pipeline {
         let output_gain_db    = params.output_gain.smoothed.next_step(block_size);
 
         // ── Read all 9×7 slot curves from triple-buffer + apply tilt/offset ──
-        // Non-blocking read; skip tilt/offset adjustment this block if GUI holds lock.
-        if let Some(meta) = params.slot_curve_meta.try_lock() {
-            for s in 0..9 {
-                for c in 0..7 {
-                    self.slot_curve_cache[s][c].copy_from_slice(shared.curve_rx[s][c].read());
+        // Non-blocking: if GUI holds the lock this block, skip tilt/offset (not catastrophic).
+        let meta_guard = params.slot_curve_meta.try_lock();
+        for s in 0..9 {
+            for c in 0..7 {
+                self.slot_curve_cache[s][c].copy_from_slice(shared.curve_rx[s][c].read());
+                if let Some(ref meta) = meta_guard {
                     let (tilt, offset) = meta[s][c];
                     apply_curve_transform(&mut self.slot_curve_cache[s][c], tilt, offset);
-                }
-            }
-        } else {
-            // Lock contended: just refresh curve values without tilt/offset
-            for s in 0..9 {
-                for c in 0..7 {
-                    self.slot_curve_cache[s][c].copy_from_slice(shared.curve_rx[s][c].read());
                 }
             }
         }

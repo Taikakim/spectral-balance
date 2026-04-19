@@ -24,15 +24,16 @@ impl FxMatrix {
     pub fn new(sample_rate: f32, fft_size: usize) -> Self {
         let num_bins = fft_size / 2 + 1;
 
-        // Default: slots 0,1 = Dynamics; slot 2 = Gain; slot 8 = Master; rest Empty
+        // Default: slots 0,1 = Dynamics; slot 2 = Gain; slot 8 = Master; slots 3–7 = None (empty).
+        // Storing None (not Some(Empty)) makes the None-branch in process_hop actually fire,
+        // and the backward scan for "previous active slot" works correctly.
         let slots: Vec<Option<Box<dyn SpectralModule>>> = (0..MAX_SLOTS).map(|i| {
-            let ty = match i {
-                0 | 1 => ModuleType::Dynamics,
-                2     => ModuleType::Gain,
-                8     => ModuleType::Master,
-                _     => ModuleType::Empty,
-            };
-            Some(create_module(ty, sample_rate, fft_size))
+            match i {
+                0 | 1 => Some(create_module(ModuleType::Dynamics, sample_rate, fft_size)),
+                2     => Some(create_module(ModuleType::Gain,     sample_rate, fft_size)),
+                8     => Some(create_module(ModuleType::Master,   sample_rate, fft_size)),
+                _     => None,  // slots 3–7 start empty
+            }
         }).collect();
 
         Self {
@@ -47,13 +48,16 @@ impl FxMatrix {
 
     pub fn reset(&mut self, sample_rate: f32, fft_size: usize) {
         let num_bins = fft_size / 2 + 1;
+        // All buffers are pre-allocated to num_bins in new(); resize would allocate if they
+        // somehow shrank. Assert the invariant in debug, then fill without any allocation.
+        debug_assert_eq!(self.slot_out[0].len(), num_bins,
+            "FxMatrix::reset() called with different fft_size than new()");
         for slot in self.slots.iter_mut().flatten() {
             slot.reset(sample_rate, fft_size);
         }
-        for buf in &mut self.slot_out    { buf.resize(num_bins, Complex::new(0.0, 0.0)); buf.fill(Complex::new(0.0, 0.0)); }
-        for buf in &mut self.slot_supp   { buf.resize(num_bins, 0.0); buf.fill(0.0); }
-        for buf in &mut self.virtual_out { buf.resize(num_bins, Complex::new(0.0, 0.0)); buf.fill(Complex::new(0.0, 0.0)); }
-        self.mix_buf.resize(num_bins, Complex::new(0.0, 0.0));
+        for buf in &mut self.slot_out    { buf.fill(Complex::new(0.0, 0.0)); }
+        for buf in &mut self.slot_supp   { buf.fill(0.0); }
+        for buf in &mut self.virtual_out { buf.fill(Complex::new(0.0, 0.0)); }
         self.mix_buf.fill(Complex::new(0.0, 0.0));
     }
 
