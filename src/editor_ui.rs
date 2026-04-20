@@ -3,7 +3,7 @@ use nih_plug_egui::{create_egui_editor, egui};
 use parking_lot::Mutex;
 use triple_buffer::Input as TbInput;
 use std::sync::{Arc, atomic::Ordering};
-use crate::params::{SpectralForgeParams, NUM_CURVE_SETS};
+use crate::params::SpectralForgeParams;
 use crate::editor::{curve as crv, spectrum_display as sd, theme as th};
 
 
@@ -34,41 +34,12 @@ pub fn create_editor(
                 .show(ctx, |ui| {
                     let fft_size     = fft_size_arc.load(Ordering::Relaxed).max(512);
                     let num_bins     = fft_size / 2 + 1;
-                    let active_idx   = *params.active_curve.lock() as usize;
                     let sr           = sample_rate.as_ref().map(|a| a.load()).unwrap_or(44100.0);
                     let db_min       = *params.graph_db_min.lock();
                     let db_max       = *params.graph_db_max.lock();
                     let falloff      = *params.peak_falloff_ms.lock();
                     let atk_ms       = params.attack_ms.value();
                     let rel_ms       = params.release_ms.value();
-                    let active_tab   = *params.active_tab.lock() as usize;
-                    let cur_mode     = params.effect_mode.value();
-                    let freeze_active = *params.freeze_active_curve.lock() as usize;
-
-                    let is_freeze_mode = active_tab == 1
-                        && cur_mode == crate::params::EffectMode::Freeze;
-                    let is_phase_mode  = active_tab == 1
-                        && cur_mode == crate::params::EffectMode::PhaseRand;
-
-                    // Per-curve tilt and offset arrays (indexed by curve_idx).
-                    let tilts = [
-                        params.threshold_tilt.value(),
-                        params.ratio_tilt.value(),
-                        params.attack_tilt.value(),
-                        params.release_tilt.value(),
-                        params.knee_tilt.value(),
-                        params.makeup_tilt.value(),
-                        params.mix_tilt.value(),
-                    ];
-                    let offsets = [
-                        params.threshold_offset.value(),
-                        params.ratio_offset.value(),
-                        params.attack_offset.value(),
-                        params.release_offset.value(),
-                        params.knee_offset.value(),
-                        params.makeup_offset.value(),
-                        params.mix_offset.value(),
-                    ];
 
                     // ── Top bar: curve selectors + range controls ──────────────
                     ui.horizontal(|ui| {
@@ -227,17 +198,9 @@ pub fn create_editor(
                     let mut peak_hold: Vec<f32> = ui.data(|d| d.get_temp(peak_key))
                         .unwrap_or_default();
 
-                    // Determine which curve_idx drives the grid
-                    let grid_curve_idx = if is_freeze_mode {
-                        8 + freeze_active
-                    } else if is_phase_mode {
-                        7
-                    } else {
-                        active_idx
-                    };
-
                     // 1. Grid
-                    crv::paint_grid(ui.painter(), curve_rect, grid_curve_idx, db_min, db_max, sr);
+                    let grid_curve = *params.editing_curve.lock() as usize;
+                    crv::paint_grid(ui.painter(), curve_rect, grid_curve, db_min, db_max, sr);
 
                     // 2. Spectrum + suppression gradient (always shown)
                     if let Some(ref mags) = raw_magnitudes {
@@ -254,113 +217,77 @@ pub fn create_editor(
                         );
                     }
 
-                    // 3 + 4. Response curves + interactive widget
-                    if is_phase_mode {
-                        // Phase mode: single per-bin phase-amount curve.
-                        let phase_nodes = *params.phase_curve_nodes.lock();
-                        let phase_gains = crv::compute_curve_response(
-                            &phase_nodes, num_bins, sr,
-                            fft_size,
-                        );
-                        crv::paint_response_curve(
-                            ui.painter(), curve_rect, &phase_gains, 7,
-                            th::phase_color_lit(), 2.0,
-                            db_min, db_max, atk_ms, rel_ms, sr,
-                            fft_size, 0.0, 0.0,
-                        );
-                        // Interactive widget
-                        let mut nodes = phase_nodes;
-                        if crv::curve_widget(
-                            ui, curve_rect, &mut nodes, &phase_gains,
-                            7, db_min, db_max, atk_ms, rel_ms, sr,
-                            fft_size, 0.0, 0.0,
-                        ) {
-                            *params.phase_curve_nodes.lock() = nodes;
-                            // Phase curve has no dedicated bridge channel in D1; persisted only.
-                        }
-                    } else if is_freeze_mode {
-                        // Freeze mode: show only the selected freeze curve.
-                        let freeze_nodes_all = *params.freeze_curve_nodes.lock();
-                        let freeze_nodes = freeze_nodes_all[freeze_active];
-                        let freeze_gains = crv::compute_curve_response(
-                            &freeze_nodes, num_bins, sr,
-                            fft_size,
-                        );
-                        let freeze_curve_idx = 8 + freeze_active;
-                        crv::paint_response_curve(
-                            ui.painter(), curve_rect, &freeze_gains, freeze_curve_idx,
-                            th::freeze_color_lit(freeze_active), 2.0,
-                            db_min, db_max, atk_ms, rel_ms, sr,
-                            fft_size, 0.0, 0.0,
-                        );
-                        // Interactive widget
-                        let mut nodes_mut = freeze_nodes;
-                        if crv::curve_widget(
-                            ui, curve_rect, &mut nodes_mut, &freeze_gains,
-                            freeze_curve_idx, db_min, db_max, atk_ms, rel_ms, sr,
-                            fft_size, 0.0, 0.0,
-                        ) {
-                            params.freeze_curve_nodes.lock()[freeze_active] = nodes_mut;
-                            // Freeze curves have no dedicated bridge channel in D1; persisted only.
-                        }
-                    } else {
-                        // Dynamics / other tab: show all 7 dynamics response curves.
-                        let nodes_snapshot = *params.curve_nodes.lock();
-                        let cache_key = ui.id().with(("all_display_gains", fft_size));
-                        let cached: Option<([[crv::CurveNode; 6]; NUM_CURVE_SETS], Vec<Vec<f32>>)> =
+                    // 3 + 4. Response curves + interactive widget (unified — all module types)
+                    {
+                        let editing_slot  = *params.editing_slot.lock() as usize;
+                        let slot_types    = *params.slot_module_types.lock();
+                        let editing_type  = slot_types[editing_slot];
+                        let spec          = crate::dsp::modules::module_spec(editing_type);
+                        let num_c         = spec.num_curves;
+                        let raw_curve = *params.editing_curve.lock() as usize;
+                        let editing_curve = if raw_curve >= num_c && num_c > 0 {
+                            *params.editing_curve.lock() = 0;
+                            0
+                        } else {
+                            raw_curve
+                        };
+
+                        let nodes_all = *params.slot_curve_nodes.lock();
+
+                        // Cache key: invalidate when slot type, editing slot, or fft_size changes
+                        let cache_key = ui.id().with(("slot_gains", editing_slot, editing_type as u8, fft_size));
+                        let cached: Option<([[[crv::CurveNode; 6]; 7]; 9], Vec<Vec<f32>>)> =
                             ui.data(|d| d.get_temp(cache_key));
                         let all_gains: Vec<Vec<f32>> = match cached {
-                            Some((cached_nodes, cached_gains)) if cached_nodes == nodes_snapshot => {
-                                cached_gains
-                            }
+                            Some((cn, cg)) if cn == nodes_all => cg,
                             _ => {
-                                let g: Vec<Vec<f32>> = (0..NUM_CURVE_SETS)
-                                    .map(|i| crv::compute_curve_response(
-                                        &nodes_snapshot[i], num_bins, sr,
-                                        fft_size,
+                                let g: Vec<Vec<f32>> = (0..num_c.min(7))
+                                    .map(|c| crv::compute_curve_response(
+                                        &nodes_all[editing_slot][c], num_bins, sr, fft_size,
                                     ))
                                     .collect();
-                                ui.data_mut(|d| d.insert_temp(cache_key, (nodes_snapshot, g.clone())));
+                                ui.data_mut(|d| d.insert_temp(cache_key, (nodes_all, g.clone())));
                                 g
                             }
                         };
 
-                        for i in 0..NUM_CURVE_SETS {
-                            if i == active_idx { continue; }
+                        let meta = *params.slot_curve_meta.lock();
+
+                        // Draw inactive curves (dim)
+                        for i in 0..num_c.min(7) {
+                            if i == editing_curve { continue; }
+                            let (tilt, offset) = meta[editing_slot][i];
                             crv::paint_response_curve(
                                 ui.painter(), curve_rect, &all_gains[i], i,
-                                th::curve_color_dim(i), 1.0,
-                                db_min, db_max, atk_ms, rel_ms, sr,
-                                fft_size,
-                                tilts[i], offsets[i],
+                                spec.color_dim, 1.0,
+                                db_min, db_max, atk_ms, rel_ms, sr, fft_size, tilt, offset,
                             );
                         }
-                        crv::paint_response_curve(
-                            ui.painter(), curve_rect, &all_gains[active_idx], active_idx,
-                            th::curve_color_lit(active_idx), 2.0,
-                            db_min, db_max, atk_ms, rel_ms, sr,
-                            fft_size,
-                            tilts[active_idx], offsets[active_idx],
-                        );
 
-                        // Interactive nodes — Dynamics tab only
-                        if active_tab == 0 {
-                            let mut nodes = nodes_snapshot[active_idx];
+                        // Draw active curve (lit) + interactive widget
+                        if editing_curve < num_c && !all_gains.is_empty() {
+                            let (tilt, offset) = meta[editing_slot][editing_curve];
+                            crv::paint_response_curve(
+                                ui.painter(), curve_rect, &all_gains[editing_curve], editing_curve,
+                                spec.color_lit, 2.0,
+                                db_min, db_max, atk_ms, rel_ms, sr, fft_size, tilt, offset,
+                            );
+
+                            let mut nodes = nodes_all[editing_slot][editing_curve];
                             if crv::curve_widget(
-                                ui, curve_rect, &mut nodes, &all_gains[active_idx],
-                                active_idx, db_min, db_max, atk_ms, rel_ms, sr,
-                                fft_size,
-                                tilts[active_idx], offsets[active_idx],
+                                ui, curve_rect, &mut nodes, &all_gains[editing_curve],
+                                editing_curve, db_min, db_max, atk_ms, rel_ms, sr, fft_size,
+                                tilt, offset,
                             ) {
-                                params.curve_nodes.lock()[active_idx] = nodes;
+                                params.slot_curve_nodes.lock()[editing_slot][editing_curve] = nodes;
+                                // Publish updated gains to triple buffer
                                 {
                                     use crate::dsp::pipeline::MAX_NUM_BINS;
                                     let full_gains = crv::compute_curve_response(
                                         &nodes, MAX_NUM_BINS, sr, fft_size,
                                     );
-                                    let editing_slot = *params.editing_slot.lock() as usize;
-                                    if let Some(slot_curves) = curve_tx.get(editing_slot) {
-                                        if let Some(tx_arc) = slot_curves.get(active_idx) {
+                                    if let Some(slot_chs) = curve_tx.get(editing_slot) {
+                                        if let Some(tx_arc) = slot_chs.get(editing_curve) {
                                             if let Some(mut tx) = tx_arc.try_lock() {
                                                 tx.input_buffer_mut().copy_from_slice(&full_gains);
                                                 tx.publish();
@@ -375,19 +302,14 @@ pub fn create_editor(
                             if let Some(hover) = ui.input(|i| i.pointer.hover_pos()) {
                                 if curve_rect.contains(hover) {
                                     let freq = crv::screen_to_freq(hover.x, curve_rect, max_hz);
-                                    let val  = crv::screen_y_to_physical(hover.y, active_idx, db_min, db_max, curve_rect);
-                                    let unit = crv::curve_y_unit(active_idx);
+                                    let val  = crv::screen_y_to_physical(hover.y, editing_curve, db_min, db_max, curve_rect);
+                                    let unit = crv::curve_y_unit(editing_curve);
                                     let freq_str = if freq >= 1_000.0 {
                                         format!("{:.2} kHz", freq / 1_000.0)
                                     } else {
                                         format!("{:.0} Hz", freq)
                                     };
-                                    let val_str = match active_idx {
-                                        1 => format!("{:.2} {}", val, unit),
-                                        2 | 3 => format!("{:.1} {}", val, unit),
-                                        6 => format!("{:.1} {}", val, unit),
-                                        _ => format!("{:.1} {}", val, unit),
-                                    };
+                                    let val_str = format!("{:.1} {}", val, unit);
                                     let label   = format!("{}\n{}", freq_str, val_str);
                                     let tip_pos = hover + egui::vec2(12.0, -28.0);
                                     let font    = egui::FontId::proportional(10.0);
@@ -404,17 +326,6 @@ pub fn create_editor(
                                 }
                             }
                         }
-                    }
-
-                    // Harmonic placeholder text
-                    if active_tab == 2 {
-                        ui.painter().text(
-                            curve_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "Harmonic — coming soon",
-                            egui::FontId::proportional(14.0),
-                            th::LABEL_DIM,
-                        );
                     }
 
                     // Graph header: "Editing: {module_name} — {channel_target}"
