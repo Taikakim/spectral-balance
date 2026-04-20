@@ -354,3 +354,23 @@ fn fx_matrix_dynamics_produces_finite_output() {
         assert!(s.is_finite() && s >= 0.0, "suppression[{k}] = {s}");
     }
 }
+
+#[test]
+fn fft_size_choice_variants_and_max_bins() {
+    use spectral_forge::params::{FftSizeChoice, fft_size_from_choice};
+    use spectral_forge::dsp::pipeline::MAX_NUM_BINS;
+
+    let pairs: &[(FftSizeChoice, usize)] = &[
+        (FftSizeChoice::S512,   512),
+        (FftSizeChoice::S1024,  1024),
+        (FftSizeChoice::S2048,  2048),
+        (FftSizeChoice::S4096,  4096),
+        (FftSizeChoice::S8192,  8192),
+        (FftSizeChoice::S16384, 16384),
+    ];
+    for &(choice, expected) in pairs {
+        assert_eq!(fft_size_from_choice(choice), expected);
+        assert!(expected / 2 + 1 <= MAX_NUM_BINS,
+            "fft_size {} → {} bins exceeds MAX_NUM_BINS {}", expected, expected/2+1, MAX_NUM_BINS);
+    }
+}

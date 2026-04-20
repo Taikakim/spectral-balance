@@ -23,6 +23,20 @@ pub mod curve_idx {
 pub enum ThresholdMode { Absolute, Relative }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
+pub enum FftSizeChoice { S512, S1024, S2048, S4096, S8192, S16384 }
+
+pub fn fft_size_from_choice(c: FftSizeChoice) -> usize {
+    match c {
+        FftSizeChoice::S512   => 512,
+        FftSizeChoice::S1024  => 1024,
+        FftSizeChoice::S2048  => 2048,
+        FftSizeChoice::S4096  => 4096,
+        FftSizeChoice::S8192  => 8192,
+        FftSizeChoice::S16384 => 16384,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
 pub enum StereoLink { Independent, Linked, MidSide }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
@@ -215,6 +229,9 @@ pub struct SpectralForgeParams {
 
     #[id = "stereo_link"]
     pub stereo_link: EnumParam<StereoLink>,
+
+    #[id = "fft_size"]
+    pub fft_size: EnumParam<FftSizeChoice>,
 
     #[id = "threshold_mode"]
     pub threshold_mode: EnumParam<ThresholdMode>,
@@ -410,6 +427,7 @@ impl Default for SpectralForgeParams {
              .with_unit(" ms"),
 
             stereo_link: EnumParam::new("Stereo Link", StereoLink::Linked),
+            fft_size: EnumParam::new("FFT Size", FftSizeChoice::S2048),
             threshold_mode: EnumParam::new("Threshold Mode", ThresholdMode::Absolute),
 
             sensitivity: FloatParam::new(

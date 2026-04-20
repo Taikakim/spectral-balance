@@ -6,6 +6,8 @@ use crate::bridge::SharedState;
 pub const FFT_SIZE: usize = 2048;
 pub const NUM_BINS: usize = FFT_SIZE / 2 + 1;
 pub const OVERLAP: usize = 4; // 75% overlap → hop = 512
+pub const MAX_FFT_SIZE: usize = 16384;
+pub const MAX_NUM_BINS: usize = MAX_FFT_SIZE / 2 + 1;
 
 /// Maximum block size assumed for the delta monitor dry-delay ring buffer.
 /// nih-plug typically processes in blocks of ≤ 8192 samples.
