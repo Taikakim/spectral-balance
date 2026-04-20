@@ -130,3 +130,29 @@ cargo test stft       # STFT roundtrip test only
 ## Credits
 
 Built on [nih-plug](https://github.com/robbert-vdh/nih-plug) (Robbert van der Helm), [realfft](https://github.com/HEnquist/realfft) (Henrik Enquist), [triple_buffer](https://github.com/HadrienG2/triple-buffer), and the [CLAP plugin standard](https://github.com/free-audio/clap) (Alexandre Bique et al.). Phase vocoder algorithm references from [pvx](https://github.com/TheColby/pvx) (Colby Leider). See [CREDITS.md](CREDITS.md) for full details.
+
+## License
+              
+    The original source code in this repository is dedicated to the
+    public domain under the                                        
+    [Creative Commons Zero v1.0 Universal (CC0-1.0)](https://creativecommons.org/publicdomain/zero/1.0/legalcode).
+    To the extent possible under law, the author has waived all copyright                                         
+    and related or neighbouring rights to this work.                     
+                                                    
+    ### Third-party components
+                              
+    The compiled plugin binary links against third-party libraries that
+    retain their own licenses. Distributions of the compiled binary must
+    preserve their notices:                                             
+                           
+    | Library | License |
+    |---------|---------|
+    | [nih-plug](https://github.com/robbert-vdh/nih-plug) | ISC |
+    | [egui](https://github.com/emilk/egui) | MIT OR Apache-2.0 |
+    | [realfft](https://github.com/HEnquist/realfft) | MIT |     
+    | [triple_buffer](https://github.com/HadrienG2/triple-buffer) | LGPL-3.0 | (I need to check the exact requirements for this)
+    | [parking_lot](https://github.com/Amanieu/parking_lot) | MIT OR Apache-2.0 |
+                                                                                 
+    Run `cargo license` in the repository for the full dependency list.
+                                                                       
+
