@@ -275,9 +275,12 @@ pub fn create_editor(
                     let mut peak_hold: Vec<f32> = ui.data(|d| d.get_temp(peak_key))
                         .unwrap_or_default();
 
-                    // 1. Grid
-                    let grid_curve = *params.editing_curve.lock() as usize;
-                    crv::paint_grid(ui.painter(), curve_rect, grid_curve, db_min, db_max, sr);
+                    // 1. Grid — use display_curve_idx so axis units match the active module type
+                    let grid_editing_slot  = *params.editing_slot.lock() as usize;
+                    let grid_editing_type  = params.slot_module_types.lock()[grid_editing_slot];
+                    let grid_curve_raw     = *params.editing_curve.lock() as usize;
+                    let grid_display_idx   = crv::display_curve_idx(grid_editing_type, grid_curve_raw);
+                    crv::paint_grid(ui.painter(), curve_rect, grid_display_idx, db_min, db_max, sr);
 
                     // 2. Spectrum + suppression gradient (always shown)
                     if let Some(ref mags) = raw_magnitudes {
@@ -330,12 +333,13 @@ pub fn create_editor(
 
                         let meta = *params.slot_curve_meta.lock();
 
-                        // Draw inactive curves (dim)
+                        // Draw inactive curves (dim) — display_curve_idx maps to correct y-axis scale
                         for i in 0..num_c.min(7) {
                             if i == editing_curve { continue; }
                             let (tilt, offset) = meta[editing_slot][i];
+                            let disp_i = crv::display_curve_idx(editing_type, i);
                             crv::paint_response_curve(
-                                ui.painter(), curve_rect, &all_gains[i], i,
+                                ui.painter(), curve_rect, &all_gains[i], disp_i,
                                 spec.color_dim, 1.0,
                                 db_min, db_max, atk_ms, rel_ms, sr, fft_size, tilt, offset,
                             );
@@ -344,8 +348,9 @@ pub fn create_editor(
                         // Draw active curve (lit) + interactive widget
                         if editing_curve < num_c && !all_gains.is_empty() {
                             let (tilt, offset) = meta[editing_slot][editing_curve];
+                            let disp_curve = crv::display_curve_idx(editing_type, editing_curve);
                             crv::paint_response_curve(
-                                ui.painter(), curve_rect, &all_gains[editing_curve], editing_curve,
+                                ui.painter(), curve_rect, &all_gains[editing_curve], disp_curve,
                                 spec.color_lit, 2.0,
                                 db_min, db_max, atk_ms, rel_ms, sr, fft_size, tilt, offset,
                             );
@@ -372,13 +377,13 @@ pub fn create_editor(
                                 }
                             }
 
-                            // Cursor tooltip
+                            // Cursor tooltip — use display index for correct physical units
                             let max_hz = (sr / 2.0).max(20_001.0);
                             if let Some(hover) = ui.input(|i| i.pointer.hover_pos()) {
                                 if curve_rect.contains(hover) {
                                     let freq = crv::screen_to_freq(hover.x, curve_rect, max_hz);
-                                    let val  = crv::screen_y_to_physical(hover.y, editing_curve, db_min, db_max, curve_rect);
-                                    let unit = crv::curve_y_unit(editing_curve);
+                                    let val  = crv::screen_y_to_physical(hover.y, disp_curve, db_min, db_max, curve_rect);
+                                    let unit = crv::curve_y_unit(disp_curve);
                                     let freq_str = if freq >= 1_000.0 {
                                         format!("{:.2} kHz", freq / 1_000.0)
                                     } else {
@@ -636,17 +641,19 @@ pub fn create_editor(
                             let mut meta = *params.slot_curve_meta.lock();
                             let (tilt, offset) = &mut meta[editing_slot][editing_curve];
                             let mut changed = false;
+                            // Offset range calibrated per display type so ±max spans the full parameter range
+                            let off_max = crv::curve_offset_max(crv::display_curve_idx(editing_type, editing_curve));
                             ui.vertical(|ui| {
                                 if ui.add(
                                     egui::DragValue::new(offset)
-                                        .range(-3.0..=3.0).speed(0.005).fixed_decimals(3)
+                                        .range(-off_max..=off_max).speed(0.005).fixed_decimals(3)
                                 ).changed() { changed = true; }
                                 ui.label(egui::RichText::new("Offset").color(crv_col).size(9.0));
                             });
                             ui.vertical(|ui| {
                                 if ui.add(
                                     egui::DragValue::new(tilt)
-                                        .range(-3.0..=3.0).speed(0.005).fixed_decimals(3)
+                                        .range(-2.0..=2.0).speed(0.005).fixed_decimals(3)
                                 ).changed() { changed = true; }
                                 ui.label(egui::RichText::new("Tilt").color(crv_col).size(9.0));
                             });

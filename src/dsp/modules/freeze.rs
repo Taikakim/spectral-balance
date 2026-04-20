@@ -73,26 +73,34 @@ impl SpectralModule for FreezeModule {
             self.freeze_captured = true;
         }
 
+        // Calibrate threshold to raw FFT bin magnitudes.
+        // Raw bins for a 0 dBFS sine ≈ fft_size/4, matching the Dynamics compressor convention.
+        let norm_factor = ctx.fft_size as f32 / 4.0;
+
         let n = bins.len();
         for k in 0..n {
             let dry = bins[k];
 
             // Map per-bin curve gains to physical parameter values.
             let length_ms   = (curves.get(0).and_then(|c| c.get(k)).copied().unwrap_or(1.0)
-                               * 500.0).clamp(0.0, 2000.0);
-            let length_hops = (length_ms / hop_ms).ceil() as u32;
+                               * 500.0).clamp(0.0, 4000.0);
+            let length_hops = ((length_ms / hop_ms).ceil() as u32).max(1);
 
             let thr_gain      = curves.get(1).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
             let thr_db        = linear_to_db(thr_gain);
             let threshold_db  = (-20.0 + thr_db * (60.0 / 18.0)).clamp(-80.0, 0.0);
-            let threshold_lin = 10.0f32.powf(threshold_db / 20.0);
+            // Multiply by norm_factor so threshold_lin is on the same scale as bins[k].norm().
+            let threshold_lin = 10.0f32.powf(threshold_db / 20.0) * norm_factor;
 
             let port_ms   = (curves.get(2).and_then(|c| c.get(k)).copied().unwrap_or(1.0)
-                             * 100.0).clamp(0.0, 1000.0);
+                             * 200.0).clamp(0.0, 1000.0);
             let port_hops = (port_ms / hop_ms).max(0.5);
 
-            let resistance = (curves.get(3).and_then(|c| c.get(k)).copied().unwrap_or(1.0)
-                              * 1.0).clamp(0.0, 5.0);
+            // Resistance is a dimensionless relative-excess threshold (0–2).
+            // Accumulation uses normalised excess (mag/threshold − 1), so the value
+            // is independent of signal level and FFT size.
+            let resistance = curves.get(3).and_then(|c| c.get(k)).copied().unwrap_or(1.0)
+                             .clamp(0.0, 2.0);
 
             if self.freeze_port_t[k] < 1.0 {
                 // Portamento in progress: advance and interpolate.
@@ -103,13 +111,14 @@ impl SpectralModule for FreezeModule {
                     self.frozen_bins[k].im * (1.0 - t) + self.freeze_target[k].im * t,
                 );
             } else {
-                // Settled: hold and accumulate energy toward next transition.
+                // Settled: hold and accumulate normalised excess energy toward next transition.
                 self.freeze_hold_hops[k] += 1;
                 let mag = bins[k].norm();
-                if mag > threshold_lin {
-                    self.freeze_accum[k] += mag - threshold_lin;
+                if mag > threshold_lin && threshold_lin > 0.0 {
+                    // Relative excess: 0 at threshold, 1 when mag = 2× threshold (+6 dB)
+                    self.freeze_accum[k] += mag / threshold_lin - 1.0;
                 }
-                // Trigger state change when hold duration and resistance both met.
+                // Trigger when hold duration AND accumulated excess both met.
                 if self.freeze_hold_hops[k] >= length_hops && self.freeze_accum[k] >= resistance {
                     self.freeze_target[k]    = bins[k];
                     self.freeze_port_t[k]    = 0.0;

@@ -1,6 +1,7 @@
 use serde::{Serialize, Deserialize};
 use nih_plug_egui::egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, Ui, Vec2};
 use crate::editor::theme as th;
+use crate::dsp::modules::ModuleType;
 
 /// Paint a dashed polyline through `pts` with the given `stroke`.
 /// `dash` and `gap` are in pixels.
@@ -188,6 +189,75 @@ pub fn screen_to_freq(x: f32, rect: Rect, max_hz: f32) -> f32 {
     20.0 * 10.0_f32.powf(t * (max_hz / 20.0).log10())
 }
 
+/// Map a per-module curve slot index to the canonical display index used by
+/// gain_to_display, physical_to_y, screen_y_to_physical, curve_grid_lines, and curve_y_unit.
+///
+/// Display indices:
+///   0  Threshold dBFS           1  Ratio 1–20           2/3 Attack/Release ms
+///   4  Knee dB                  5  Makeup/Gain dB        6  Mix %
+///   7  Amount 0–200%            8  Freeze Length ms      9  Freeze Threshold dBFS
+///   10 Portamento/SC-smooth ms  11 Resistance 0–2
+pub fn display_curve_idx(module_type: ModuleType, curve_idx: usize) -> usize {
+    match module_type {
+        ModuleType::Dynamics => match curve_idx {
+            5 => 6,             // MIX → % display (was wrongly shown as Makeup dB)
+            n => n,
+        },
+        ModuleType::Freeze => match curve_idx {
+            0 => 8,             // LENGTH → ms (log, 10–4000)
+            1 => 9,             // THRESHOLD → dBFS
+            2 => 10,            // PORTAMENTO → ms (log, 1–1000)
+            3 => 11,            // RESISTANCE → dimensionless 0–2
+            4 => 6,             // MIX → %
+            _ => curve_idx,
+        },
+        ModuleType::PhaseSmear => match curve_idx {
+            0 => 7,             // AMOUNT → 0–200 %
+            1 => 10,            // SC SMOOTH → ms (log, treated as time constant)
+            2 => 6,             // MIX → %
+            _ => curve_idx,
+        },
+        ModuleType::Contrast => match curve_idx {
+            0 => 1,             // AMOUNT → ratio 1–20 (maps gain directly to bp_ratio)
+            1 => 10,            // SC SMOOTH → ms
+            _ => curve_idx,
+        },
+        ModuleType::Gain => match curve_idx {
+            0 => 5,             // GAIN → dB (same ±18 dB makeup scale)
+            1 => 10,            // SC SMOOTH → ms
+            _ => curve_idx,
+        },
+        ModuleType::MidSide => match curve_idx {
+            0 | 1 => 7,         // BALANCE / EXPANSION → 0–200 % (neutral = 100 %)
+            _ => 6,             // DECORREL / TRANSIENT / PAN → 0–100 %
+        },
+        ModuleType::TransientSustainedSplit => match curve_idx {
+            0 => 6,             // SENSITIVITY → 0–100 %
+            _ => curve_idx,
+        },
+        _ => curve_idx,
+    }
+}
+
+/// Maximum absolute value for the Offset drag-slider, per display index.
+/// The offset is added to the raw linear gain before display mapping, so
+/// the range should span from the parameter minimum to maximum.
+pub fn curve_offset_max(display_idx: usize) -> f32 {
+    match display_idx {
+        0 | 9  => 1.5,  // Threshold dBFS: ±1.5 gain ≈ ±30 dBFS shift
+        1      => 5.0,  // Ratio: ±5 ratio units
+        2 | 3  => 1.0,  // Attack/Release multiplier: ±1× of global value
+        4      => 2.0,  // Knee dB: ±2 gain
+        5      => 2.0,  // Makeup/Gain dB: ±2 gain ≈ ±12 dB
+        6      => 1.0,  // Mix %: ±1 covers 0–200 %
+        7      => 1.0,  // Amount/Balance 0–200 %: ±1 covers full range
+        8      => 2.0,  // Freeze Length: ±2 shifts the flat curve by ±1000 ms
+        10     => 1.0,  // Portamento/SC Smooth ms: ±1 of neutral
+        11     => 1.0,  // Resistance 0–2: ±1 covers full range
+        _      => 1.5,
+    }
+}
+
 /// Inverse of `physical_to_y` — pixel y → physical value for tooltip display.
 pub fn screen_y_to_physical(y: f32, curve_idx: usize, db_min: f32, db_max: f32, rect: Rect) -> f32 {
     let t = ((rect.bottom() - y) / rect.height()).clamp(0.0, 1.0);
@@ -199,32 +269,26 @@ pub fn screen_y_to_physical(y: f32, curve_idx: usize, db_min: f32, db_max: f32, 
         5 => -18.0 + t * 36.0,
         6 => t * 100.0,
         7 => t * 200.0,
-        8 => 10.0 * 200.0_f32.powf(t),
+        8 => 10.0 * 400.0_f32.powf(t),   // Freeze Length: 10ms–4000ms log
         9 => -80.0 + t * 80.0,
         10 => 1000.0_f32.powf(t),
-        11 => t * 5.0,
+        11 => t * 2.0,                    // Resistance 0–2
         _ => 0.0,
     }
 }
 
-/// Labels for the 4 Freeze per-bin curve buttons.
-pub const FREEZE_CURVE_LABELS: [&str; 4] = ["LENGTH", "THRESHOLD", "PORTAMENTO", "RESISTANCE"];
-
-/// Unit label for a curve's y-axis (used in cursor tooltip).
-pub fn curve_y_unit(curve_idx: usize) -> &'static str {
-    match curve_idx {
-        0 => "dBFS",
-        1 => "x",
-        2 | 3 => "ms",
-        4 => "dB",
-        5 => "dB",
-        6 => "%",
-        7 => "%",      // Phase Amount
-        8 => "ms",     // Freeze Length
-        9 => "dBFS",   // Freeze Threshold
-        10 => "ms",    // Freeze Portamento
-        11 => "",      // Freeze Resistance (dimensionless)
-        _ => "",
+/// Unit label for a curve's y-axis (used in cursor tooltip, indexed by display_curve_idx).
+pub fn curve_y_unit(display_idx: usize) -> &'static str {
+    match display_idx {
+        0 | 9  => "dBFS",
+        1      => "x",
+        2 | 3  => "ms",
+        4      => "dB",
+        5      => "dB",
+        6 | 7  => "%",
+        8 | 10 => "ms",
+        11     => "",       // Resistance: dimensionless
+        _      => "",
     }
 }
 
@@ -286,13 +350,13 @@ pub fn gain_to_display(
         6 => (gain * 100.0).clamp(0.0, 100.0),
         // Effects curves — tilt/offset not used (passed as 0.0/0.0 from UI)
         7 => gain.clamp(0.0, 2.0) * 100.0,                  // Phase Amount: 0-200%
-        8 => (gain * 500.0).clamp(0.0, 2000.0),             // Freeze Length: 0-2000ms
+        8 => (gain * 500.0).clamp(0.0, 4000.0),             // Freeze Length: 0-4000ms (neutral=500ms)
         9 => {                                               // Freeze Threshold: dBFS
             let t_db = if gain > 1e-10 { 20.0 * gain.log10() } else { -120.0 };
             (-20.0 + t_db * (60.0 / 18.0)).clamp(-80.0, 0.0)
         }
-        10 => (gain * 100.0).clamp(0.0, 1000.0),            // Portamento: 0-1000ms
-        11 => (gain * 1.0).clamp(0.0, 5.0),                 // Resistance: 0-5
+        10 => (gain * 200.0).clamp(0.0, 1000.0),            // Portamento/SC Smooth: 0-1000ms (neutral=200ms)
+        11 => gain.clamp(0.0, 2.0),                          // Resistance: 0-2 (normalised excess)
         _ => gain,
     }
 }
@@ -308,10 +372,10 @@ pub fn physical_to_y(v: f32, curve_idx: usize, db_min: f32, db_max: f32, rect: R
         5 => linear_to_y(v, -18.0, 18.0, rect),
         6 => linear_to_y(v, 0.0, 100.0, rect),
         7 => linear_to_y(v, 0.0, 200.0, rect),
-        8 => log_to_y(v.max(10.0), 10.0, 2000.0, rect),
+        8 => log_to_y(v.max(10.0), 10.0, 4000.0, rect),    // Freeze Length 10ms–4000ms
         9 => linear_to_y(v, -80.0, 0.0, rect),
         10 => log_to_y(v.max(1.0), 1.0, 1000.0, rect),
-        11 => linear_to_y(v, 0.0, 5.0, rect),
+        11 => linear_to_y(v, 0.0, 2.0, rect),               // Resistance 0–2
         _ => rect.center().y,
     }
 }
@@ -382,6 +446,7 @@ fn curve_grid_lines(curve_idx: usize, db_min: f32, db_max: f32) -> Vec<(f32, Str
             (100.0,  "100ms".to_string()),
             (500.0,  "500ms".to_string()),
             (1000.0, "1s".to_string()),
+            (2000.0, "2s".to_string()),
         ],
         9 => vec![
             (-12.0, "-12dB".to_string()),
@@ -394,9 +459,9 @@ fn curve_grid_lines(curve_idx: usize, db_min: f32, db_max: f32) -> Vec<(f32, Str
             (500.0, "500ms".to_string()),
         ],
         11 => vec![
+            (0.5,  "0.5".to_string()),
             (1.0,  "1.0".to_string()),
-            (2.5,  "2.5".to_string()),
-            (4.0,  "4.0".to_string()),
+            (1.5,  "1.5".to_string()),
         ],
         _ => vec![],
     }
