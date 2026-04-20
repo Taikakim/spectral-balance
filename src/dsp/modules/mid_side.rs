@@ -1,5 +1,6 @@
 use num_complex::Complex;
 use crate::params::{FxChannelTarget, StereoLink};
+use crate::dsp::utils::xorshift64;
 use super::{ModuleContext, ModuleType, SpectralModule};
 
 pub struct MidSideModule {
@@ -13,12 +14,7 @@ impl MidSideModule {
         Self { rng_state: 0xdeadbeefcafebabe, num_bins: 0 }
     }
 
-    fn xorshift64(state: &mut u64) -> u64 {
-        *state ^= *state << 13;
-        *state ^= *state >> 7;
-        *state ^= *state << 17;
-        *state
-    }
+
 }
 
 impl Default for MidSideModule {
@@ -34,7 +30,7 @@ impl SpectralModule for MidSideModule {
     fn process(
         &mut self,
         channel:      usize,
-        stereo_link:  StereoLink,
+        _stereo_link: StereoLink,
         _target:      FxChannelTarget,
         bins:         &mut [Complex<f32>],
         _sidechain:   Option<&[f32]>,
@@ -43,11 +39,6 @@ impl SpectralModule for MidSideModule {
         _ctx:         &ModuleContext,
     ) {
         suppression_out.fill(0.0);
-
-        // Only active in MidSide mode
-        if stereo_link != StereoLink::MidSide {
-            return;
-        }
 
         let n = bins.len();
 
@@ -77,7 +68,7 @@ impl SpectralModule for MidSideModule {
 
                     let dec_amt = decorrel.get(k).copied().unwrap_or(0.0).clamp(0.0, 2.0);
                     let phase_rot = if dec_amt > 0.001 {
-                        let rnd = Self::xorshift64(&mut self.rng_state) as f32 / u64::MAX as f32;
+                        let rnd = xorshift64(&mut self.rng_state) as f32 / u64::MAX as f32;
                         (rnd - 0.5) * 2.0 * std::f32::consts::PI * dec_amt
                     } else {
                         0.0

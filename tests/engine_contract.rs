@@ -491,10 +491,10 @@ fn mid_side_module_compiles_and_passes_through_at_neutral() {
     m.process(1, StereoLink::MidSide, FxChannelTarget::All, &mut side_bins, None, curves, &mut supp, &ctx);
     assert!(side_bins[10].norm() > 0.1, "side signal should survive neutral M/S processing");
 
-    // When NOT in MidSide mode → pass through (suppression_out zeroed, bins unchanged)
+    // When NOT in MidSide mode — neutral balance (1.0) → mid_scale = sqrt(1.0) = 1.0 → bins unchanged
     let mut bypass_bins = vec![Complex::new(1.0f32, 0.0); n];
     m.process(0, StereoLink::Linked, FxChannelTarget::All, &mut bypass_bins, None, curves, &mut supp, &ctx);
-    assert_eq!(bypass_bins[10].re, 1.0, "MidSide module should pass through when not in M/S mode");
+    assert!((bypass_bins[10].re - 1.0).abs() < 1e-5, "MidSide module with neutral balance should pass through in Linked mode, got {}", bypass_bins[10].re);
 }
 
 #[test]
@@ -608,4 +608,39 @@ fn contrast_module_neutral_curve_passes_flat_spectrum() {
             "bin {k}: expected output within 1% of {input_mag}, got {out_mag}"
         );
     }
+}
+
+#[test]
+fn mid_side_module_processes_in_linked_mode() {
+    use spectral_forge::dsp::modules::{
+        create_module, ModuleType, ModuleContext, SpectralModule,
+    };
+    use spectral_forge::params::{StereoLink, FxChannelTarget};
+    use num_complex::Complex;
+
+    let n = 1025usize;
+    let mut m = create_module(ModuleType::MidSide, 44100.0, 2048);
+
+    let ones = vec![1.0f32; n];
+    // Balance=0.5 (cut mid to 0, boost side) should change the output in Linked mode
+    let half = vec![0.5f32; n];
+    let zeros = vec![0.0f32; n];
+    let curves_storage: [&[f32]; 5] = [&half, &ones, &zeros, &ones, &ones];
+    let curves: &[&[f32]] = &curves_storage;
+
+    let mut bins = vec![Complex::new(1.0f32, 0.0); n];
+    let mut supp = vec![0.0f32; n];
+    let ctx = ModuleContext {
+        sample_rate: 44100.0, fft_size: 2048, num_bins: n,
+        attack_ms: 10.0, release_ms: 100.0, sensitivity: 0.0,
+        suppression_width: 0.0, auto_makeup: false, delta_monitor: false,
+    };
+
+    // Channel 0 in Linked mode: balance=0.5 → mid_scale = sqrt(0.5) ≈ 0.707 → bins reduced
+    m.process(0, StereoLink::Linked, FxChannelTarget::All, &mut bins, None, curves, &mut supp, &ctx);
+    let out_mag = bins[10].norm();
+    assert!(
+        out_mag < 0.95,
+        "M/S module with balance=0.5 should reduce channel 0 in Linked mode, got {:.4}", out_mag
+    );
 }
