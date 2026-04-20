@@ -241,9 +241,9 @@ pub fn create_editor(
 
                     // ── Spectrum / curve area ─────────────────────────────────────
                     // strip_height reserves space for: control knobs (105) + routing matrix section
-                    // (8 × 48px cells + ~30px header/padding = 414). The window height (1010) was
+                    // (9 × 44px cells + 14px header + 30px padding = 440). The window height (1010) was
                     // set to accommodate all three areas.
-                    const MATRIX_AREA_H: f32 = 8.0 * 48.0 + 30.0; // 414 px
+                    const MATRIX_AREA_H: f32 = 9.0 * 44.0 + 14.0 + 30.0; // 440 px
                     let strip_height = 105.0 + MATRIX_AREA_H;
                     let avail = ui.available_rect_before_wrap();
                     let curve_rect = egui::Rect::from_min_max(
@@ -635,25 +635,21 @@ pub fn create_editor(
 
                     // Snapshot current state from params
                     let edit_slot  = *params.editing_slot.lock() as usize;
-                    let types_snap = *params.fx_module_types.lock();
-                    let names_snap = params.fx_module_names.lock().clone();
-                    let mut matrix = *params.fx_route_matrix.lock();
-
-                    let clicked = crate::editor::fx_matrix_grid::paint_fx_matrix_grid(
+                    let types_snap = *params.slot_module_types.lock();
+                    let names_snap = *params.slot_names.lock();
+                    let route_matrix_ref = &mut *params.route_matrix.lock();
+                    let interaction = crate::editor::fx_matrix_grid::paint_fx_matrix_grid(
                         ui,
                         &types_snap,
                         &names_snap,
-                        &mut matrix,
+                        route_matrix_ref,
                         edit_slot,
                     );
-
-                    // Write matrix changes back (DragValue may have mutated it)
-                    *params.fx_route_matrix.lock() = matrix;
-
-                    // Update editing slot if a module cell was clicked
-                    if let Some(new_slot) = clicked {
+                    if let Some(new_slot) = interaction.left_click_slot {
                         *params.editing_slot.lock() = new_slot as u8;
                     }
+                    // right_click will be handled in Task 3 (module popup)
+                    let _ = interaction.right_click;
                 });
         },
     )
