@@ -112,18 +112,36 @@ impl Plugin for SpectralForge {
         if let Some(ref sh) = self.shared {
             sh.sample_rate.store(sr);
 
-            // Push initial per-bin curves computed from persisted slot_curve_nodes so
-            // restored sessions start with the correct gain values on the first block.
-            let nodes = self.params.slot_curve_nodes.lock();
             let num_bins_local = num_bins;
-            for slot in 0..9 {
-                for curve in 0..7 {
+            // The editing slot is shown in the GUI using `curve_nodes` (the legacy 7-curve
+            // store). Publish from there so the displayed curve response matches the DSP on
+            // first load — otherwise the GUI might show a 2:1 ratio while the DSP applies 1:1.
+            let editing_slot = (*self.params.editing_slot.lock() as usize).min(8);
+            {
+                let legacy = self.params.curve_nodes.lock();
+                for c in 0..7 {
                     let gains = crate::editor::curve::compute_curve_response(
-                        &nodes[slot][curve], num_bins_local, sr, dsp::pipeline::FFT_SIZE,
+                        &legacy[c], num_bins_local, sr, dsp::pipeline::FFT_SIZE,
                     );
-                    if let Some(mut tx) = self.gui_curve_tx[slot][curve].try_lock() {
+                    if let Some(mut tx) = self.gui_curve_tx[editing_slot][c].try_lock() {
                         tx.input_buffer_mut().copy_from_slice(&gains);
                         tx.publish();
+                    }
+                }
+            }
+            // All other slots: publish from their persisted slot_curve_nodes.
+            {
+                let nodes = self.params.slot_curve_nodes.lock();
+                for s in 0..9 {
+                    if s == editing_slot { continue; }
+                    for c in 0..7 {
+                        let gains = crate::editor::curve::compute_curve_response(
+                            &nodes[s][c], num_bins_local, sr, dsp::pipeline::FFT_SIZE,
+                        );
+                        if let Some(mut tx) = self.gui_curve_tx[s][c].try_lock() {
+                            tx.input_buffer_mut().copy_from_slice(&gains);
+                            tx.publish();
+                        }
                     }
                 }
             }
@@ -161,4 +179,17 @@ impl ClapPlugin for SpectralForge {
     ];
 }
 
+impl Vst3Plugin for SpectralForge {
+    // Every VST3 plugin requires a globally unique 16-byte ID.
+    // This is exactly 16 characters long.
+    const VST3_CLASS_ID: [u8; 16] = *b"TaikakimSpcForge";
+
+    // This tells the DAW what folder to put your plugin in.
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
+        Vst3SubCategory::Fx,
+        Vst3SubCategory::Dynamics,
+    ];
+}
+
 nih_export_clap!(SpectralForge);
+nih_export_vst3!(SpectralForge);

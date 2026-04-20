@@ -300,7 +300,9 @@ impl Default for SpectralForgeParams {
             slot_sidechain: Arc::new(Mutex::new([255u8; 9])),
             slot_gain_mode: Arc::new(Mutex::new([GainMode::Add; 9])),
             slot_curve_nodes: Arc::new(Mutex::new(
-                [[[CurveNode::default(); NUM_NODES]; 7]; 9]
+                std::array::from_fn(|_s| {
+                    std::array::from_fn(|c| crate::editor::curve::default_nodes_for_curve(c))
+                })
             )),
             slot_curve_meta: Arc::new(Mutex::new([[(0.0f32, 0.0f32); 7]; 9])),
             editing_curve:   Arc::new(Mutex::new(0u8)),
