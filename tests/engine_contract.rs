@@ -486,3 +486,32 @@ fn matrix_routing_serial_default_passes_signal() {
     // Signal should make it through: at least some bins are non-zero.
     assert!(bins.iter().any(|c| c.norm() > 0.01), "signal lost through matrix");
 }
+
+#[test]
+fn fx_matrix_sync_slot_types_activates_new_module() {
+    use spectral_forge::dsp::{
+        modules::ModuleType,
+        fx_matrix::FxMatrix,
+    };
+
+    // Start with only Master in slot 8
+    let mut types = [ModuleType::Empty; 9];
+    types[8] = ModuleType::Master;
+    let mut fm = FxMatrix::new(44100.0, 2048, &types);
+
+    // Sync: add Dynamics to slot 0
+    types[0] = ModuleType::Dynamics;
+    fm.sync_slot_types(&types, 44100.0, 2048);
+
+    // Slot 0 must now contain a module of type Dynamics
+    assert!(fm.slots[0].is_some(), "slot 0 should have Dynamics after sync");
+    assert_eq!(
+        fm.slots[0].as_ref().unwrap().module_type(),
+        ModuleType::Dynamics
+    );
+
+    // Sync: remove it
+    types[0] = ModuleType::Empty;
+    fm.sync_slot_types(&types, 44100.0, 2048);
+    assert!(fm.slots[0].is_none(), "slot 0 should be None after sync to Empty");
+}

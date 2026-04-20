@@ -46,6 +46,24 @@ impl FxMatrix {
         self.mix_buf.fill(Complex::new(0.0, 0.0));
     }
 
+    /// Sync slot modules to the given type array. Called once per audio block.
+    /// - Slot going to Empty: drops the existing module (dealloc only, fast).
+    /// - Slot getting a new type: creates a module via permit_alloc (intentional
+    ///   one-time allocation on user action; not per-sample).
+    pub fn sync_slot_types(&mut self, types: &[ModuleType; 9], sample_rate: f32, fft_size: usize) {
+        for s in 0..MAX_SLOTS {
+            let current = self.slots[s].as_ref().map(|m| m.module_type())
+                .unwrap_or(ModuleType::Empty);
+            if current == types[s] { continue; }
+            if types[s] == ModuleType::Empty {
+                self.slots[s] = None;
+            } else {
+                let new_mod = nih_plug::util::permit_alloc(|| create_module(types[s], sample_rate, fft_size));
+                self.slots[s] = Some(new_mod);
+            }
+        }
+    }
+
     /// Propagate per-slot GainMode from params to GainModule instances.
     /// Called once per audio block (before process_hop).
     pub fn set_gain_modes(&mut self, modes: &[GainMode; 9]) {

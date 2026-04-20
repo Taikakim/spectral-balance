@@ -155,7 +155,7 @@ impl Pipeline {
                 self.slot_curve_cache[s][c].copy_from_slice(&shared.curve_rx[s][c].read()[..MAX_NUM_BINS]);
                 if let Some(ref meta) = meta_guard {
                     let (tilt, offset) = meta[s][c];
-                    apply_curve_transform(&mut self.slot_curve_cache[s][c], tilt, offset);
+                    apply_curve_transform(&mut self.slot_curve_cache[s][c], tilt, offset, self.sample_rate, self.fft_size);
                 }
             }
         }
@@ -291,6 +291,12 @@ impl Pipeline {
                     *r = s;
                 }
             }
+        }
+
+        // Sync module types from params (non-blocking; skipped if GUI holds lock).
+        // Handles add/remove of modules at runtime after initialize().
+        if let Some(types) = params.slot_module_types.try_lock() {
+            self.fx_matrix.sync_slot_types(&*types, self.sample_rate, self.fft_size);
         }
 
         // Propagate gain modes each block (try_lock is non-blocking; skipped if GUI holds lock).
