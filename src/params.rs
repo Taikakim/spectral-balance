@@ -167,6 +167,8 @@ pub struct SpectralForgeParams {
     pub graph_db_max: Arc<Mutex<f32>>,      // dBFS ceiling of spectrum display, default 0
     #[persist = "peak_falloff_ms"]
     pub peak_falloff_ms: Arc<Mutex<f32>>,   // spectrum peak hold decay time 0–5000 ms
+    #[persist = "ui_scale"]
+    pub ui_scale: Arc<Mutex<f32>>,          // GUI scale factor: 1.0 / 1.25 / 1.5 / 1.75 / 2.0
 
     #[id = "input_gain"]
     pub input_gain: FloatParam,
@@ -349,6 +351,7 @@ impl Default for SpectralForgeParams {
             graph_db_min:    Arc::new(Mutex::new(-100.0)),
             graph_db_max:    Arc::new(Mutex::new(0.0)),
             peak_falloff_ms: Arc::new(Mutex::new(300.0)),
+            ui_scale:        Arc::new(Mutex::new(1.0)),
 
             input_gain: FloatParam::new(
                 "Input Gain", 0.0,

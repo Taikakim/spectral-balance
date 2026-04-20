@@ -30,6 +30,24 @@ pub fn create_editor(
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 return;
             }
+
+            // Apply UI scale every frame.  pixels_per_point scales all egui content.
+            // ViewportCommand::InnerSize asks the host to resize the OS window to match.
+            {
+                let scale = *params.ui_scale.lock();
+                ctx.set_pixels_per_point(scale);
+                let w = (900.0 * scale).round() as u32;
+                let h = (1010.0 * scale).round() as u32;
+                // Only send the resize if the stored size disagrees with the target,
+                // to avoid sending it every frame.
+                let cur = params.editor_state.size();
+                if cur != (w, h) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
+                        egui::vec2(w as f32, h as f32),
+                    ));
+                }
+            }
+
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE.fill(th::BG))
                 .show(ctx, |ui| {
@@ -158,6 +176,35 @@ pub fn create_editor(
                                 setter.begin_set_parameter(&params.fft_size);
                                 setter.set_parameter(&params.fft_size, choice);
                                 setter.end_set_parameter(&params.fft_size);
+                            }
+                        }
+
+                        ui.add_space(12.0);
+                        ui.label(egui::RichText::new("Scale").color(th::LABEL_DIM).size(9.0));
+                        ui.add_space(2.0);
+
+                        const SCALE_STEPS: &[(f32, &str)] = &[
+                            (1.0,  "1×"),
+                            (1.25, "1.25×"),
+                            (1.5,  "1.5×"),
+                            (1.75, "1.75×"),
+                            (2.0,  "2×"),
+                        ];
+                        let cur_scale = *params.ui_scale.lock();
+                        for &(scale, label) in SCALE_STEPS {
+                            let is_active = (cur_scale - scale).abs() < 0.01;
+                            let (fill, text_color) = if is_active {
+                                (th::BORDER, th::BG)
+                            } else {
+                                (th::BG, th::LABEL_DIM)
+                            };
+                            let btn = egui::Button::new(
+                                egui::RichText::new(label).color(text_color).size(10.0),
+                            )
+                            .fill(fill)
+                            .stroke(egui::Stroke::new(th::STROKE_BORDER, th::BORDER));
+                            if ui.add(btn).clicked() {
+                                *params.ui_scale.lock() = scale;
                             }
                         }
                     });

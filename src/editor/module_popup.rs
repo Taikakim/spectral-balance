@@ -125,11 +125,19 @@ pub fn open_popup(ui: &mut Ui, slot: usize, pos: Pos2) {
     ui.data_mut(|d| d.insert_temp(key, PopupState { open: true, slot, pos }));
 }
 
-/// Assign a module type to a slot: update slot_module_types, reset slot_curve_nodes.
+/// Assign a module type to a slot: update slot_module_types, reset slot_curve_nodes, set name.
 fn assign_module(params: &SpectralForgeParams, slot: usize, ty: ModuleType) {
     params.slot_module_types.lock()[slot] = ty;
-    // Reset curve nodes for this slot to defaults.
+    // Default the slot name to the module's display name (skip Empty and Master which keep
+    // their existing names).
     let spec = module_spec(ty);
+    if ty != ModuleType::Empty && ty != ModuleType::Master {
+        let b = spec.display_name.as_bytes();
+        let len = b.len().min(32);
+        let mut names = params.slot_names.lock();
+        names[slot].fill(0);
+        names[slot][..len].copy_from_slice(&b[..len]);
+    }
     let mut nodes = params.slot_curve_nodes.lock();
     for c in 0..spec.num_curves.min(7) {
         nodes[slot][c] = crate::editor::curve::default_nodes_for_curve(c);
