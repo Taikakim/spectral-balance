@@ -560,3 +560,63 @@ fn fx_matrix_sync_slot_types_activates_new_module() {
     fm.sync_slot_types(&types, 44100.0, 2048);
     assert!(fm.slots[0].is_none(), "slot 0 should be None after sync to Empty");
 }
+
+#[test]
+fn contrast_module_neutral_curve_maps_to_ratio_one() {
+    use spectral_forge::dsp::{
+        modules::{create_module, ModuleType, ModuleContext, SpectralModule},
+    };
+    use spectral_forge::params::{StereoLink, FxChannelTarget};
+    use num_complex::Complex;
+
+    // This test directly verifies that a neutral AMOUNT curve (all 1.0)
+    // results in ratio=1.0 (no contrast effect), not ratio=2.0.
+    // We test this indirectly: a single loud bin in silence should be
+    // unaffected when ratio=1.0, but would be boosted significantly if ratio=2.0.
+
+    let n = 1025usize;
+    let mut m = create_module(ModuleType::Contrast, 44100.0, 2048);
+
+    // Neutral AMOUNT curve: all bins at y=0 → gain=1.0 → should map to ratio=1.0
+    let ones = vec![1.0f32; n];
+    let curves_storage: [&[f32]; 2] = [&ones, &ones];
+    let curves: &[&[f32]] = &curves_storage;
+
+    // Single loud bin in silence: a high-contrast signal
+    let floor_mag = 0.1f32;  // very quiet floor to maximize deviation
+    let peak_mag = 256.0f32;
+    let mut supp = vec![0.0f32; n];
+    let ctx = ModuleContext {
+        sample_rate: 44100.0, fft_size: 2048, num_bins: n,
+        attack_ms: 10.0, release_ms: 100.0, sensitivity: 0.0,
+        suppression_width: 0.0,  // No smoothing to test raw per-bin gain
+        auto_makeup: false, delta_monitor: false,
+    };
+
+    // Converge the contrast envelope
+    for _ in 0..500 {
+        let mut bins = vec![Complex::new(floor_mag, 0.0); n];
+        bins[512] = Complex::new(peak_mag, 0.0);
+        m.process(0, StereoLink::Linked, FxChannelTarget::All, &mut bins, None, curves, &mut supp, &ctx);
+    }
+
+    let mut final_bins = vec![Complex::new(floor_mag, 0.0); n];
+    final_bins[512] = Complex::new(peak_mag, 0.0);
+    m.process(0, StereoLink::Linked, FxChannelTarget::All, &mut final_bins, None, curves, &mut supp, &ctx);
+
+    // If the formula is CORRECT (ratio=1.0 at neutral):
+    //   gr = deviation_db * (1.0 - 1.0) = 0, so peak is unchanged
+    // If formula is WRONG (ratio=2.0 at neutral):
+    //   gr = deviation_db * (2.0 - 1.0) = deviation_db > 0, peak is boosted significantly
+    // With floor=0.1 and peak=256, deviation is ~48 dB, so boost would be ~48 dB,
+    // making final peak > 256 * 10 = 2560.
+
+    let peak_output = final_bins[512].norm();
+    assert!(
+        peak_output < peak_mag * 1.5,  // Allow 50% tolerance for envelope convergence
+        "contrast neutral AMOUNT should produce ratio=1.0 (no effect). \
+         Got peak output {:.1} vs input {:.1}. \
+         If ratio=2.0 (bug), output would be >2560.",
+        peak_output, peak_mag
+    );
+}

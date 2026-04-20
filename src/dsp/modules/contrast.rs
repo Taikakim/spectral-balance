@@ -66,7 +66,7 @@ impl SpectralModule for ContrastModule {
         let n = self.num_bins;
         for k in 0..n {
             let amount = curves.get(0).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
-            self.bp_ratio[k]     = (1.0 + amount).max(0.0).clamp(0.0, 20.0);
+            self.bp_ratio[k]     = amount.max(1.0).min(20.0);
             self.bp_threshold[k] = -20.0;
             self.bp_attack[k]    = ctx.attack_ms.clamp(0.1, 500.0);
             self.bp_release[k]   = ctx.release_ms.clamp(1.0, 2000.0);
