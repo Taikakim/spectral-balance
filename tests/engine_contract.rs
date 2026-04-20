@@ -170,6 +170,51 @@ fn fx_module_type_dynamics_is_slot_zero() {
     assert_eq!(*p.editing_slot.lock(), 0u8);
 }
 
+#[test]
+fn fx_matrix_no_route_to_master_produces_silence() {
+    use spectral_forge::dsp::{
+        modules::{ModuleType, ModuleContext, RouteMatrix},
+        fx_matrix::FxMatrix,
+        pipeline::MAX_NUM_BINS,
+    };
+    use spectral_forge::params::{StereoLink, FxChannelTarget};
+    use num_complex::Complex;
+
+    let n = 1025usize;
+    let mut types = [ModuleType::Empty; 9];
+    types[0] = ModuleType::Dynamics;
+    types[8] = ModuleType::Master;
+    let mut fm = FxMatrix::new(44100.0, 2048, &types);
+
+    // Use a route matrix with NO send to Master (slot 8)
+    let mut rm = RouteMatrix::default();
+    rm.send[0][1] = 1.0;
+    rm.send[1][2] = 1.0;
+    rm.send[2][8] = 0.0;   // explicitly clear the default route to Master
+
+    let mut bins: Vec<Complex<f32>> = vec![Complex::new(1.0, 0.0); n];
+    let curves: Vec<Vec<Vec<f32>>> = (0..9)
+        .map(|_| (0..7).map(|_| vec![1.0f32; MAX_NUM_BINS]).collect())
+        .collect();
+    let mut supp = vec![0.0f32; n];
+    let sc: [Option<&[f32]>; 9] = [None; 9];
+    let targets = [FxChannelTarget::All; 9];
+    let ctx = ModuleContext {
+        sample_rate: 44100.0, fft_size: 2048, num_bins: n,
+        attack_ms: 10.0, release_ms: 100.0, sensitivity: 0.0,
+        suppression_width: 0.0, auto_makeup: false, delta_monitor: false,
+    };
+    fm.process_hop(0, StereoLink::Linked, &mut bins, &sc, &targets, &curves, &rm, &ctx, &mut supp, n);
+
+    // All bins should be zero when nothing routes to Master
+    for (k, b) in bins.iter().enumerate() {
+        assert!(
+            b.norm() < 1e-6,
+            "bin {k} should be silent when nothing routes to Master, got {}", b.norm()
+        );
+    }
+}
+
 // ── FxMatrix tests ───────────────────────────────────────────────────────────
 
 fn make_default_fx_matrix() -> spectral_forge::dsp::fx_matrix::FxMatrix {

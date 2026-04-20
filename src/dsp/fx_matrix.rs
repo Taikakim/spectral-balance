@@ -137,24 +137,13 @@ impl FxMatrix {
         }
 
         // Master output: accumulate sends to slot 8.
+        // If nothing routes to Master, mix_buf stays zeroed → silence.
         self.mix_buf[..num_bins].fill(Complex::new(0.0, 0.0));
-        let any_to_master = (0..8).any(|src| route_matrix.send[src][8] > 0.001);
-        if any_to_master {
-            for src in 0..8 {
-                let send = route_matrix.send[src][8];
-                if send < 0.001 { continue; }
-                for k in 0..num_bins {
-                    self.mix_buf[k] += self.slot_out[src][k] * send;
-                }
-            }
-        } else {
-            // Fallback: last populated slot's output goes to Master.
-            // If all slots 0-7 are empty, mix_buf stays zeroed → silence.
-            for src in (0..8).rev() {
-                if self.slots[src].is_some() {
-                    self.mix_buf[..num_bins].copy_from_slice(&self.slot_out[src][..num_bins]);
-                    break;
-                }
+        for src in 0..8 {
+            let send = route_matrix.send[src][8];
+            if send < 0.001 { continue; }
+            for k in 0..num_bins {
+                self.mix_buf[k] += self.slot_out[src][k] * send;
             }
         }
         // Pass through Master module (slot 8) then write to complex_buf.
