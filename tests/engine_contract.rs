@@ -648,9 +648,9 @@ fn ts_split_virtual_outputs_populated_after_process() {
 }
 
 #[test]
-fn fx_matrix_ts_split_routes_transient_to_next_slot() {
+fn fx_matrix_ts_split_routes_sustained_to_next_slot() {
     use spectral_forge::dsp::{
-        modules::{ModuleType, ModuleContext, RouteMatrix, VirtualRowKind, MAX_SLOTS},
+        modules::{ModuleType, ModuleContext, RouteMatrix, VirtualRowKind, MAX_SLOTS, MAX_MATRIX_ROWS},
         fx_matrix::FxMatrix,
         pipeline::MAX_NUM_BINS,
     };
@@ -669,7 +669,7 @@ fn fx_matrix_ts_split_routes_transient_to_next_slot() {
     // After convergence the steady-state signal is classified as sustained,
     // so we route the Sustained output to verify virtual rows carry energy.
     let mut rm = RouteMatrix::default();
-    rm.send = [[0.0f32; 9]; 13];             // clear all
+    rm.send = [[0.0f32; MAX_SLOTS]; MAX_MATRIX_ROWS]; // clear all
     rm.send[MAX_SLOTS + 0][1] = 1.0;         // virtual row 0 → slot 1
     rm.send[1][8] = 1.0;                     // slot 1 → Master
     rm.virtual_rows[0] = Some((0, VirtualRowKind::Sustained)); // row 0 = sustained of slot 0
