@@ -31,20 +31,28 @@ pub fn create_editor(
                 return;
             }
 
-            // Apply UI scale every frame.  pixels_per_point scales all egui content.
-            // ViewportCommand::InnerSize asks the host to resize the OS window to match.
+            // Scaling: derive pixels_per_point from the actual physical window width so
+            // content always fills the window during async host resize transitions.
+            // set_requested_size() asks the host to resize; ppp tracks actual size so
+            // there is no black gap between scale changes.
             {
                 let scale = *params.ui_scale.lock();
-                ctx.set_pixels_per_point(scale);
-                let w = (900.0 * scale).round() as u32;
-                let h = (1010.0 * scale).round() as u32;
-                // Only send the resize if the stored size disagrees with the target,
-                // to avoid sending it every frame.
-                let cur = params.editor_state.size();
-                if cur != (w, h) {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
-                        egui::vec2(w as f32, h as f32),
-                    ));
+                const NOMINAL_W: f32 = 900.0;
+                const NOMINAL_H: f32 = 1010.0;
+                let actual_w = ctx.input(|i| i.screen_rect().width());
+                // ppp = actual physical width / nominal design width.
+                // Clamp to [0.5, 4.0] to guard against degenerate window states.
+                let ppp = (actual_w / NOMINAL_W).clamp(0.5, 4.0);
+                ctx.set_pixels_per_point(ppp);
+
+                // Only send resize request when the target scale changes.
+                let last_key = egui::Id::new("last_ui_scale");
+                let last: f32 = ctx.data(|d| d.get_temp(last_key).unwrap_or(-1.0));
+                if (last - scale).abs() > 0.001 {
+                    let w = (NOMINAL_W * scale).round() as u32;
+                    let h = (NOMINAL_H * scale).round() as u32;
+                    params.editor_state.set_requested_size((w, h));
+                    ctx.data_mut(|d| d.insert_temp(last_key, scale));
                 }
             }
 
@@ -233,19 +241,34 @@ pub fn create_editor(
                     );
                     ui.allocate_rect(curve_rect, egui::Sense::hover());
 
-                    // Read spectrum + suppression from bridge
+                    // Read spectrum + suppression from bridge.
+                    // Cache the last successful read so try_lock misses don't flicker.
+                    let spec_cache_key = ui.id().with("spectrum_cache");
+                    let supp_cache_key = ui.id().with("suppression_cache");
+
                     let mut raw_magnitudes: Option<Vec<f32>> = None;
-                    let mut suppression_data: Vec<f32> = Vec::new();
                     if let Some(ref rx_arc) = spectrum_rx {
                         if let Some(mut rx) = rx_arc.try_lock() {
-                            raw_magnitudes = Some(rx.read()[..num_bins].to_vec());
+                            let v = rx.read()[..num_bins].to_vec();
+                            ui.data_mut(|d| d.insert_temp(spec_cache_key, v.clone()));
+                            raw_magnitudes = Some(v);
+                        } else {
+                            raw_magnitudes = ui.data(|d| d.get_temp(spec_cache_key));
                         }
                     }
-                    if let Some(ref rx_arc) = suppression_rx {
+
+                    let suppression_data: Vec<f32> = if let Some(ref rx_arc) = suppression_rx {
                         if let Some(mut rx) = rx_arc.try_lock() {
-                            suppression_data = rx.read()[..num_bins].to_vec();
+                            let v = rx.read()[..num_bins].to_vec();
+                            ui.data_mut(|d| d.insert_temp(supp_cache_key, v.clone()));
+                            v
+                        } else {
+                            ui.data(|d| d.get_temp::<Vec<f32>>(supp_cache_key))
+                                .unwrap_or_default()
                         }
-                    }
+                    } else {
+                        Vec::new()
+                    };
 
                     // Peak-hold buffer
                     let peak_key = ui.id().with("peak_hold");
@@ -616,14 +639,14 @@ pub fn create_editor(
                             ui.vertical(|ui| {
                                 if ui.add(
                                     egui::DragValue::new(offset)
-                                        .range(-1.0..=1.0).speed(0.005).fixed_decimals(3)
+                                        .range(-3.0..=3.0).speed(0.005).fixed_decimals(3)
                                 ).changed() { changed = true; }
                                 ui.label(egui::RichText::new("Offset").color(crv_col).size(9.0));
                             });
                             ui.vertical(|ui| {
                                 if ui.add(
                                     egui::DragValue::new(tilt)
-                                        .range(-1.0..=1.0).speed(0.005).fixed_decimals(3)
+                                        .range(-3.0..=3.0).speed(0.005).fixed_decimals(3)
                                 ).changed() { changed = true; }
                                 ui.label(egui::RichText::new("Tilt").color(crv_col).size(9.0));
                             });
