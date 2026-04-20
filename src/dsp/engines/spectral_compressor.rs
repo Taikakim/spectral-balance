@@ -1,5 +1,36 @@
 use num_complex::Complex;
+use multiversion::multiversion;
 use super::{SpectralEngine, BinParams};
+
+/// Apply per-bin gain reduction, makeup, and wet/dry mix to complex bins.
+///
+/// Extracted so `#[multiversion]` generates AVX2/SSE4.1/scalar variants and selects
+/// the best at runtime via CPUID. The loop has no cross-bin dependencies and is purely
+/// scalar arithmetic — ideal for auto-vectorisation.
+///
+/// `auto_scale` is `−1.0` when auto-makeup is active, `0.0` otherwise, hoisting the
+/// branch outside the loop so the vectoriser sees a simple multiply-accumulate.
+#[multiversion(targets("x86_64+avx2+fma", "x86_64+sse4.1"))]
+fn apply_gains(
+    bins:           &mut [Complex<f32>],
+    smooth_buf:     &[f32],
+    makeup_db:      &[f32],
+    auto_makeup_db: &[f32],
+    mix:            &[f32],
+    suppression_out: &mut [f32],
+    auto_scale:     f32,
+) {
+    // Use exp(x * LN_10/20) instead of 10^(x/20): identical result, but LLVM can
+    // vectorise exp() to _mm256_exp_ps with SVML whereas powf blocks auto-vec.
+    const LN10_OVER_20: f32 = std::f32::consts::LN_10 / 20.0;
+    for k in 0..bins.len() {
+        let total_db    = smooth_buf[k] + makeup_db[k] + auto_scale * auto_makeup_db[k];
+        let linear_gain = (total_db * LN10_OVER_20).exp();
+        let mix_k       = mix[k].clamp(0.0, 1.0);
+        bins[k]          = bins[k] * (1.0 - mix_k + mix_k * linear_gain);
+        suppression_out[k] = (-smooth_buf[k]).max(0.0);
+    }
+}
 
 #[derive(Default)]
 pub struct SpectralCompressorEngine {
@@ -187,16 +218,17 @@ impl SpectralEngine for SpectralCompressorEngine {
                 + (1.0 - coeff_slow) * effective_gr;
         }
 
-        // Pass 3 — apply smoothed gain reduction + makeup + mix
-        for k in 0..n {
-            // Auto-makeup: compensate average GR so long-term level stays constant
-            let auto_comp = if params.auto_makeup { -self.auto_makeup_db[k] } else { 0.0 };
-            let total_db    = self.smooth_buf[k] + params.makeup_db[k] + auto_comp;
-            let linear_gain = 10.0f32.powf(total_db / 20.0);
-            let mix         = params.mix[k].clamp(0.0, 1.0);
-            bins[k] = bins[k] * (1.0 - mix + mix * linear_gain);
-            suppression_out[k] = (-self.smooth_buf[k]).max(0.0);
-        }
+        // Pass 3 — apply smoothed gain reduction + makeup + mix (SIMD-dispatched)
+        let auto_scale = if params.auto_makeup { -1.0f32 } else { 0.0f32 };
+        apply_gains(
+            bins,
+            &self.smooth_buf[..n],
+            params.makeup_db,
+            &self.auto_makeup_db[..n],
+            params.mix,
+            suppression_out,
+            auto_scale,
+        );
     }
 
     fn name(&self) -> &'static str { "Spectral Compressor" }
