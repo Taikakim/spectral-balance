@@ -33,16 +33,24 @@ pub fn create_editor(
 
             // Scaling: derive pixels_per_point from the actual physical window width so
             // content always fills the window during async host resize transitions.
-            // set_requested_size() asks the host to resize; ppp tracks actual size so
-            // there is no black gap between scale changes.
+            //
+            // screen_rect() is in egui *logical* pixels (points), which depend on the ppp
+            // we set in the PREVIOUS frame.  Computing ppp directly from logical pixels
+            // creates a feedback loop that oscillates every frame:
+            //   frame N (ppp=1.25): logical_w = 1125/1.25 = 900 → new_ppp = 1.0
+            //   frame N+1 (ppp=1.0): logical_w = 1125/1.0 = 1125 → new_ppp = 1.25, repeat.
+            //
+            // Fix: read the previous frame's ppp BEFORE changing it, then recover the
+            // physical pixel width as logical_w × old_ppp, which is frame-stable.
             {
                 let scale = *params.ui_scale.lock();
                 const NOMINAL_W: f32 = 900.0;
                 const NOMINAL_H: f32 = 1010.0;
-                let actual_w = ctx.input(|i| i.screen_rect().width());
-                // ppp = actual physical width / nominal design width.
-                // Clamp to [0.5, 4.0] to guard against degenerate window states.
-                let ppp = (actual_w / NOMINAL_W).clamp(0.5, 4.0);
+                // Must read old_ppp before set_pixels_per_point to avoid aliasing.
+                let old_ppp   = ctx.pixels_per_point();
+                let logical_w = ctx.input(|i| i.screen_rect().width());
+                let physical_w = logical_w * old_ppp; // physical pixels — stable across frames
+                let ppp = (physical_w / NOMINAL_W).clamp(0.5, 4.0);
                 ctx.set_pixels_per_point(ppp);
 
                 // Only send resize request when the target scale changes.
