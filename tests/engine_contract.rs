@@ -414,6 +414,45 @@ fn gain_module_set_gain_mode_changes_behavior() {
 }
 
 #[test]
+fn mid_side_module_compiles_and_passes_through_at_neutral() {
+    use num_complex::Complex;
+    use spectral_forge::dsp::modules::{
+        create_module, ModuleType, ModuleContext, SpectralModule,
+    };
+    use spectral_forge::params::{FxChannelTarget, StereoLink};
+
+    let n = 1025usize;
+    let mut m = create_module(ModuleType::MidSide, 44100.0, 2048);
+
+    let ones = vec![1.0f32; n];
+    let curves_storage: [&[f32]; 5] = [&ones, &ones, &ones, &ones, &ones];
+    let curves: &[&[f32]] = &curves_storage;
+
+    let mut bins = vec![Complex::new(1.0f32, 0.0); n];
+    let mut supp = vec![0.0f32; n];
+    let ctx = ModuleContext {
+        sample_rate: 44100.0, fft_size: 2048, num_bins: n,
+        attack_ms: 10.0, release_ms: 100.0, sensitivity: 0.0,
+        suppression_width: 0.0, auto_makeup: false, delta_monitor: false,
+    };
+
+    // Mid channel — neutral balance (1.0) → mid_scale = sqrt(1.0) = 1.0 → bins unchanged
+    m.process(0, StereoLink::MidSide, FxChannelTarget::All, &mut bins, None, curves, &mut supp, &ctx);
+    let mid_out = bins[10].norm();
+    assert!(mid_out > 0.5, "mid signal should survive neutral M/S processing, got {}", mid_out);
+
+    // Side channel — neutral: bal=1 → side_scale=1, exp=1 → no change
+    let mut side_bins = vec![Complex::new(0.5f32, 0.0); n];
+    m.process(1, StereoLink::MidSide, FxChannelTarget::All, &mut side_bins, None, curves, &mut supp, &ctx);
+    assert!(side_bins[10].norm() > 0.1, "side signal should survive neutral M/S processing");
+
+    // When NOT in MidSide mode → pass through (suppression_out zeroed, bins unchanged)
+    let mut bypass_bins = vec![Complex::new(1.0f32, 0.0); n];
+    m.process(0, StereoLink::Linked, FxChannelTarget::All, &mut bypass_bins, None, curves, &mut supp, &ctx);
+    assert_eq!(bypass_bins[10].re, 1.0, "MidSide module should pass through when not in M/S mode");
+}
+
+#[test]
 fn matrix_routing_serial_default_passes_signal() {
     use num_complex::Complex;
     use spectral_forge::dsp::{
