@@ -69,4 +69,8 @@ impl SpectralModule for TsSplitModule {
     fn module_type(&self) -> ModuleType { ModuleType::TransientSustainedSplit }
     fn num_curves(&self) -> usize { 1 }
     fn num_outputs(&self) -> Option<usize> { Some(2) }
+
+    fn virtual_outputs(&self) -> Option<[&[Complex<f32>]; 2]> {
+        Some([&self.transient_out, &self.sustained_out])
+    }
 }

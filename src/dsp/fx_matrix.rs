@@ -1,7 +1,7 @@
 use num_complex::Complex;
 use crate::dsp::modules::{
     ModuleContext, ModuleType, RouteMatrix, GainMode, SpectralModule,
-    create_module, MAX_SLOTS, MAX_SPLIT_VIRTUAL_ROWS,
+    create_module, MAX_SLOTS, MAX_SPLIT_VIRTUAL_ROWS, VirtualRowKind,
 };
 use crate::params::{FxChannelTarget, StereoLink};
 
@@ -89,6 +89,11 @@ impl FxMatrix {
         suppression_out: &mut [f32],
         num_bins:        usize,
     ) {
+        // Clear virtual row output buffers for this hop.
+        for v in 0..MAX_SPLIT_VIRTUAL_ROWS {
+            self.virtual_out[v][..num_bins].fill(Complex::new(0.0, 0.0));
+        }
+
         for s in 0..8 {  // 0..8, not 0..MAX_SLOTS; Master (slot 8) is handled separately below
             // Build this slot's input from the route matrix.
             // Slot 0 always receives the plugin's main audio input.
@@ -102,6 +107,18 @@ impl FxMatrix {
                 if send < 0.001 { continue; }
                 for k in 0..num_bins {
                     self.mix_buf[k] += self.slot_out[src][k] * send;
+                }
+            }
+            // Accumulate from virtual rows (T/S Split transient/sustained outputs).
+            for (v, &vrow) in route_matrix.virtual_rows.iter().enumerate() {
+                if let Some((src_slot, _kind)) = vrow {
+                    if (src_slot as usize) < s {
+                        let send = route_matrix.send[MAX_SLOTS + v][s];
+                        if send < 0.001 { continue; }
+                        for k in 0..num_bins {
+                            self.mix_buf[k] += self.virtual_out[v][k] * send;
+                        }
+                    }
                 }
             }
 
@@ -133,6 +150,23 @@ impl FxMatrix {
                 ctx,
             );
             self.slot_out[s][..num_bins].copy_from_slice(&self.mix_buf[..num_bins]);
+
+            // Populate virtual row buffers from split modules.
+            if let Some(vouts) = module.virtual_outputs() {
+                for (v, &vrow) in route_matrix.virtual_rows.iter().enumerate() {
+                    if let Some((src_slot, kind)) = vrow {
+                        if src_slot as usize == s {
+                            let src_buf = match kind {
+                                VirtualRowKind::Transient => vouts[0],
+                                VirtualRowKind::Sustained  => vouts[1],
+                            };
+                            let copy_len = num_bins.min(src_buf.len());
+                            self.virtual_out[v][..copy_len].copy_from_slice(&src_buf[..copy_len]);
+                        }
+                    }
+                }
+            }
+
             self.slots[s] = Some(module);
         }
 

@@ -104,6 +104,11 @@ pub trait SpectralModule: Send {
 
     /// Update the operating mode for Gain modules. Default no-op for all other types.
     fn set_gain_mode(&mut self, _: GainMode) {}
+
+    /// For split modules (T/S Split), returns virtual output buffers.
+    /// Index 0 = Transient, Index 1 = Sustained.
+    /// Default: None (no virtual outputs).
+    fn virtual_outputs(&self) -> Option<[&[Complex<f32>]; 2]> { None }
 }
 
 // ── ModuleSpec ─────────────────────────────────────────────────────────────
@@ -205,17 +210,18 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
 
 // ── apply_curve_transform ──────────────────────────────────────────────────
 
-/// Apply a linear tilt (spectral slope) and DC offset to a slice of curve gains,
-/// then clamp to `[0.0, ∞)`. The `.max(0.0)` floor is intentional: linear gain
-/// multipliers are always non-negative in this DSP context, so negative values
-/// produced by aggressive tilt/offset combinations are silently clamped to zero
-/// rather than causing phase inversions.
-pub fn apply_curve_transform(gains: &mut [f32], tilt: f32, offset: f32) {
-    let n = gains.len();
-    if n == 0 { return; }
-    let n_f = n as f32;
+/// Apply spectral tilt (pivoted at 1 kHz in log-frequency space) and additive offset
+/// to a slice of pre-bin curve gains, then clamp to `[0.0, ∞)`.
+pub fn apply_curve_transform(gains: &mut [f32], tilt: f32, offset: f32, sample_rate: f32, fft_size: usize) {
+    if gains.is_empty() { return; }
+    if tilt.abs() < 1e-6 && offset.abs() < 1e-6 { return; }
+    const LOG_20: f32 = 1.301_030;
+    const LOG_RANGE: f32 = 3.0;
+    const PIVOT: f32 = 0.566_32; // log10(1000/20) / log10(20000/20)
     for (k, g) in gains.iter_mut().enumerate() {
-        let t = tilt * (k as f32 / n_f - 0.5);
+        let freq_hz = (k as f32 * sample_rate / fft_size as f32).max(20.0);
+        let norm = ((freq_hz.log10() - LOG_20) / LOG_RANGE).clamp(0.0, 1.0);
+        let t = tilt * (norm - PIVOT);
         *g = ((*g + offset) * (1.0 + t)).max(0.0);
     }
 }
