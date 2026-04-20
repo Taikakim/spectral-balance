@@ -649,8 +649,12 @@ pub fn create_editor(
                     if let Some(new_slot) = interaction.left_click_slot {
                         *params.editing_slot.lock() = new_slot as u8;
                     }
-                    // right_click will be handled in Task 3 (module popup)
-                    let _ = interaction.right_click;
+                    // Handle right-click → open module assignment popup
+                    if let Some((slot, pos)) = interaction.right_click {
+                        crate::editor::module_popup::open_popup(ui, slot, pos);
+                    }
+                    // Render popup (egui Area — appears above matrix)
+                    crate::editor::module_popup::show_popup(ui, &params);
                 });
         },
     )
