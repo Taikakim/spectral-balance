@@ -161,4 +161,13 @@ impl ClapPlugin for SpectralForge {
     ];
 }
 
+impl Vst3Plugin for SpectralForge {
+    const VST3_CLASS_ID: [u8; 16] = *b"SpectralForgeV3!";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
+        Vst3SubCategory::Fx,
+        Vst3SubCategory::Dynamics,
+    ];
+}
+
 nih_export_clap!(SpectralForge);
+nih_export_vst3!(SpectralForge);
