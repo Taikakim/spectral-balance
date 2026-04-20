@@ -196,7 +196,7 @@ pub fn screen_y_to_physical(y: f32, curve_idx: usize, db_min: f32, db_max: f32, 
         1 => 1.0 * 20.0_f32.powf(t),
         2 | 3 => 1024.0_f32.powf(t),
         4 => 1.5 * (48.0_f32 / 1.5).powf(t),
-        5 => -36.0 + t * 72.0,
+        5 => -18.0 + t * 36.0,
         6 => t * 100.0,
         7 => t * 200.0,
         8 => 10.0 * 200.0_f32.powf(t),
@@ -245,13 +245,20 @@ fn log_to_y(v: f32, y_min: f32, y_max: f32, rect: Rect) -> f32 {
 
 // ─── Physical value mapping ───────────────────────────────────────────────────
 
-/// Apply per-curve tilt (linear spectral slope across bins) and additive offset to a raw gain
-/// value. Matches the DSP pipeline formula: `(gain + offset) * (1 + tilt * (k/n - 0.5))`.
-/// `k` is the bin index, `n` is the total number of bins.
+/// Pivot frequency for the tilt control: 1 kHz.
+/// In log-normalised [0, 20 Hz … 20 kHz = 1] space this sits at ≈ 0.566.
+const TILT_PIVOT_NORM: f32 = 0.566_32; // log10(1000/20) / log10(20000/20)
+
+/// Apply per-curve tilt (spectral slope pivoted at 1 kHz) and additive offset to a raw gain.
+/// `freq_hz` — the centre frequency of this bin in Hz.
 #[inline]
-pub fn apply_curve_adjustments(gain: f32, k: usize, n: usize, tilt: f32, offset: f32) -> f32 {
+pub fn apply_curve_adjustments(gain: f32, freq_hz: f32, tilt: f32, offset: f32) -> f32 {
     if tilt.abs() < 1e-6 && offset.abs() < 1e-6 { return gain; }
-    let t = tilt * (k as f32 / n as f32 - 0.5);
+    // Map freq to log-normalised [0, 1] (20 Hz → 0, 20 kHz → 1).
+    const LOG_20: f32 = 1.301_030; // log10(20.0)
+    const LOG_RANGE: f32 = 3.0;    // log10(20000/20) = log10(1000)
+    let norm = ((freq_hz.max(20.0).log10() - LOG_20) / LOG_RANGE).clamp(0.0, 1.0);
+    let t = tilt * (norm - TILT_PIVOT_NORM);
     ((gain + offset) * (1.0 + t)).max(0.0)
 }
 
@@ -275,7 +282,7 @@ pub fn gain_to_display(
         2 => (global_attack_ms  * gain.max(0.01)).clamp(1.0, 1024.0),
         3 => (global_release_ms * gain.max(0.01)).clamp(1.0, 1024.0),
         4 => (gain * 6.0).clamp(1.5, 48.0),
-        5 => if gain > 1e-6 { (20.0 * gain.log10()).clamp(-36.0, 36.0) } else { -36.0 },
+        5 => if gain > 1e-6 { 20.0 * gain.log10() } else { -60.0 },
         6 => (gain * 100.0).clamp(0.0, 100.0),
         // Effects curves — tilt/offset not used (passed as 0.0/0.0 from UI)
         7 => gain.clamp(0.0, 2.0) * 100.0,                  // Phase Amount: 0-200%
@@ -298,7 +305,7 @@ pub fn physical_to_y(v: f32, curve_idx: usize, db_min: f32, db_max: f32, rect: R
         1 => log_to_y(v, 1.0, 20.0, rect),
         2 | 3 => log_to_y(v, 1.0, 1024.0, rect),
         4 => log_to_y(v, 1.5, 48.0, rect),
-        5 => linear_to_y(v, -36.0, 36.0, rect),
+        5 => linear_to_y(v, -18.0, 18.0, rect),
         6 => linear_to_y(v, 0.0, 100.0, rect),
         7 => linear_to_y(v, 0.0, 200.0, rect),
         8 => log_to_y(v.max(10.0), 10.0, 2000.0, rect),
@@ -354,11 +361,11 @@ fn curve_grid_lines(curve_idx: usize, db_min: f32, db_max: f32) -> Vec<(f32, Str
             (24.0, "24dB".to_string()),
         ],
         5 => vec![
-            (-24.0, "-24dB".to_string()),
             (-12.0, "-12dB".to_string()),
-            (0.0,   "0dB".to_string()),
-            (12.0,  "+12dB".to_string()),
-            (24.0,  "+24dB".to_string()),
+            ( -6.0,  "-6dB".to_string()),
+            (  0.0,   "0dB".to_string()),
+            (  6.0,  "+6dB".to_string()),
+            ( 12.0, "+12dB".to_string()),
         ],
         6 => vec![
             (20.0,  "20%".to_string()),
@@ -498,7 +505,7 @@ pub fn paint_response_curve(
     let pts: Vec<Pos2> = (0..n).map(|k| {
         let f_hz = (k as f32 * sample_rate / fft_size as f32).max(20.0);
         let x    = freq_to_x_max(f_hz, max_hz, rect);
-        let adj  = apply_curve_adjustments(gains[k], k, n, tilt, offset);
+        let adj  = apply_curve_adjustments(gains[k], f_hz, tilt, offset);
         let v    = gain_to_display(curve_idx, adj, global_attack_ms, global_release_ms, db_min, db_max);
         let y    = physical_to_y(v, curve_idx, db_min, db_max, rect);
         Pos2::new(x, y)
@@ -575,7 +582,7 @@ pub fn curve_widget(
             // Single primary button → move node position.
             let delta = resp.drag_delta();
             nodes[i].x = (nodes[i].x + delta.x / rect.width()).clamp(0.0, 1.0);
-            nodes[i].y = (nodes[i].y - (delta.y / rect.height()) * 2.0).clamp(-1.0, 1.0);
+            nodes[i].y = (nodes[i].y - (delta.y / rect.height()) * 2.0).clamp(-2.0, 2.0);
             changed = true;
         }
 

@@ -400,7 +400,11 @@ impl Default for SpectralForgeParams {
             makeup_tilt:      Self::make_tilt("Makeup Tilt"),
             makeup_offset:    Self::make_offset("Makeup Offset"),
             mix_tilt:         Self::make_tilt("Mix Tilt"),
-            mix_offset:       Self::make_offset("Mix Offset"),
+            mix_offset:       FloatParam::new(
+                "Mix Offset", 0.0,
+                FloatRange::Linear { min: -1.0, max: 1.0 },
+            ).with_smoother(SmoothingStyle::Linear(50.0))
+             .with_step_size(0.01),
 
             sc_gain: FloatParam::new(
                 "SC Gain", 0.0,
@@ -434,13 +438,13 @@ impl Default for SpectralForgeParams {
             threshold_mode: EnumParam::new("Threshold Mode", ThresholdMode::Absolute),
 
             sensitivity: FloatParam::new(
-                "Sensitivity", 0.0,
+                "Sensitivity", 0.5,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ).with_smoother(SmoothingStyle::Linear(50.0))
              .with_step_size(0.01),
 
             suppression_width: FloatParam::new(
-                "Suppression Width", 0.2,
+                "Suppression Width", 0.05,
                 FloatRange::Linear { min: 0.0, max: 0.5 },
             ).with_smoother(SmoothingStyle::Linear(50.0))
              .with_step_size(0.01)
