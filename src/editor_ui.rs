@@ -308,31 +308,43 @@ pub fn create_editor(
                             raw_curve
                         };
 
-                        let nodes_all = *params.slot_curve_nodes.lock();
+                        // Read this slot's curve nodes lock-free from automatable params.
+                        let slot_nodes: [[crv::CurveNode; 6]; 7] = std::array::from_fn(|c| {
+                            std::array::from_fn(|n| {
+                                params.graph_node(editing_slot, c, n)
+                                    .map(|(x, y, q)| crv::CurveNode { x: x.value(), y: y.value(), q: q.value() })
+                                    .unwrap_or_default()
+                            })
+                        });
 
                         // Cache key: invalidate when slot type, editing slot, or fft_size changes
                         let cache_key = ui.id().with(("slot_gains", editing_slot, editing_type as u8, fft_size));
-                        let cached: Option<([[[crv::CurveNode; 6]; 7]; 9], Vec<Vec<f32>>)> =
+                        let cached: Option<([[crv::CurveNode; 6]; 7], Vec<Vec<f32>>)> =
                             ui.data(|d| d.get_temp(cache_key));
                         let all_gains: Vec<Vec<f32>> = match cached {
-                            Some((cn, cg)) if cn == nodes_all => cg,
+                            Some((cn, cg)) if cn == slot_nodes => cg,
                             _ => {
                                 let g: Vec<Vec<f32>> = (0..num_c.min(7))
                                     .map(|c| crv::compute_curve_response(
-                                        &nodes_all[editing_slot][c], num_bins, sr, fft_size,
+                                        &slot_nodes[c], num_bins, sr, fft_size,
                                     ))
                                     .collect();
-                                ui.data_mut(|d| d.insert_temp(cache_key, (nodes_all, g.clone())));
+                                ui.data_mut(|d| d.insert_temp(cache_key, (slot_nodes, g.clone())));
                                 g
                             }
                         };
 
-                        let meta = *params.slot_curve_meta.lock();
+                        // Read tilt/offset lock-free from automatable params.
+                        let slot_meta: [(f32, f32); 7] = std::array::from_fn(|c| {
+                            let t = params.tilt_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0);
+                            let o = params.offset_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0);
+                            (t, o)
+                        });
 
                         // Draw inactive curves (dim) — display_curve_idx maps to correct y-axis scale
                         for i in 0..num_c.min(7) {
                             if i == editing_curve { continue; }
-                            let (tilt, offset) = meta[editing_slot][i];
+                            let (tilt, offset) = slot_meta[i];
                             let disp_i = crv::display_curve_idx(editing_type, i);
                             crv::paint_response_curve(
                                 ui.painter(), curve_rect, &all_gains[i], disp_i,
@@ -343,7 +355,7 @@ pub fn create_editor(
 
                         // Draw active curve (lit) + interactive widget
                         if editing_curve < num_c && !all_gains.is_empty() {
-                            let (tilt, offset) = meta[editing_slot][editing_curve];
+                            let (tilt, offset) = slot_meta[editing_curve];
                             let disp_curve = crv::display_curve_idx(editing_type, editing_curve);
                             crv::paint_response_curve(
                                 ui.painter(), curve_rect, &all_gains[editing_curve], disp_curve,
@@ -351,7 +363,7 @@ pub fn create_editor(
                                 db_min, db_max, atk_ms, rel_ms, sr, fft_size, tilt, offset,
                             );
 
-                            let mut nodes = nodes_all[editing_slot][editing_curve];
+                            let mut nodes = slot_nodes[editing_curve];
                             if crv::curve_widget(
                                 ui, curve_rect, &mut nodes, editing_curve, sr,
                             ) {
