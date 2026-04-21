@@ -1,4 +1,19 @@
 #[test]
+fn supports_sidechain_flag_matches_spec() {
+    use spectral_forge::dsp::modules::{module_spec, ModuleType};
+    assert!(module_spec(ModuleType::Dynamics).supports_sidechain);
+    assert!(module_spec(ModuleType::Gain).supports_sidechain);
+    assert!(module_spec(ModuleType::PhaseSmear).supports_sidechain);
+    assert!(module_spec(ModuleType::Freeze).supports_sidechain);
+    assert!(!module_spec(ModuleType::Contrast).supports_sidechain);
+    assert!(!module_spec(ModuleType::MidSide).supports_sidechain);
+    assert!(!module_spec(ModuleType::TransientSustainedSplit).supports_sidechain);
+    assert!(!module_spec(ModuleType::Harmonic).supports_sidechain);
+    assert!(!module_spec(ModuleType::Master).supports_sidechain);
+    assert!(!module_spec(ModuleType::Empty).supports_sidechain);
+}
+
+#[test]
 fn module_trait_types_exist() {
     use spectral_forge::dsp::modules::{
         ModuleType, GainMode, VirtualRowKind, RouteMatrix,

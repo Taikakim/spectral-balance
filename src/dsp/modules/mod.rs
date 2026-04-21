@@ -114,11 +114,12 @@ pub trait SpectralModule: Send {
 // ── ModuleSpec ─────────────────────────────────────────────────────────────
 
 pub struct ModuleSpec {
-    pub display_name: &'static str,
-    pub color_lit:    Color32,
-    pub color_dim:    Color32,
-    pub num_curves:   usize,
-    pub curve_labels: &'static [&'static str],
+    pub display_name:       &'static str,
+    pub color_lit:          Color32,
+    pub color_dim:          Color32,
+    pub num_curves:         usize,
+    pub curve_labels:       &'static [&'static str],
+    pub supports_sidechain: bool,
 }
 
 pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
@@ -130,6 +131,7 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         color_dim: Color32::from_rgb(0x18, 0x40, 0x42),
         num_curves: 6,
         curve_labels: &["THRESHOLD", "RATIO", "ATTACK", "RELEASE", "KNEE", "MIX"],
+        supports_sidechain: true,
     };
     static FRZ: ModuleSpec = ModuleSpec {
         display_name: "Freeze",
@@ -137,6 +139,7 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         color_dim: Color32::from_rgb(0x18, 0x28, 0x42),
         num_curves: 5,
         curve_labels: &["LENGTH", "THRESHOLD", "PORTAMENTO", "RESISTANCE", "MIX"],
+        supports_sidechain: true,
     };
     static PSM: ModuleSpec = ModuleSpec {
         display_name: "Phase Smear",
@@ -144,6 +147,7 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         color_dim: Color32::from_rgb(0x30, 0x20, 0x42),
         num_curves: 3,
         curve_labels: &["AMOUNT", "SC SMOOTH", "MIX"],
+        supports_sidechain: true,
     };
     static CON: ModuleSpec = ModuleSpec {
         display_name: "Contrast",
@@ -151,6 +155,7 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         color_dim: Color32::from_rgb(0x38, 0x20, 0x48),
         num_curves: 2,
         curve_labels: &["AMOUNT", "SC SMOOTH"],
+        supports_sidechain: false,
     };
     static GN: ModuleSpec = ModuleSpec {
         display_name: "Gain",
@@ -158,6 +163,7 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         color_dim: Color32::from_rgb(0x42, 0x34, 0x18),
         num_curves: 2,
         curve_labels: &["GAIN", "SC SMOOTH"],
+        supports_sidechain: true,
     };
     static MS: ModuleSpec = ModuleSpec {
         display_name: "Mid/Side",
@@ -165,6 +171,7 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         color_dim: Color32::from_rgb(0x40, 0x18, 0x34),
         num_curves: 5,
         curve_labels: &["BALANCE", "EXPANSION", "DECORREL", "TRANSIENT", "PAN"],
+        supports_sidechain: false,
     };
     static TS: ModuleSpec = ModuleSpec {
         display_name: "T/S Split",
@@ -172,6 +179,7 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         color_dim: Color32::from_rgb(0x28, 0x38, 0x20),
         num_curves: 1,
         curve_labels: &["SENSITIVITY"],
+        supports_sidechain: false,
     };
     static HARM: ModuleSpec = ModuleSpec {
         display_name: "Harmonic",
@@ -179,6 +187,7 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         color_dim: Color32::from_rgb(0x18, 0x42, 0x28),
         num_curves: 0,
         curve_labels: &[],
+        supports_sidechain: false,
     };
     static MASTER: ModuleSpec = ModuleSpec {
         display_name: "Master",
@@ -186,6 +195,7 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         color_dim: Color32::from_rgb(0x44, 0x44, 0x44),
         num_curves: 0,
         curve_labels: &[],
+        supports_sidechain: false,
     };
     static EMPTY: ModuleSpec = ModuleSpec {
         display_name: "Empty",
@@ -193,6 +203,7 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         color_dim: Color32::from_rgb(0x22, 0x22, 0x22),
         num_curves: 0,
         curve_labels: &[],
+        supports_sidechain: false,
     };
     match ty {
         ModuleType::Dynamics               => &DYN,
