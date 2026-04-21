@@ -31,3 +31,8 @@ strip = "symbols"
 
 [profile.dev]
 opt-level = 1
+
+# Local patch: exposes EguiState::set_requested_size() as pub so we can trigger
+# the CLAP request_resize() handshake at runtime for user-controlled UI scaling.
+[patch."https://github.com/robbert-vdh/nih-plug.git"]
+nih_plug_egui = { path = "vendor/nih_plug_egui" }
