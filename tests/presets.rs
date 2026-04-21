@@ -18,7 +18,6 @@ fn preset_roundtrips_through_json() {
     let s2: spectral_forge::presets::PluginState = serde_json::from_str(&json)
         .expect("deserialize");
     assert_eq!(s.slot_module_types, s2.slot_module_types);
-    assert_eq!(s.slot_sidechain, s2.slot_sidechain);
 }
 
 #[test]

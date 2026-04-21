@@ -14,7 +14,7 @@ pub fn create_editor(
     fft_size_arc: Arc<std::sync::atomic::AtomicUsize>,
     spectrum_rx: Option<Arc<parking_lot::Mutex<triple_buffer::Output<Vec<f32>>>>>,
     suppression_rx: Option<Arc<parking_lot::Mutex<triple_buffer::Output<Vec<f32>>>>>,
-    sidechain_active: Option<Arc<std::sync::atomic::AtomicBool>>,
+    _sidechain_active: Option<Arc<std::sync::atomic::AtomicBool>>,
     plugin_alive: std::sync::Weak<()>,
 ) -> Option<Box<dyn Editor>> {
     create_egui_editor(
@@ -63,11 +63,6 @@ pub fn create_editor(
                     let falloff      = *params.peak_falloff_ms.lock();
                     let atk_ms       = params.attack_ms.value();
                     let rel_ms       = params.release_ms.value();
-                    let sc_active: bool = sidechain_active
-                        .as_ref()
-                        .map(|a| a.load(std::sync::atomic::Ordering::Relaxed))
-                        .unwrap_or(false);
-
                     // ── Top bar: curve selectors + range controls ──────────────
                     ui.horizontal(|ui| {
                         ui.add_space(4.0);
@@ -490,58 +485,6 @@ pub fn create_editor(
                     ui.separator();
                     ui.add_space(2.0);
 
-                    // ── SC assignment strip ────────────────────────────────────
-                    ui.horizontal(|ui| {
-                        ui.add_space(4.0);
-                        let edit_slot = *params.editing_slot.lock() as usize;
-                        let mut sc_assign = params.slot_sidechain.lock()[edit_slot];
-
-                        ui.label(egui::RichText::new("SC").color(th::LABEL_DIM).size(9.0));
-                        ui.add_space(2.0);
-
-                        // Single SC source indicator (Task 13 will rewrite this properly).
-                        // sc_active reflects whether any sidechain input is live.
-                        {
-                            let is_sc_assigned = sc_assign != 255;
-                            let fill = if is_sc_assigned {
-                                if sc_active { egui::Color32::from_rgb(0x30, 0xa0, 0x50) }
-                                else         { th::BORDER }
-                            } else {
-                                th::BG
-                            };
-                            let text_col = if is_sc_assigned { egui::Color32::BLACK } else { th::LABEL_DIM };
-                            let btn = egui::Button::new(
-                                egui::RichText::new("SC").color(text_col).size(9.0)
-                            )
-                            .fill(fill)
-                            .stroke(egui::Stroke::new(th::STROKE_BORDER,
-                                if sc_active { egui::Color32::from_rgb(0x30, 0xa0, 0x50) }
-                                else         { th::BORDER }
-                            ));
-                            if ui.add(btn).clicked() {
-                                // Toggle SC on/off: assign SC (source 0) or clear to self-detect.
-                                sc_assign = if is_sc_assigned { 255 } else { 0 };
-                                params.slot_sidechain.lock()[edit_slot] = sc_assign;
-                            }
-                        }
-                        // Self button: always-available passthrough.
-                        {
-                            let is_self = sc_assign == 255;
-                            let fill     = if is_self { th::BORDER } else { th::BG };
-                            let text_col = if is_self { egui::Color32::BLACK } else { th::LABEL_DIM };
-                            let btn = egui::Button::new(
-                                egui::RichText::new("Self").color(text_col).size(9.0)
-                            )
-                            .fill(fill)
-                            .stroke(egui::Stroke::new(th::STROKE_BORDER, th::BORDER));
-                            if ui.add(btn).clicked() {
-                                sc_assign = 255;
-                                params.slot_sidechain.lock()[edit_slot] = sc_assign;
-                            }
-                        }
-                    });
-                    ui.add_space(2.0);
-
                     // ── GainMode selector (Gain module only) ──────────────────
                     {
                         let edit_slot = *params.editing_slot.lock() as usize;
@@ -604,7 +547,6 @@ pub fn create_editor(
                         knob!(ui, &params.input_gain,  "IN");
                         knob!(ui, &params.output_gain, "OUT");
                         knob!(ui, &params.mix,         "MIX");
-                        knob!(ui, &params.sc_gain,     "SC");
 
                         ui.add_space(8.0);
 

@@ -132,10 +132,6 @@ pub struct SpectralForgeParams {
     #[persist = "slot_targets"]
     pub slot_targets: Arc<Mutex<[FxChannelTarget; 9]>>,
 
-    /// Sidechain input assignment: 0..=3 = aux input index; 255 = self-detect (main input).
-    #[persist = "slot_sidechain"]
-    pub slot_sidechain: Arc<Mutex<[u8; 9]>>,
-
     /// GainMode per slot (only meaningful for Gain module slots).
     #[persist = "slot_gain_mode"]
     pub slot_gain_mode: Arc<Mutex<[GainMode; 9]>>,
@@ -238,9 +234,6 @@ pub struct SpectralForgeParams {
     #[id = "mix_offset"]
     pub mix_offset: FloatParam,
 
-    #[id = "sc_gain"]
-    pub sc_gain: FloatParam,
-
     #[id = "sc_attack_ms"]
     pub sc_attack_ms: FloatParam,
 
@@ -337,7 +330,6 @@ impl Default for SpectralForgeParams {
                 names
             })),
             slot_targets:   Arc::new(Mutex::new([FxChannelTarget::All; 9])),
-            slot_sidechain: Arc::new(Mutex::new([255u8; 9])),
             slot_gain_mode: Arc::new(Mutex::new([GainMode::Add; 9])),
             slot_sc_gain_db: Arc::new(Mutex::new([0.0f32; 9])),
             slot_sc_channel: Arc::new(Mutex::new([ScChannel::Follow; 9])),
@@ -428,13 +420,6 @@ impl Default for SpectralForgeParams {
                 FloatRange::Linear { min: -1.0, max: 1.0 },
             ).with_smoother(SmoothingStyle::Linear(50.0))
              .with_step_size(0.01),
-
-            sc_gain: FloatParam::new(
-                "SC Gain", 0.0,
-                FloatRange::Linear { min: -18.0, max: 18.0 },
-            ).with_smoother(SmoothingStyle::Linear(50.0))
-             .with_step_size(0.01)
-             .with_unit(" dB"),
 
             sc_attack_ms: FloatParam::new(
                 "SC Attack", 5.0,
