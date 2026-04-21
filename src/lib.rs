@@ -67,11 +67,11 @@ impl Plugin for SpectralForge {
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
-        // Layout 0: stereo with 4 aux sidechain inputs
+        // Layout 0: stereo with 1 aux stereo sidechain input
         AudioIOLayout {
             main_input_channels:  NonZeroU32::new(2),
             main_output_channels: NonZeroU32::new(2),
-            aux_input_ports: &[new_nonzero_u32(2), new_nonzero_u32(2), new_nonzero_u32(2), new_nonzero_u32(2)],
+            aux_input_ports: &[new_nonzero_u32(2)],
             ..AudioIOLayout::const_default()
         },
         // Layout 1: stereo without sidechain
