@@ -1,7 +1,14 @@
 use num_complex::Complex;
-use crate::dsp::utils::linear_to_db;
 use crate::params::{FxChannelTarget, StereoLink};
 use super::{ModuleContext, ModuleType, SpectralModule};
+
+/// Map a per-bin threshold curve gain (linear, 1.0 = neutral) to dBFS threshold.
+/// Default pivot: curve=1.0 → -50 dB (spec §7).
+pub fn curve_to_threshold_db(curve_gain: f32) -> f32 {
+    use crate::dsp::utils::linear_to_db;
+    let thr_db = linear_to_db(curve_gain);
+    (-50.0 + thr_db * (60.0 / 18.0)).clamp(-80.0, 0.0)
+}
 
 pub struct FreezeModule {
     frozen_bins:      Vec<Complex<f32>>,
@@ -87,8 +94,7 @@ impl SpectralModule for FreezeModule {
             let length_hops = ((length_ms / hop_ms).ceil() as u32).max(1);
 
             let thr_gain      = curves.get(1).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
-            let thr_db        = linear_to_db(thr_gain);
-            let threshold_db  = (-20.0 + thr_db * (60.0 / 18.0)).clamp(-80.0, 0.0);
+            let threshold_db  = curve_to_threshold_db(thr_gain);
             // Multiply by norm_factor so threshold_lin is on the same scale as bins[k].norm().
             let threshold_lin = 10.0f32.powf(threshold_db / 20.0) * norm_factor;
 

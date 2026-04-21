@@ -269,6 +269,7 @@ pub fn create_module(
 
 pub mod dynamics;
 pub mod freeze;
+pub use freeze::FreezeModule;
 pub mod phase_smear;
 pub mod contrast;
 pub mod gain;
