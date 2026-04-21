@@ -3,6 +3,8 @@ pub mod theme;
 pub mod spectrum_display;
 pub mod fx_matrix_grid;
 pub mod module_popup;
+pub mod preset_menu;
+pub use preset_menu::{PresetMenuState, preset_menu_ui};
 
 /// Show a tooltip for `response` only after the pointer has been stationary
 /// over it for 1 second. Resets the timer whenever the pointer moves.

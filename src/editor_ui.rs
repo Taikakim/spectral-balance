@@ -52,6 +52,11 @@ pub fn create_editor(
                 }
             }
 
+            // Load preset menu state from egui temp storage (persists across frames).
+            let preset_key = egui::Id::new("preset_menu_state");
+            let mut preset_state: crate::editor::PresetMenuState =
+                ctx.data(|d| d.get_temp(preset_key)).unwrap_or_default();
+
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE.fill(th::BG))
                 .show(ctx, |ui| {
@@ -68,8 +73,11 @@ pub fn create_editor(
                         None => [false; 4],
                     };
 
-                    // ── Top bar: curve selectors + range controls ──────────────
+                    // ── Top bar: preset pulldown + curve selectors + range controls ──
                     ui.horizontal(|ui| {
+                        ui.add_space(4.0);
+                        crate::editor::preset_menu_ui(ui, &mut preset_state, &params, setter);
+                        ui.separator();
                         ui.add_space(4.0);
 
                         let editing_slot = *params.editing_slot.lock() as usize;
@@ -778,6 +786,9 @@ pub fn create_editor(
                     }
                     // Render popup (egui Area — appears above matrix)
                     let _ = crate::editor::module_popup::show_popup(ui, &params);
+
+                    // Persist preset menu state across frames via egui temp storage.
+                    ui.ctx().data_mut(|d| d.insert_temp(preset_key, preset_state.clone()));
                 });
         },
     )
