@@ -89,6 +89,16 @@ fn main() {
     emit_matrix_map_entries(&mut f);
     writeln!(f, "    }}").unwrap();
     writeln!(f, "}}").unwrap();
+
+    // ─── Dispatch macros for typed accessors ───────────────────────────────
+    writeln!(f).unwrap();
+    emit_graph_node_dispatch(&mut f);
+    writeln!(f).unwrap();
+    emit_tilt_dispatch(&mut f);
+    writeln!(f).unwrap();
+    emit_offset_dispatch(&mut f);
+    writeln!(f).unwrap();
+    emit_matrix_dispatch(&mut f);
 }
 
 // ── Field declarations (bare, no initializers) ──────────────────────────────
@@ -261,4 +271,75 @@ fn emit_matrix_map_entries(f: &mut File) {
             .unwrap();
         }
     }
+}
+
+// ── Dispatch macros for typed accessors ────────────────────────────────────
+
+fn emit_graph_node_dispatch(f: &mut File) {
+    writeln!(f, "macro_rules! graph_node_dispatch {{").unwrap();
+    writeln!(f, "    ($self:expr, $s:expr, $c:expr, $n:expr) => {{").unwrap();
+    writeln!(f, "        match ($s, $c, $n) {{").unwrap();
+    for s in 0..NUM_SLOTS {
+        for c in 0..NUM_CURVES {
+            for n in 0..NUM_NODES {
+                writeln!(
+                    f,
+                    "            ({s}, {c}, {n}) => (\
+                     &$self.generated.s{s}c{c}n{n}_x, \
+                     &$self.generated.s{s}c{c}n{n}_y, \
+                     &$self.generated.s{s}c{c}n{n}_q),"
+                )
+                .unwrap();
+            }
+        }
+    }
+    writeln!(f, "            _ => unreachable!(),").unwrap();
+    writeln!(f, "        }}").unwrap();
+    writeln!(f, "    }};").unwrap();
+    writeln!(f, "}}").unwrap();
+}
+
+fn emit_tilt_dispatch(f: &mut File) {
+    writeln!(f, "macro_rules! tilt_dispatch {{").unwrap();
+    writeln!(f, "    ($self:expr, $s:expr, $c:expr) => {{").unwrap();
+    writeln!(f, "        match ($s, $c) {{").unwrap();
+    for s in 0..NUM_SLOTS {
+        for c in 0..NUM_CURVES {
+            writeln!(f, "            ({s}, {c}) => &$self.generated.s{s}c{c}_tilt,").unwrap();
+        }
+    }
+    writeln!(f, "            _ => unreachable!(),").unwrap();
+    writeln!(f, "        }}").unwrap();
+    writeln!(f, "    }};").unwrap();
+    writeln!(f, "}}").unwrap();
+}
+
+fn emit_offset_dispatch(f: &mut File) {
+    writeln!(f, "macro_rules! offset_dispatch {{").unwrap();
+    writeln!(f, "    ($self:expr, $s:expr, $c:expr) => {{").unwrap();
+    writeln!(f, "        match ($s, $c) {{").unwrap();
+    for s in 0..NUM_SLOTS {
+        for c in 0..NUM_CURVES {
+            writeln!(f, "            ({s}, {c}) => &$self.generated.s{s}c{c}_offset,").unwrap();
+        }
+    }
+    writeln!(f, "            _ => unreachable!(),").unwrap();
+    writeln!(f, "        }}").unwrap();
+    writeln!(f, "    }};").unwrap();
+    writeln!(f, "}}").unwrap();
+}
+
+fn emit_matrix_dispatch(f: &mut File) {
+    writeln!(f, "macro_rules! matrix_dispatch {{").unwrap();
+    writeln!(f, "    ($self:expr, $r:expr, $col:expr) => {{").unwrap();
+    writeln!(f, "        match ($r, $col) {{").unwrap();
+    for r in 0..NUM_MATRIX_ROWS {
+        for col in 0..NUM_SLOTS {
+            writeln!(f, "            ({r}, {col}) => &$self.generated.mr{r}c{col},").unwrap();
+        }
+    }
+    writeln!(f, "            _ => unreachable!(),").unwrap();
+    writeln!(f, "        }}").unwrap();
+    writeln!(f, "    }};").unwrap();
+    writeln!(f, "}}").unwrap();
 }

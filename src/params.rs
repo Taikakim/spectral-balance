@@ -435,6 +435,103 @@ impl Default for SpectralForgeParams {
     }
 }
 
+// ── Typed accessors for generated params ───────────────────────────────────
+
+impl SpectralForgeParams {
+    /// Returns references to `(x, y, q)` FloatParams for the given graph node.
+    /// Returns `None` if any index is out of range.
+    pub fn graph_node(
+        &self,
+        slot: usize,
+        curve: usize,
+        node: usize,
+    ) -> Option<(&FloatParam, &FloatParam, &FloatParam)> {
+        use crate::param_ids::{NUM_CURVES, NUM_NODES, NUM_SLOTS};
+        if slot >= NUM_SLOTS || curve >= NUM_CURVES || node >= NUM_NODES {
+            return None;
+        }
+        Some(graph_node_dispatch!(self, slot, curve, node))
+    }
+
+    /// Returns a reference to the tilt FloatParam for the given slot/curve.
+    /// Returns `None` if any index is out of range.
+    pub fn tilt_param(&self, slot: usize, curve: usize) -> Option<&FloatParam> {
+        use crate::param_ids::{NUM_CURVES, NUM_SLOTS};
+        if slot >= NUM_SLOTS || curve >= NUM_CURVES {
+            return None;
+        }
+        Some(tilt_dispatch!(self, slot, curve))
+    }
+
+    /// Returns a reference to the offset FloatParam for the given slot/curve.
+    /// Returns `None` if any index is out of range.
+    pub fn offset_param(&self, slot: usize, curve: usize) -> Option<&FloatParam> {
+        use crate::param_ids::{NUM_CURVES, NUM_SLOTS};
+        if slot >= NUM_SLOTS || curve >= NUM_CURVES {
+            return None;
+        }
+        Some(offset_dispatch!(self, slot, curve))
+    }
+
+    /// Returns a reference to the matrix-cell FloatParam for the given row/col.
+    /// Returns `None` if any index is out of range.
+    pub fn matrix_cell(&self, row: usize, col: usize) -> Option<&FloatParam> {
+        use crate::param_ids::{NUM_MATRIX_ROWS, NUM_SLOTS};
+        if row >= NUM_MATRIX_ROWS || col >= NUM_SLOTS {
+            return None;
+        }
+        Some(matrix_dispatch!(self, row, col))
+    }
+}
+
+#[cfg(test)]
+mod accessor_tests {
+    use super::*;
+
+    #[test]
+    fn graph_node_accessor_defaults() {
+        let p = SpectralForgeParams::default();
+        // Node 4 of any curve: default x = 0.8, y = 0.0, q = 0.5
+        let (x, y, q) = p.graph_node(3, 2, 4).unwrap();
+        assert!(
+            (x.value() - 0.8).abs() < 1e-6,
+            "x default mismatch: {}",
+            x.value()
+        );
+        assert!(
+            y.value().abs() < 1e-6,
+            "y default should be 0: {}",
+            y.value()
+        );
+        assert!(
+            (q.value() - 0.5).abs() < 1e-6,
+            "q default mismatch: {}",
+            q.value()
+        );
+    }
+
+    #[test]
+    fn graph_node_out_of_range() {
+        let p = SpectralForgeParams::default();
+        assert!(p.graph_node(9, 0, 0).is_none());
+        assert!(p.graph_node(0, 7, 0).is_none());
+        assert!(p.graph_node(0, 0, 6).is_none());
+        assert!(p.tilt_param(0, 7).is_none());
+        assert!(p.offset_param(9, 0).is_none());
+        assert!(p.matrix_cell(9, 0).is_none());
+        assert!(p.matrix_cell(0, 9).is_none());
+    }
+
+    #[test]
+    fn tilt_offset_matrix_accessors_return_some() {
+        let p = SpectralForgeParams::default();
+        assert!(p.tilt_param(0, 0).is_some());
+        assert!(p.offset_param(8, 6).is_some());
+        assert!(p.matrix_cell(0, 0).is_some());
+        assert!(p.matrix_cell(8, 8).is_some());
+    }
+}
+
 // ── Hand-written Params trait impl ─────────────────────────────────────────
 // The derive is gone; we replicate what it would have generated so we can inject
 // the `spectral_generated_param_map_entries!` macro and keep full control of the
