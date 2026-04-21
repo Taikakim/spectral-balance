@@ -764,7 +764,7 @@ fn sc_strip_ui(
             let mut g = cur;
             let resp = ui.add(
                 egui::DragValue::new(&mut g)
-                    .clamp_range(-90.0..=18.0)
+                    .range(-90.0..=18.0)
                     .speed(0.1)
                     .suffix(" dB")
                     .custom_formatter(|v, _| {

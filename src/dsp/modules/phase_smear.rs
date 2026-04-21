@@ -21,19 +21,6 @@ impl PhaseSmearModule {
         }
     }
 
-    #[inline]
-    fn curve_to_hold_ms(curve: f32) -> f32 {
-        let c = curve.clamp(0.0, 2.0);
-        let log_min = 1.0f32.ln();
-        let log_mid = 50.0f32.ln();
-        let log_max = 500.0f32.ln();
-        let log_t = if c <= 1.0 {
-            log_min + (log_mid - log_min) * c
-        } else {
-            log_mid + (log_max - log_mid) * (c - 1.0)
-        };
-        log_t.exp()
-    }
 }
 
 impl Default for PhaseSmearModule {
@@ -71,7 +58,7 @@ impl SpectralModule for PhaseSmearModule {
 
             let sc_raw = sidechain.and_then(|s| s.get(k)).copied().unwrap_or(0.0).max(0.0);
             let hold_c = curves.get(1).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
-            let hold_ms = Self::curve_to_hold_ms(hold_c);
+            let hold_ms = super::peak_hold_curve_to_ms(hold_c);
             let rel = (-hop_ms / hold_ms.max(0.1)).exp();
             if sc_raw > self.peak_env[k] {
                 self.peak_env[k] = sc_raw;

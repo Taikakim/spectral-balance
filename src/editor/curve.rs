@@ -600,11 +600,10 @@ pub fn paint_peak_hold_envelope_overlay(
 ) {
     if envelope.is_empty() { return; }
     // Derive a darker tone from curve_color (r/3, g/3, b/3, opaque).
-    let dim = Color32::from_rgba_premultiplied(
+    let dim = Color32::from_rgb(
         curve_color.r() / 3,
         curve_color.g() / 3,
         curve_color.b() / 3,
-        0xff,
     );
     let n = envelope.len();
     let max_hz = (sample_rate / 2.0).max(20_001.0);

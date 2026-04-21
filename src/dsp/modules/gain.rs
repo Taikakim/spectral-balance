@@ -27,21 +27,6 @@ impl GainModule {
         self.peak_env.get(k).copied().unwrap_or(0.0)
     }
 
-    /// Map PEAK HOLD curve gain (linear, 1.0 = neutral) to hold time in ms.
-    /// Log-scaled; range [1.0, 500.0] ms; curve=1.0 → 50 ms.
-    #[inline]
-    fn curve_to_hold_ms(curve: f32) -> f32 {
-        let c = curve.clamp(0.0, 2.0);
-        let log_min = 1.0f32.ln();
-        let log_mid = 50.0f32.ln();
-        let log_max = 500.0f32.ln();
-        let log_t = if c <= 1.0 {
-            log_min + (log_mid - log_min) * c
-        } else {
-            log_mid + (log_max - log_mid) * (c - 1.0)
-        };
-        log_t.exp()
-    }
 }
 
 impl Default for GainModule {
@@ -90,7 +75,7 @@ impl SpectralModule for GainModule {
                     let sc_mag_raw = sidechain.and_then(|s| s.get(k)).copied().unwrap_or(0.0).max(0.0);
 
                     let hold_curve = curves.get(1).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
-                    let hold_ms = Self::curve_to_hold_ms(hold_curve);
+                    let hold_ms = super::peak_hold_curve_to_ms(hold_curve);
                     let release_coeff = (-hop_ms / hold_ms.max(0.1)).exp();
                     if sc_mag_raw > self.peak_env[k] {
                         self.peak_env[k] = sc_mag_raw;

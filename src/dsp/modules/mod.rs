@@ -237,6 +237,25 @@ pub fn apply_curve_transform(gains: &mut [f32], tilt: f32, offset: f32, sample_r
     }
 }
 
+// ── shared PEAK HOLD curve mapping ─────────────────────────────────────────
+
+/// Map a PEAK HOLD curve gain (linear; the curve's x-axis is 0..=2) to a
+/// hold time in milliseconds. Log-scaled; 0→1 ms, 1→50 ms, 2→500 ms.
+/// Shared by `gain::GainModule` (Pull mode) and `phase_smear::PhaseSmearModule`.
+#[inline]
+pub fn peak_hold_curve_to_ms(curve: f32) -> f32 {
+    let c = curve.clamp(0.0, 2.0);
+    let log_min = 1.0f32.ln();
+    let log_mid = 50.0f32.ln();
+    let log_max = 500.0f32.ln();
+    let log_t = if c <= 1.0 {
+        log_min + (log_mid - log_min) * c
+    } else {
+        log_mid + (log_max - log_mid) * (c - 1.0)
+    };
+    log_t.exp()
+}
+
 // ── create_module ──────────────────────────────────────────────────────────
 
 pub fn create_module(
