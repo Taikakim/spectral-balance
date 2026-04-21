@@ -587,7 +587,17 @@ pub fn paint_response_curve(
 
 // ─── Interactive widget ───────────────────────────────────────────────────────
 
-/// Draw interactive nodes for the active curve. Returns true if any node changed.
+/// Return value from [`curve_widget`].
+pub struct CurveWidgetResult {
+    /// True if any node's parameters changed this frame.
+    pub changed: bool,
+    /// True if a drag gesture started this frame (use to call `begin_set_parameter`).
+    pub drag_started: bool,
+    /// True if a drag gesture ended this frame (use to call `end_set_parameter`).
+    pub drag_stopped: bool,
+}
+
+/// Draw interactive nodes for the active curve. Returns drag/change state.
 /// Handles are drawn at normalised y positions (node.y ∈ [-1, +1] mapped to [bottom, top])
 /// so they cover the full display height and track the cursor 1:1 when dragged.
 pub fn curve_widget(
@@ -596,11 +606,13 @@ pub fn curve_widget(
     nodes: &mut [CurveNode; 6],
     curve_idx: usize,
     sample_rate: f32,
-) -> bool {
+) -> CurveWidgetResult {
     use nih_plug_egui::egui::Sense;
 
     let max_hz = (sample_rate / 2.0).max(20_001.0);
     let mut changed = false;
+    let mut drag_started = false;
+    let mut drag_stopped = false;
     let node_color_lit  = th::curve_color_lit(curve_idx);
     let node_color_hover = {
         let c = node_color_lit;
@@ -640,6 +652,8 @@ pub fn curve_widget(
 
         let node_rect = Rect::from_center_size(node_pos, Vec2::splat(th::NODE_RADIUS * 3.0));
         let resp = ui.interact(node_rect, ui.id().with(("node", i)), Sense::drag());
+        drag_started |= resp.drag_started();
+        drag_stopped |= resp.drag_stopped();
 
         // Dual-button drag for Q — when both primary and secondary mouse buttons are held,
         // dragging up/down adjusts Q smoothly.  Scale: 500px → full Q range (0→1),
@@ -712,5 +726,5 @@ pub fn curve_widget(
         }
     }
 
-    changed
+    CurveWidgetResult { changed, drag_started, drag_stopped }
 }

@@ -364,11 +364,27 @@ pub fn create_editor(
                             );
 
                             let mut nodes = slot_nodes[editing_curve];
-                            if crv::curve_widget(
+                            let cwr = crv::curve_widget(
                                 ui, curve_rect, &mut nodes, editing_curve, sr,
-                            ) {
-                                params.slot_curve_nodes.lock()[editing_slot][editing_curve] = nodes;
-                                // Publish updated gains to triple buffer
+                            );
+                            if cwr.drag_started {
+                                for n in 0..crate::param_ids::NUM_NODES {
+                                    if let Some((x_p, y_p, q_p)) = params.graph_node(editing_slot, editing_curve, n) {
+                                        setter.begin_set_parameter(x_p);
+                                        setter.begin_set_parameter(y_p);
+                                        setter.begin_set_parameter(q_p);
+                                    }
+                                }
+                            }
+                            if cwr.changed {
+                                for n in 0..crate::param_ids::NUM_NODES {
+                                    if let Some((x_p, y_p, q_p)) = params.graph_node(editing_slot, editing_curve, n) {
+                                        setter.set_parameter(x_p, nodes[n].x);
+                                        setter.set_parameter(y_p, nodes[n].y.clamp(-1.0, 1.0));
+                                        setter.set_parameter(q_p, nodes[n].q);
+                                    }
+                                }
+                                // Keep triple-buffer publish so DSP gets the updated curve.
                                 {
                                     use crate::dsp::pipeline::MAX_NUM_BINS;
                                     let full_gains = crv::compute_curve_response(
@@ -381,6 +397,15 @@ pub fn create_editor(
                                                 tx.publish();
                                             }
                                         }
+                                    }
+                                }
+                            }
+                            if cwr.drag_stopped {
+                                for n in 0..crate::param_ids::NUM_NODES {
+                                    if let Some((x_p, y_p, q_p)) = params.graph_node(editing_slot, editing_curve, n) {
+                                        setter.end_set_parameter(x_p);
+                                        setter.end_set_parameter(y_p);
+                                        setter.end_set_parameter(q_p);
                                     }
                                 }
                             }
