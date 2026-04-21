@@ -16,3 +16,20 @@ wheels/
 /pyproject.toml
 /main.py
 /.python-version
+.superpowers/
+
+# Editor backup files
+*~
+
+# Local-only: audio test material, third-party archives, reference repos
+/test_flac/
+/patents/
+/repos/
+/ascii art/
+/Rust Audio Plugin Research Synthesis.txt
+
+# docs/ is local scratch space except for .md files at the root
+# and the superpowers plans/specs subtree
+docs/*
+!docs/*.md
+!docs/superpowers/
