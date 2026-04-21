@@ -271,6 +271,7 @@ pub mod dynamics;
 pub mod freeze;
 pub use freeze::FreezeModule;
 pub mod phase_smear;
+pub use phase_smear::PhaseSmearModule;
 pub mod contrast;
 pub mod gain;
 pub use gain::GainModule;

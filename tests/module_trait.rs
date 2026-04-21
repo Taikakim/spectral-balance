@@ -194,3 +194,50 @@ fn gain_add_mode_does_not_use_peak_hold() {
         assert_eq!(m.peak_env_at(k), 0.0, "Add mode must not touch peak-hold state at k={}", k);
     }
 }
+
+#[test]
+fn phase_smear_sc_modulates_amount() {
+    use num_complex::Complex;
+    use spectral_forge::dsp::modules::{PhaseSmearModule, ModuleContext, SpectralModule};
+    use spectral_forge::params::{FxChannelTarget, StereoLink};
+
+    let mut a = PhaseSmearModule::new();
+    let mut b = PhaseSmearModule::new();
+    a.reset(48000.0, 2048);
+    b.reset(48000.0, 2048);
+
+    let num_bins = 1025usize;
+    let amount   = vec![0.5f32; num_bins];
+    let peak     = vec![1.0f32; num_bins];
+    let mix      = vec![1.0f32; num_bins];
+    let curves_vec: Vec<Vec<f32>> = vec![amount, peak, mix];
+    let curves_ref: Vec<&[f32]> = curves_vec.iter().map(|v| &v[..]).collect();
+
+    let sc_hot  = vec![1.0f32; num_bins];
+    let sc_cold = vec![0.0f32; num_bins];
+
+    let mut bins_a: Vec<Complex<f32>> = (0..num_bins)
+        .map(|_k| Complex::new(1.0, 0.0)).collect();
+    let mut bins_b = bins_a.clone();
+
+    let mut supp_a = vec![0.0f32; num_bins];
+    let mut supp_b = vec![0.0f32; num_bins];
+    let ctx = ModuleContext {
+        sample_rate: 48000.0, fft_size: 2048, num_bins,
+        attack_ms: 10.0, release_ms: 80.0,
+        sensitivity: 0.5, suppression_width: 0.0,
+        auto_makeup: false, delta_monitor: false,
+    };
+
+    a.process(0, StereoLink::Linked, FxChannelTarget::All,
+              &mut bins_a, Some(&sc_hot),  &curves_ref, &mut supp_a, &ctx);
+    b.process(0, StereoLink::Linked, FxChannelTarget::All,
+              &mut bins_b, Some(&sc_cold), &curves_ref, &mut supp_b, &ctx);
+
+    let diff_a: f32 = bins_a.iter().skip(1).take(num_bins - 2)
+        .map(|c| (c.arg()).abs()).sum();
+    let diff_b: f32 = bins_b.iter().skip(1).take(num_bins - 2)
+        .map(|c| (c.arg()).abs()).sum();
+    assert!(diff_a > diff_b,
+            "hot SC should produce more smear than cold SC: hot={} cold={}", diff_a, diff_b);
+}
