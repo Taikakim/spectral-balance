@@ -584,6 +584,46 @@ pub fn paint_response_curve(
     }
 }
 
+/// Paint a 1-px darker overlay line reflecting the live SC peak-hold envelope
+/// for the Gain PEAK HOLD curve. Uses the same log-frequency mapping as
+/// `paint_response_curve` so the overlay aligns with the drawn response.
+///
+/// `envelope[k]` is the linear magnitude for bin `k` (0 dB = 1.0).
+/// `curve_color` is the lit curve colour; the overlay uses a darkened derivative.
+pub fn paint_peak_hold_envelope_overlay(
+    painter: &Painter,
+    rect: Rect,
+    envelope: &[f32],
+    curve_color: Color32,
+    sample_rate: f32,
+    fft_size: usize,
+) {
+    if envelope.is_empty() { return; }
+    // Derive a darker tone from curve_color (r/3, g/3, b/3, opaque).
+    let dim = Color32::from_rgba_premultiplied(
+        curve_color.r() / 3,
+        curve_color.g() / 3,
+        curve_color.b() / 3,
+        0xff,
+    );
+    let n = envelope.len();
+    let max_hz = (sample_rate / 2.0).max(20_001.0);
+    let mut prev: Option<Pos2> = None;
+    for k in 1..n {
+        let f_hz = (k as f32 * sample_rate / fft_size as f32).max(20.0);
+        let x    = freq_to_x_max(f_hz, max_hz, rect);
+        let mag  = envelope[k].max(1e-12);
+        let db   = 20.0 * mag.log10();
+        // Map dB to normalised vertical: 0 dB at top, -90 dB at bottom.
+        let norm = ((db + 90.0) / 90.0).clamp(0.0, 1.0);
+        let y    = rect.max.y - norm * rect.height();
+        if let Some(p) = prev {
+            painter.line_segment([p, Pos2::new(x, y)], Stroke::new(1.0, dim));
+        }
+        prev = Some(Pos2::new(x, y));
+    }
+}
+
 // ─── Interactive widget ───────────────────────────────────────────────────────
 
 /// Draw interactive nodes for the active curve. Returns true if any node changed.

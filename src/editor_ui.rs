@@ -14,6 +14,7 @@ pub fn create_editor(
     fft_size_arc: Arc<std::sync::atomic::AtomicUsize>,
     spectrum_rx: Option<Arc<parking_lot::Mutex<triple_buffer::Output<Vec<f32>>>>>,
     suppression_rx: Option<Arc<parking_lot::Mutex<triple_buffer::Output<Vec<f32>>>>>,
+    sc_envelope_rx: Option<Arc<parking_lot::Mutex<triple_buffer::Output<Vec<f32>>>>>,
     sidechain_active: Option<Arc<std::sync::atomic::AtomicBool>>,
     plugin_alive: std::sync::Weak<()>,
 ) -> Option<Box<dyn Editor>> {
@@ -78,10 +79,19 @@ pub fn create_editor(
                         }
                         let editing_curve = editing_curve_raw;
 
+                        // Snapshot GainMode for this slot — used below to gate the Gain
+                        // PEAK HOLD tab (only meaningful in Pull mode).
+                        let slot_gain_mode_snap = params.slot_gain_mode.lock()[editing_slot];
+
                         // Adaptive curve selector buttons
                         for (i, &label) in spec.curve_labels.iter().enumerate() {
-                            let is_active = editing_curve == i;
-                            let (fill, text_color, stroke_color) = if is_active {
+                            let gain_disabled = editing_type == crate::dsp::modules::ModuleType::Gain
+                                && i == 1
+                                && slot_gain_mode_snap != crate::dsp::modules::GainMode::Pull;
+                            let is_active = editing_curve == i && !gain_disabled;
+                            let (fill, text_color, stroke_color) = if gain_disabled {
+                                (spec.color_dim, th::LABEL_DIM, spec.color_dim)
+                            } else if is_active {
                                 (spec.color_lit,
                                  egui::Color32::BLACK,
                                  spec.color_lit)
@@ -95,7 +105,13 @@ pub fn create_editor(
                             )
                             .fill(fill)
                             .stroke(egui::Stroke::new(th::STROKE_BORDER, stroke_color));
-                            if ui.add(btn).clicked() {
+                            let sense = if gain_disabled {
+                                egui::Sense::hover()
+                            } else {
+                                egui::Sense::click()
+                            };
+                            let resp = ui.add(btn.sense(sense));
+                            if !gain_disabled && resp.clicked() {
                                 *params.editing_curve.lock() = i as u8;
                             }
                         }
@@ -357,6 +373,22 @@ pub fn create_editor(
                                 spec.color_lit, 2.0,
                                 db_min, db_max, atk_ms, rel_ms, sr, fft_size, tilt, offset,
                             );
+
+                            // Live SC peak-hold envelope overlay — 1-px darker line behind the
+                            // active curve when editing the Gain module's PEAK HOLD curve.
+                            let show_overlay = editing_type == crate::dsp::modules::ModuleType::Gain
+                                && editing_curve == 1;
+                            if show_overlay {
+                                if let Some(ref env_arc) = sc_envelope_rx {
+                                    if let Some(mut rx) = env_arc.try_lock() {
+                                        let env = rx.read();
+                                        crv::paint_peak_hold_envelope_overlay(
+                                            ui.painter(), curve_rect, &env[..num_bins],
+                                            spec.color_lit, sr, fft_size,
+                                        );
+                                    }
+                                }
+                            }
 
                             let mut nodes = nodes_all[editing_slot][editing_curve];
                             if crv::curve_widget(
