@@ -38,3 +38,12 @@ fn curve_labels_post_refactor() {
     assert_eq!(module_spec(ModuleType::Contrast).curve_labels, &["AMOUNT"]);
     assert_eq!(module_spec(ModuleType::Contrast).num_curves, 1);
 }
+
+#[test]
+fn sc_channel_enum_variants() {
+    use spectral_forge::params::ScChannel;
+    let values = [ScChannel::Follow, ScChannel::LR, ScChannel::L,
+                  ScChannel::R, ScChannel::M, ScChannel::S];
+    assert_eq!(values.len(), 6);
+    assert_eq!(ScChannel::default(), ScChannel::Follow);
+}

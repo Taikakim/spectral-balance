@@ -39,6 +39,19 @@ pub fn fft_size_from_choice(c: FftSizeChoice) -> usize {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
 pub enum StereoLink { Independent, Linked, MidSide }
 
+/// Sidechain channel routing per SC-aware slot.
+/// `Follow` resolves against `StereoLink` and `FxChannelTarget` — see docs/superpowers/specs/2026-04-21-sidechain-refactor-design.md §5.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Enum, serde::Serialize, serde::Deserialize)]
+pub enum ScChannel {
+    #[default]
+    Follow,
+    LR,
+    L,
+    R,
+    M,
+    S,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
 pub enum EffectMode {
     Bypass,
