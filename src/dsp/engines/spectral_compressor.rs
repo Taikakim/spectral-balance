@@ -1,5 +1,6 @@
 use num_complex::Complex;
 use multiversion::multiversion;
+use crate::dsp::utils::ms_to_coeff;
 use super::{SpectralEngine, BinParams};
 
 /// Apply per-bin gain reduction, makeup, and wet/dry mix to complex bins.
@@ -76,15 +77,7 @@ impl SpectralCompressorEngine {
         }
     }
 
-    /// Convert milliseconds to one-pole coefficient for hop-rate envelope follower.
-    /// Returns coefficient in [0.0, 1.0): higher = slower response.
-    #[inline]
-    fn ms_to_coeff(ms: f32, sample_rate: f32, hop_size: usize) -> f32 {
-        if ms < 0.001 { return 0.0; }
-        let hops_per_sec = sample_rate / hop_size as f32;
-        let time_hops = ms * 0.001 * hops_per_sec;
-        (-1.0_f32 / time_hops).exp()
-    }
+
 }
 
 impl SpectralEngine for SpectralCompressorEngine {
@@ -121,7 +114,7 @@ impl SpectralEngine for SpectralCompressorEngine {
         // Uses a 3-tap median of each bin and its immediate neighbours to track the
         // local spectral "floor" — bins that stick out above this floor look like tones
         // or resonances; bins at or below it look like broadband content.
-        let env_coeff = Self::ms_to_coeff(50.0, sample_rate, hop);
+        let env_coeff = ms_to_coeff(50.0, sample_rate, hop);
         for k in 0..n {
             let mag = bins[k].norm();
             let lo  = if k > 0     { bins[k - 1].norm() } else { mag };
@@ -172,9 +165,9 @@ impl SpectralEngine for SpectralCompressorEngine {
             let attack_ms  = params.attack_ms[k].max(0.1);
             let release_ms = params.release_ms[k].max(1.0);
             let coeff = if level_db > self.env_db[k] {
-                Self::ms_to_coeff(attack_ms, sample_rate, hop)
+                ms_to_coeff(attack_ms, sample_rate, hop)
             } else {
-                Self::ms_to_coeff(release_ms, sample_rate, hop)
+                ms_to_coeff(release_ms, sample_rate, hop)
             };
             self.env_db[k] = coeff * self.env_db[k] + (1.0 - coeff) * level_db;
 
@@ -211,7 +204,7 @@ impl SpectralEngine for SpectralCompressorEngine {
         // Update auto-makeup long-term average (~1000ms smoothing at hop rate).
         // Tracks the mix-weighted spatially-smoothed GR (smooth_buf * mix) — i.e. the
         // GR actually applied to the audio — so compensation is exact at any mix setting.
-        let coeff_slow = Self::ms_to_coeff(1000.0, sample_rate, hop);
+        let coeff_slow = ms_to_coeff(1000.0, sample_rate, hop);
         for k in 0..n {
             let effective_gr = self.smooth_buf[k] * params.mix[k].clamp(0.0, 1.0);
             self.auto_makeup_db[k] = coeff_slow * self.auto_makeup_db[k]

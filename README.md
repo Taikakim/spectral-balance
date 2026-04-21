@@ -1,10 +1,10 @@
 # Spectral Forge
 
-A spectral compressor and effects processor for Linux, implemented as a CLAP plugin. Designed for Bitwig Studio.
+A spectral compressor and modular effects processor for Linux/Windows, implemented as a CLAP plugin. Designed for Bitwig Studio.
 
 Patent-safe design — does not use the Hilbert/convolution approach from oeksound's patents.
 
-Very early test version. The dynamics section is more or less functional, the multi fx part is under heavy testing. Much of the developement happens in Main, so expect things to be unexpectedly broken or unfinished at the current stage.
+The dynamics section is functional. The modular multi-fx routing system is under active development — expect things to be unfinished or experimental on the main branch. If you just want to use this, stick to the releases.
 
 ---
 
@@ -12,7 +12,7 @@ Very early test version. The dynamics section is more or less functional, the mu
 
 ## Building and installing
 
-**Requirements:** Rust stable toolchain, Cargo, `clap-validator` optional for testing.
+**Requirements:** Rust stable toolchain, Cargo. `clap-validator` is optional for testing.
 
 ```bash
 # Debug build
@@ -44,22 +44,24 @@ After installing, rescan plugins in Bitwig (or restart). The plugin appears as *
 
 ## Interface overview
 
-### Top bar
+### Top bar (row 1 — curve selectors)
 
-Seven curve selector buttons (**THRESHOLD / RATIO / ATTACK / RELEASE / KNEE / MAKEUP / MIX**) choose which parameter curve is active for editing. All seven curves are always drawn; the selected one is highlighted and interactive.
+Adaptive curve selector buttons show the curves available for the **currently selected slot**. A Dynamics slot shows THRESHOLD / RATIO / ATTACK / RELEASE / KNEE / MIX; a Gain slot shows GAIN / SC SMOOTH; a Freeze slot shows LENGTH / THRESHOLD / PORTAMENTO / RESISTANCE; and so on. Clicking a button makes that curve active for editing.
 
-To the right: three tab buttons — **DYNAMICS**, **EFFECTS**, **HARMONIC** — switch the lower portion of the interface.
+To the right: **Floor** and **Ceil** drag-values set the dBFS range of the spectrum display. **Falloff** sets the peak-hold decay time in ms.
 
-Further right: **Floor** and **Ceil** drag-values set the dBFS range of the spectrum display. **Falloff** sets the peak-hold decay time in ms.
+### Top bar (row 2 — FFT and scale)
+
+**FFT** buttons (512 / 1k / 2k / 4k / 8k / 16k) set the FFT window size, trading frequency resolution against latency. **Scale** buttons (1× – 2×) set the UI zoom.
 
 ### Curve display
 
 The large centre area shows:
 
-- **Background grid** — vertical Hz lines at standard intervals; horizontal reference lines whose values depend on which curve is selected.
 - **Spectrum gradient** — the pre-FX signal (teal line) and post-FX signal (pink line) with a filled gradient between them showing the amount of processing.
-- **Response curves** — seven coloured polylines showing the current value of each parameter across the frequency range. Attack and release curves are drawn as dashed lines to distinguish them from the others.
-- **Node handles** — only for the selected curve. Circles for bell-type nodes; right-pointing triangles (▶) for the low-shelf node; left-pointing triangles (◀) for the high-shelf node.
+- **Response curves** — coloured polylines for each of the current slot's curves. The active curve is brighter; inactive ones are dimmed.
+- **Node handles** — only for the selected curve. Circles for bell-type nodes; triangles (▶ / ◀) for shelf nodes.
+- **Graph header** — top-left overlay reads "Editing: {slot name} — {channel target}". Click it to rename the slot.
 
 ### Node interaction
 
@@ -70,7 +72,13 @@ The large centre area shows:
 | Hold both mouse buttons + drag up/down | Smooth Q adjustment (500 px = full range) |
 | Double-click node | Reset node to default position |
 
-### Dynamics tab — control strip
+### Bottom strip — control knobs
+
+**SC assignment (per slot):** SC1 / SC2 / SC3 / SC4 / Self buttons assign the current slot's sidechain input. Active inputs light up green.
+
+**GainMode (Gain slots only):** Add / Subtract / Pull buttons appear when a Gain module is selected.
+
+**Global row:**
 
 | Control | Range | Description |
 |---------|-------|-------------|
@@ -78,51 +86,51 @@ The large centre area shows:
 | OUT | ±18 dB | Output gain |
 | MIX | 0–100 % | Global dry/wet |
 | SC | ±18 dB | Sidechain input gain |
-| **Dynamics group** | | |
-| Atk | 0.5–200 ms | Global attack time (scaled per band by Freq) |
-| Rel | 1–500 ms | Global release time (scaled per band by Freq) |
-| Freq | 0–1 | Frequency-dependent time scaling strength |
-| Sens | 0–1 | Sensitivity — how selectively peaks are targeted |
-| Width | 0–0.5 st | Gain-reduction mask blur radius (semitones) |
-| **Threshold shaping** | | |
-| Th Off | ±40 dB | Uniform vertical shift of the entire threshold curve |
-| Tilt | ±6 dB/oct | Spectral tilt of the threshold, pivoting at 1 kHz |
 | AUTO MK | on/off | Auto makeup gain — long-term GR compensation |
 | DELTA | on/off | Delta monitor — hear only what is being removed |
 
-**Tilt** rotates the threshold curve around 1 kHz. Positive values raise the threshold toward high frequencies (compress treble less); negative values lower it (compress treble more). **Th Off** shifts the whole curve up or down without changing its shape.
+**Dynamics + per-curve row:**
 
-### Effects tab
+| Control | Range | Description |
+|---------|-------|-------------|
+| Atk | 0.5–200 ms | Global attack time base |
+| Rel | 1–500 ms | Global release time base |
+| Sens | 0–1 | Sensitivity — how selectively peaks are targeted |
+| Width | 0–0.5 st | Gain-reduction mask blur radius (semitones) |
+| Offset | ±3 | Additive offset for the active curve |
+| Tilt | ±3 | Spectral tilt for the active curve, pivoting at 1 kHz |
 
-Select an effects mode:
+**DELTA** is the fastest way to verify the plugin is targeting what you intend — it outputs the removed signal.
 
-| Mode | Description |
-|------|-------------|
-| BYPASS | No effect processing |
-| FREEZE | Spectral freeze — holds the current FFT frame indefinitely |
-| PHASE | Phase randomiser — randomises per-bin phase each hop |
-| CONTRAST | Spectral contrast enhancer — boosts peaks, cuts valleys |
+### Routing matrix
 
-When **PHASE** is active: an **Amount** slider controls how much phase rotation is applied per hop (0 = none, 1 = full ±π randomisation).
+Below the curve editor, the slot routing matrix shows up to 9 processing slots:
 
-When **CONTRAST** is active: a **Depth** slider (−12 to +12 dB) controls the enhancement strength. Negative values flatten the spectrum toward its local mean; positive values expand peaks away from it. The **Ratio** and other curves continue to apply per-frequency modulation on top of the global Depth setting.
+- **Diagonal cells** — the module assigned to each slot. Click to select that slot for curve editing.
+- **Off-diagonal cells** — send amplitudes between slots. Default routing is serial: slot 0 → 1 → 2 → Master (slot 8).
+- Right-click a diagonal cell to change the module type.
+
+Available module types: **Dynamics** (spectral compressor), **Freeze**, **Phase Smear**, **Contrast**, **Gain**, **Mid/Side**, **T/S Split**, **Harmonic**.
+
+### FFT Size
+
+Selectable from 512 to 16384. Larger sizes give better frequency resolution and higher latency. The default 2048 gives ~46 ms latency at 44.1 kHz and ~21 Hz per bin.
 
 ---
 
 ## Sidechain
 
-Route a sidechain signal into the plugin's auxiliary input. Bitwig: enable the plugin's sidechain input in the track header, then route a source to it.
-
-When a sidechain signal is present it drives the gain-reduction decisions instead of the main signal. **SC** adjusts the sidechain level. Sidechain attack/release times are set separately from the main signal times.
+Up to 4 auxiliary sidechain inputs are supported. Route any source to an aux input (Bitwig: enable aux inputs in the track header). Each slot can be independently assigned to a sidechain input via the routing matrix.
 
 ---
 
 ## Running tests
 
 ```bash
-cargo test            # all tests
+cargo test            # all tests (28 total across 5 test files)
 cargo test engine     # engine contract tests only
 cargo test stft       # STFT roundtrip test only
+cargo test module     # SpectralModule trait compliance tests
 ```
 
 ---

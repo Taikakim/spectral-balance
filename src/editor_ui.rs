@@ -31,26 +31,14 @@ pub fn create_editor(
                 return;
             }
 
-            // Scaling: derive pixels_per_point from the actual physical window width so
-            // content always fills the window during async host resize transitions.
-            //
-            // screen_rect() is in egui *logical* pixels (points), which depend on the ppp
-            // we set in the PREVIOUS frame.  Computing ppp directly from logical pixels
-            // creates a feedback loop that oscillates every frame:
-            //   frame N (ppp=1.25): logical_w = 1125/1.25 = 900 → new_ppp = 1.0
-            //   frame N+1 (ppp=1.0): logical_w = 1125/1.0 = 1125 → new_ppp = 1.25, repeat.
-            //
-            // Fix: read the previous frame's ppp BEFORE changing it, then recover the
-            // physical pixel width as logical_w × old_ppp, which is frame-stable.
+            // Scaling: use the user's chosen scale directly as pixels_per_point.
+            // This is stable (no feedback loop) and ensures content renders at the target
+            // scale immediately, even before the host finishes resizing the window.
             {
                 let scale = *params.ui_scale.lock();
                 const NOMINAL_W: f32 = 900.0;
                 const NOMINAL_H: f32 = 1010.0;
-                // Must read old_ppp before set_pixels_per_point to avoid aliasing.
-                let old_ppp   = ctx.pixels_per_point();
-                let logical_w = ctx.input(|i| i.screen_rect().width());
-                let physical_w = logical_w * old_ppp; // physical pixels — stable across frames
-                let ppp = (physical_w / NOMINAL_W).clamp(0.5, 4.0);
+                let ppp = scale.clamp(0.5, 4.0);
                 ctx.set_pixels_per_point(ppp);
 
                 // Only send resize request when the target scale changes.
@@ -421,9 +409,15 @@ pub fn create_editor(
                     // call ui.put(), which resets the layout cursor backward into the curve area.
                     {
                         let edit_slot = *params.editing_slot.lock() as usize;
-                        let tgts      = params.slot_targets.lock();
-                        let target_label = tgts[edit_slot].label();
-                        drop(tgts);
+                        let edit_ty   = params.slot_module_types.lock()[edit_slot];
+                        let edit_spec = crate::dsp::modules::module_spec(edit_ty);
+                        let edit_curve = (*params.editing_curve.lock() as usize)
+                            .min(edit_spec.num_curves.saturating_sub(1));
+                        let curve_label = edit_spec
+                            .curve_labels
+                            .get(edit_curve)
+                            .copied()
+                            .unwrap_or("");
 
                         let name_edit_key = ui.id().with(("name_edit", edit_slot));
                         let is_editing: bool = ui.data(|d| d.get_temp(name_edit_key).unwrap_or(false));
@@ -463,7 +457,11 @@ pub fn create_editor(
                                 let names = params.slot_names.lock();
                                 crate::editor::fx_matrix_grid::slot_name_str(&names[edit_slot])
                             };
-                            let header = format!("Editing: {} \u{2014} {}", name_str, target_label);
+                            let header = if curve_label.is_empty() {
+                                format!("Editing: {}", name_str)
+                            } else {
+                                format!("Editing: {} \u{2014} {}", name_str, curve_label)
+                            };
                             let header_rect = egui::Rect::from_min_size(
                                 curve_rect.min + egui::vec2(4.0, 4.0),
                                 egui::vec2(300.0, 14.0),
@@ -649,20 +647,39 @@ pub fn create_editor(
                             let mut meta = *params.slot_curve_meta.lock();
                             let (tilt, offset) = &mut meta[editing_slot][editing_curve];
                             let mut changed = false;
-                            // Offset range calibrated per display type so ±max spans the full parameter range
+                            // Offset range calibrated per display type so ±max spans the full
+                            // parameter range. UI shows a normalised [-1, +1] proxy with a
+                            // consistent drag speed (600 px for a full sweep) so every curve
+                            // feels the same regardless of its underlying physical scale.
                             let off_max = crv::curve_offset_max(crv::display_curve_idx(editing_type, editing_curve));
+                            let mut off_norm = if off_max > 0.0 { *offset / off_max } else { 0.0 };
                             ui.vertical(|ui| {
                                 if ui.add(
-                                    egui::DragValue::new(offset)
-                                        .range(-off_max..=off_max).speed(0.005).fixed_decimals(3)
-                                ).changed() { changed = true; }
+                                    egui::DragValue::new(&mut off_norm)
+                                        .range(-1.0..=1.0)
+                                        .speed(1.0 / 300.0)
+                                        .fixed_decimals(2)
+                                ).changed() {
+                                    *offset = (off_norm.clamp(-1.0, 1.0)) * off_max;
+                                    changed = true;
+                                }
                                 ui.label(egui::RichText::new("Offset").color(crv_col).size(9.0));
                             });
+                            // Tilt shares the normalised [-1, +1] proxy for consistent feel.
+                            // Internal storage is the physical value used by apply_curve_adjustments
+                            // (±2 range). UI multiplies/divides by TILT_MAX on read/write.
+                            const TILT_MAX: f32 = 2.0;
+                            let mut tilt_norm = (*tilt / TILT_MAX).clamp(-1.0, 1.0);
                             ui.vertical(|ui| {
                                 if ui.add(
-                                    egui::DragValue::new(tilt)
-                                        .range(-2.0..=2.0).speed(0.005).fixed_decimals(3)
-                                ).changed() { changed = true; }
+                                    egui::DragValue::new(&mut tilt_norm)
+                                        .range(-1.0..=1.0)
+                                        .speed(1.0 / 300.0)
+                                        .fixed_decimals(2)
+                                ).changed() {
+                                    *tilt = tilt_norm.clamp(-1.0, 1.0) * TILT_MAX;
+                                    changed = true;
+                                }
                                 ui.label(egui::RichText::new("Tilt").color(crv_col).size(9.0));
                             });
                             if changed {
@@ -686,15 +703,25 @@ pub fn create_editor(
                     let edit_slot  = *params.editing_slot.lock() as usize;
                     let types_snap = *params.slot_module_types.lock();
                     let names_snap = *params.slot_names.lock();
-                    let mut route_guard = params.route_matrix.lock();
-                    let route_matrix_ref = &mut *route_guard;
-                    let interaction = crate::editor::fx_matrix_grid::paint_fx_matrix_grid(
-                        ui,
-                        &types_snap,
-                        &names_snap,
-                        route_matrix_ref,
-                        edit_slot,
-                    );
+
+                    // ScrollArea allows the matrix to scroll when the window is too short
+                    // to display all rows (e.g. at large scale on a small screen).
+                    let interaction = {
+                        let mut route_guard = params.route_matrix.lock();
+                        let route_matrix_ref = &mut *route_guard;
+                        egui::ScrollArea::vertical()
+                            .id_salt("matrix_scroll")
+                            .show(ui, |ui| {
+                                crate::editor::fx_matrix_grid::paint_fx_matrix_grid(
+                                    ui,
+                                    &types_snap,
+                                    &names_snap,
+                                    route_matrix_ref,
+                                    edit_slot,
+                                )
+                            })
+                            .inner
+                    };
                     if let Some(new_slot) = interaction.left_click_slot {
                         *params.editing_slot.lock() = new_slot as u8;
                     }

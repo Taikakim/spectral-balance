@@ -1,4 +1,5 @@
 use num_complex::Complex;
+use crate::dsp::utils::ms_to_coeff;
 use super::{SpectralEngine, BinParams};
 
 #[derive(Default)]
@@ -48,13 +49,7 @@ impl SpectralContrastEngine {
         }
     }
 
-    #[inline]
-    fn ms_to_coeff(ms: f32, sample_rate: f32, hop_size: usize) -> f32 {
-        if ms < 0.001 { return 0.0; }
-        let hops_per_sec = sample_rate / hop_size as f32;
-        let time_hops = ms * 0.001 * hops_per_sec;
-        (-1.0_f32 / time_hops).exp()
-    }
+
 }
 
 impl SpectralEngine for SpectralContrastEngine {
@@ -107,9 +102,9 @@ impl SpectralEngine for SpectralContrastEngine {
             let attack_ms  = params.attack_ms[k].max(0.1);
             let release_ms = params.release_ms[k].max(1.0);
             let coeff = if local_mean > self.contrast_env[k] {
-                Self::ms_to_coeff(attack_ms,  sample_rate, hop)
+                ms_to_coeff(attack_ms,  sample_rate, hop)
             } else {
-                Self::ms_to_coeff(release_ms, sample_rate, hop)
+                ms_to_coeff(release_ms, sample_rate, hop)
             };
             self.contrast_env[k] = coeff * self.contrast_env[k] + (1.0 - coeff) * local_mean;
 
@@ -146,7 +141,7 @@ impl SpectralEngine for SpectralContrastEngine {
         }
 
         // Update auto-makeup long-term average (~1000 ms, tracks mix-weighted GR).
-        let coeff_slow = Self::ms_to_coeff(1000.0, sample_rate, hop);
+        let coeff_slow = ms_to_coeff(1000.0, sample_rate, hop);
         for k in 0..n {
             let effective_gr = self.smooth_buf[k] * params.mix[k].clamp(0.0, 1.0);
             self.auto_makeup_db[k] = coeff_slow * self.auto_makeup_db[k]

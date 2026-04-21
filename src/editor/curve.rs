@@ -241,19 +241,21 @@ pub fn display_curve_idx(module_type: ModuleType, curve_idx: usize) -> usize {
 
 /// Maximum absolute value for the Offset drag-slider, per display index.
 /// The offset is added to the raw linear gain before display mapping, so
-/// the range should span from the parameter minimum to maximum.
+/// the range should span from the parameter minimum to maximum for every
+/// curve type. Values chosen so that ±off_max reaches (or saturates) the
+/// full display range relative to the neutral gain of 1.0.
 pub fn curve_offset_max(display_idx: usize) -> f32 {
     match display_idx {
-        0 | 9  => 1.5,  // Threshold dBFS: ±1.5 gain ≈ ±30 dBFS shift
-        1      => 5.0,  // Ratio: ±5 ratio units
-        2 | 3  => 1.0,  // Attack/Release multiplier: ±1× of global value
-        4      => 2.0,  // Knee dB: ±2 gain
-        5      => 2.0,  // Makeup/Gain dB: ±2 gain ≈ ±12 dB
-        6      => 1.0,  // Mix %: ±1 covers 0–200 %
-        7      => 1.0,  // Amount/Balance 0–200 %: ±1 covers full range
-        8      => 2.0,  // Freeze Length: ±2 shifts the flat curve by ±1000 ms
-        10     => 1.0,  // Portamento/SC Smooth ms: ±1 of neutral
-        11     => 1.0,  // Resistance 0–2: ±1 covers full range
+        0 | 9  => 1.5,   // Threshold dBFS: ±1.5 → ±neutral; clamps cover full ±80 dBFS
+        1      => 19.0,  // Ratio 1–20: offset +19 reaches 20:1 from neutral 1:1
+        2 | 3  => 2.0,   // Attack/Release multiplier: 0× to 3× of global value
+        4      => 8.0,   // Knee dB 1.5–48: offset +7 reaches 48 dB from neutral (6 dB)
+        5      => 8.0,   // Makeup/Gain dB: ±8 gain ≈ ±18 dB around neutral
+        6      => 1.0,   // Mix %: ±1 covers 0–200 %
+        7      => 1.0,   // Amount/Balance 0–200 %: ±1 covers full range
+        8      => 7.0,   // Freeze Length 0–4000 ms: offset +7 reaches 4000 ms from 500 ms
+        10     => 4.0,   // Portamento/SC Smooth 0–1000 ms: offset +4 reaches 1000 ms
+        11     => 1.0,   // Resistance 0–2: ±1 covers full range around neutral 1.0
         _      => 1.5,
     }
 }
@@ -611,8 +613,11 @@ pub fn curve_widget(
 
     for i in 0..6 {
         // Normalised y position: node.y ∈ [-1, +1] maps linearly to [bottom, top] of rect.
-        // This makes the full display height reachable and gives 1:1 drag tracking.
-        let sy = rect.bottom() - (nodes[i].y + 1.0) / 2.0 * rect.height();
+        // node.y has ±2 parameter headroom (see drag clamp below) but the dot is pinned to the
+        // graph rect so it can never stray into the routing matrix above or below. The headroom
+        // still influences the rendered response curve and underlying parameters.
+        let sy_raw = rect.bottom() - (nodes[i].y + 1.0) / 2.0 * rect.height();
+        let sy = sy_raw.clamp(rect.top(), rect.bottom());
 
         // Visual position scaled to the current SR's Nyquist range.
         // Low shelf (i=0): fixed +20px nudge right so it stays visible at the left edge.

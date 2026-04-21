@@ -146,6 +146,7 @@ impl Pipeline {
         let release_ms_base   = params.release_ms.smoothed.next_step(block_size);
         let input_gain_db     = params.input_gain.smoothed.next_step(block_size);
         let output_gain_db    = params.output_gain.smoothed.next_step(block_size);
+        let global_mix        = params.mix.smoothed.next_step(block_size).clamp(0.0, 1.0);
 
         // ── Read all 9×7 slot curves from triple-buffer + apply tilt/offset ──
         // Non-blocking: if GUI holds the lock this block, skip tilt/offset (not catastrophic).
@@ -266,8 +267,12 @@ impl Pipeline {
             .unwrap_or([FxChannelTarget::All; 9]);
 
         let dry_delay_size = fft_size + MAX_BLOCK_SIZE;
-        // Delta monitor: write dry samples into the ring buffer at the current write head.
-        if delta_monitor {
+        // We need the delayed dry signal for either the delta monitor or the global wet/dry
+        // mix. A small epsilon avoids running the dry path for a mix knob that's effectively
+        // at unity.
+        let need_dry = delta_monitor || global_mix < 0.999_5;
+        // Capture dry samples into the ring buffer at the current write head.
+        if need_dry {
             let mut dry_idx = 0usize;
             for sample_block in buffer.iter_samples() {
                 debug_assert!(dry_idx < MAX_BLOCK_SIZE, "block size exceeded MAX_BLOCK_SIZE={MAX_BLOCK_SIZE}");
@@ -382,20 +387,36 @@ impl Pipeline {
             }
         }
 
-        // Delta monitor: output dry(delayed by fft_size) − wet = the removed signal.
-        if delta_monitor {
+        // Post-processing dry/wet combine. Delta monitor wins over the global mix: when the
+        // user turns on Δ they want to hear the removed signal, full stop. Otherwise crossfade
+        // the wet output with the fft_size-delayed dry signal so mix=0 is a perfect bypass.
+        if need_dry {
             let block_samples = buffer.samples();
             let mut dry_idx = 0usize;
-            for sample_block in buffer.iter_samples() {
-                let read_pos =
-                    (self.dry_delay_write + dry_idx + dry_delay_size - fft_size) % dry_delay_size;
-                for (ch_idx, sample) in sample_block.into_iter().enumerate() {
-                    let dry_val = self.dry_delay[ch_idx * MAX_DRY_DELAY_SIZE + read_pos];
-                    *sample = dry_val - *sample;
+            if delta_monitor {
+                for sample_block in buffer.iter_samples() {
+                    let read_pos =
+                        (self.dry_delay_write + dry_idx + dry_delay_size - fft_size) % dry_delay_size;
+                    for (ch_idx, sample) in sample_block.into_iter().enumerate() {
+                        let dry_val = self.dry_delay[ch_idx * MAX_DRY_DELAY_SIZE + read_pos];
+                        *sample = dry_val - *sample;
+                    }
+                    dry_idx += 1;
                 }
-                dry_idx += 1;
+            } else {
+                let wet = global_mix;
+                let dry = 1.0 - global_mix;
+                for sample_block in buffer.iter_samples() {
+                    let read_pos =
+                        (self.dry_delay_write + dry_idx + dry_delay_size - fft_size) % dry_delay_size;
+                    for (ch_idx, sample) in sample_block.into_iter().enumerate() {
+                        let dry_val = self.dry_delay[ch_idx * MAX_DRY_DELAY_SIZE + read_pos];
+                        *sample = wet * *sample + dry * dry_val;
+                    }
+                    dry_idx += 1;
+                }
             }
-            // Advance write head now that both write (above) and read are done
+            // Advance write head now that both write (above) and read are done.
             self.dry_delay_write = (self.dry_delay_write + block_samples) % dry_delay_size;
         }
 
