@@ -213,18 +213,17 @@ pub fn display_curve_idx(module_type: ModuleType, curve_idx: usize) -> usize {
         },
         ModuleType::PhaseSmear => match curve_idx {
             0 => 7,             // AMOUNT → 0–200 %
-            1 => 10,            // SC SMOOTH → ms (log, treated as time constant)
+            1 => 10,            // PEAK HOLD → ms (log, treated as time constant)
             2 => 6,             // MIX → %
             _ => curve_idx,
         },
         ModuleType::Contrast => match curve_idx {
             0 => 1,             // AMOUNT → ratio 1–20 (maps gain directly to bp_ratio)
-            1 => 10,            // SC SMOOTH → ms
             _ => curve_idx,
         },
         ModuleType::Gain => match curve_idx {
             0 => 5,             // GAIN → dB (same ±18 dB makeup scale)
-            1 => 10,            // SC SMOOTH → ms
+            1 => 10,            // PEAK HOLD → ms
             _ => curve_idx,
         },
         ModuleType::MidSide => match curve_idx {

@@ -46,7 +46,7 @@ After installing, rescan plugins in Bitwig (or restart). The plugin appears as *
 
 ### Top bar (row 1 — curve selectors)
 
-Adaptive curve selector buttons show the curves available for the **currently selected slot**. A Dynamics slot shows THRESHOLD / RATIO / ATTACK / RELEASE / KNEE / MIX; a Gain slot shows GAIN / SC SMOOTH; a Freeze slot shows LENGTH / THRESHOLD / PORTAMENTO / RESISTANCE; and so on. Clicking a button makes that curve active for editing.
+Adaptive curve selector buttons show the curves available for the **currently selected slot**. A Dynamics slot shows THRESHOLD / RATIO / ATTACK / RELEASE / KNEE / MIX; a Gain slot shows GAIN / PEAK HOLD; a Freeze slot shows LENGTH / THRESHOLD / PORTAMENTO / RESISTANCE; and so on. Clicking a button makes that curve active for editing.
 
 To the right: **Floor** and **Ceil** drag-values set the dBFS range of the spectrum display. **Falloff** sets the peak-hold decay time in ms.
 
