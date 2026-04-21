@@ -231,15 +231,54 @@ channel target setting.
 
 ## Sidechain
 
-Up to 4 auxiliary sidechain inputs are supported. Connect signals to the plugin's auxiliary
-inputs (Bitwig: enable aux inputs in the track header, route sources to them).
+Spectral Forge accepts one stereo sidechain (SC) input. In Bitwig, route any track's output to the plugin's sidechain input as usual.
 
-Each slot can be individually assigned to a sidechain input (0–3) or to self-detect from the
-main signal. The **SC** knob adjusts the global sidechain level.
+### Which modules use the sidechain?
 
-When a sidechain signal is present it drives the gain-reduction decisions for the slots assigned
-to it — the main signal is processed, but the levels that trigger compression come from the
-sidechain. Sidechain indicators in the routing matrix show which inputs are carrying signal.
+| Module          | SC role                                                                  |
+|-----------------|--------------------------------------------------------------------------|
+| **Dynamics**    | External detector for per-bin gain reduction.                            |
+| **Gain**        | In Pull mode: pulls output magnitude toward the SC magnitude per bin. PEAK HOLD curve smooths it. |
+| **Phase Smear** | Modulates per-bin smear amount by SC magnitude, smoothed by PEAK HOLD curve. |
+| **Freeze**      | Gates the freeze threshold; louder SC raises effective threshold.        |
+
+Other modules (Contrast, Mid/Side, T/S Split, Harmonic) do not use the sidechain and show no SC controls.
+
+### Per-module SC controls
+
+Each SC-aware module panel carries:
+
+- **SC gain** (−∞ to +18 dB) — level applied to the SC signal for *this slot only*. −∞ disables SC for the slot.
+- **SC source** — which channel of the stereo SC signal the slot keys off:
+
+| Choice    | Behaviour                                                                  |
+|-----------|----------------------------------------------------------------------------|
+| **Follow**    | Routes the SC channel matching whatever the slot is currently processing. See table below. |
+| **L+R**       | Sum of SC left and right.                                                  |
+| **L**         | SC left channel only.                                                      |
+| **R**         | SC right channel only.                                                     |
+| **M**         | Mid (L+R)/√2 of the SC.                                                    |
+| **S**         | Side (L−R)/√2 of the SC.                                                   |
+
+### Follow semantics
+
+| Stereo Link    | Follow resolves to                                                        |
+|----------------|---------------------------------------------------------------------------|
+| Linked         | L+R                                                                       |
+| Independent    | Channel-paired: main L → SC L, main R → SC R                              |
+| Mid/Side       | Target-paired: Mid-target slot → SC M, Side-target slot → SC S, All-target slot → L+R |
+
+To duck the mids by the sides of the SC input: route a stereo SC, target the slot to Mid, set SC source to **S**.
+
+### SC level indicator
+
+The small yellow bar in the top bar (right of Falloff) lights up when the plugin is receiving audio on the SC input. If the bar stays dim while playing your project, the SC isn't reaching the plugin — check your host routing.
+
+### Gain Pull peak-hold curve
+
+In Gain/Pull mode, the second curve — **PEAK HOLD** — sets per-bin peak-hold time (1 ms to ~500 ms, log). Longer hold prevents pumping on percussive SC material; shorter hold tracks detail. In Add and Subtract modes the curve is grayed and has no effect.
+
+When editing the PEAK HOLD curve, a thin animated darker line shows the live per-bin SC envelope the module is currently seeing.
 
 ---
 
