@@ -51,19 +51,19 @@ fn dynamics_config(i: usize) -> CurveDisplayConfig {
         },
         1 => CurveDisplayConfig {
             y_label: "ratio", y_min: 1.0, y_max: 20.0, y_log: true,
-            grid_lines: &[(1.25, "1:1.25"), (2.5, "1:2.5"), (5.0, "1:5"), (10.0, "1:10")],
+            grid_lines: &[(1.5, "1:1.5"), (2.5, "1:2.5"), (5.0, "1:5"), (10.0, "1:10")],
         },
         2 | 3 => CurveDisplayConfig {
             y_label: "ms", y_min: 1.0, y_max: 1024.0, y_log: true,
-            grid_lines: &[(64.0, "64ms"), (128.0, "128ms"), (256.0, "256ms"), (512.0, "512ms")],
+            grid_lines: &[(4.0, "4ms"), (16.0, "16ms"), (64.0, "64ms"), (256.0, "256ms")],
         },
         4 => CurveDisplayConfig {
-            y_label: "dB", y_min: 1.5, y_max: 48.0, y_log: true,
-            grid_lines: &[(3.0, "3dB"), (6.0, "6dB"), (12.0, "12dB"), (24.0, "24dB")],
+            y_label: "dB", y_min: 0.0, y_max: 48.0, y_log: false,
+            grid_lines: &[(6.0, "6dB"), (12.0, "12dB"), (24.0, "24dB"), (36.0, "36dB")],
         },
         5 => CurveDisplayConfig {
             y_label: "%", y_min: 0.0, y_max: 100.0, y_log: false,
-            grid_lines: &[(20.0, "20%"), (40.0, "40%"), (60.0, "60%"), (80.0, "80%")],
+            grid_lines: &[(25.0, "25%"), (50.0, "50%"), (75.0, "75%"), (100.0, "100%")],
         },
         _ => default_config(),
     }
