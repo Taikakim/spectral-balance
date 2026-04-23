@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::editor::curve::CurveNode;
 use crate::dsp::modules::{GainMode, ModuleType, RouteMatrix};
 
-// Pulls in `pub struct GeneratedParams { ... }` (1341 FloatParam fields),
+// Pulls in `pub struct GeneratedParams { ... }` (1404 FloatParam fields),
 // its `Default` impl, and `impl GeneratedParams { fn extend_param_map(...) }`
 // from the build.rs output. Defined at the top level — must sit outside any
 // struct or fn body because Rust disallows macro-expanded struct fields.
@@ -236,8 +236,9 @@ pub struct SpectralForgeParams {
 
     // ── Generated per-slot / per-curve / per-node automation params ──
     // 1134 graph-node fields (9×7×6×3), 126 tilt/offset fields (9×7×2),
-    // and 81 matrix-send fields (9×9). Total 1341. Nested because Rust does
-    // not allow macro-expanded field declarations inside a struct. See build.rs.
+    // 63 curvature fields (9×7), and 81 matrix-send fields (9×9). Total 1404.
+    // Nested because Rust does not allow macro-expanded field declarations
+    // inside a struct. See build.rs.
     pub generated: GeneratedParams,
 }
 
@@ -487,6 +488,16 @@ impl SpectralForgeParams {
         Some(offset_dispatch!(self, slot, curve))
     }
 
+    /// Returns a reference to the curvature FloatParam for the given slot/curve.
+    /// Returns `None` if any index is out of range.
+    pub fn curvature_param(&self, slot: usize, curve: usize) -> Option<&FloatParam> {
+        use crate::param_ids::{NUM_CURVES, NUM_SLOTS};
+        if slot >= NUM_SLOTS || curve >= NUM_CURVES {
+            return None;
+        }
+        Some(curv_dispatch!(self, slot, curve))
+    }
+
     /// Returns a reference to the matrix-cell FloatParam for the given row/col.
     /// Returns `None` if any index is out of range.
     pub fn matrix_cell(&self, row: usize, col: usize) -> Option<&FloatParam> {
@@ -605,6 +616,8 @@ mod accessor_tests {
         assert!(p.graph_node(0, 0, 6).is_none());
         assert!(p.tilt_param(0, 7).is_none());
         assert!(p.offset_param(9, 0).is_none());
+        assert!(p.curvature_param(0, 7).is_none());
+        assert!(p.curvature_param(9, 0).is_none());
         assert!(p.matrix_cell(9, 0).is_none());
         assert!(p.matrix_cell(0, 9).is_none());
     }
@@ -614,6 +627,8 @@ mod accessor_tests {
         let p = SpectralForgeParams::default();
         assert!(p.tilt_param(0, 0).is_some());
         assert!(p.offset_param(8, 6).is_some());
+        assert!(p.curvature_param(0, 0).is_some());
+        assert!(p.curvature_param(8, 6).is_some());
         assert!(p.matrix_cell(0, 0).is_some());
         assert!(p.matrix_cell(8, 8).is_some());
     }
@@ -628,8 +643,8 @@ mod accessor_tests {
 // valid as long as `self` is live. nih-plug holds us in an `Arc`, so that holds.
 unsafe impl Params for SpectralForgeParams {
     fn param_map(&self) -> Vec<(String, ParamPtr, String)> {
-        // Reserve for the ~35 hand-written globals + 1341 generated entries.
-        let mut params: Vec<(String, ParamPtr, String)> = Vec::with_capacity(1400);
+        // Reserve for the ~35 hand-written globals + 1404 generated entries.
+        let mut params: Vec<(String, ParamPtr, String)> = Vec::with_capacity(1450);
 
         // Hand-written globals (same IDs and order as the previous #[id = "..."] attrs).
         params.push(("input_gain".to_string(),   self.input_gain.as_ptr(),   String::new()));
@@ -671,7 +686,7 @@ unsafe impl Params for SpectralForgeParams {
         params.push(("phase_rand_amount".to_string(),    self.phase_rand_amount.as_ptr(),    String::new()));
         params.push(("spectral_contrast_db".to_string(), self.spectral_contrast_db.as_ptr(), String::new()));
 
-        // 1341 generated entries (graph nodes + tilt/offset + matrix).
+        // 1404 generated entries (graph nodes + tilt/offset + curvature + matrix).
         self.generated.extend_param_map(&mut params);
 
         params

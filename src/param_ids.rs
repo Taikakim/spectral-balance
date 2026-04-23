@@ -28,6 +28,10 @@ pub fn offset_id(slot: usize, curve: usize) -> String {
     format!("s{}c{}offset", slot, curve)
 }
 
+pub fn curvature_id(slot: usize, curve: usize) -> String {
+    format!("s{}c{}curv", slot, curve)
+}
+
 pub fn matrix_id(row: usize, col: usize) -> String {
     format!("mr{}c{}", row, col)
 }
@@ -50,9 +54,16 @@ mod tests {
     }
 
     #[test]
+    fn curvature_id_format() {
+        assert_eq!(curvature_id(4, 3), "s4c3curv");
+        assert_eq!(curvature_id(0, 0), "s0c0curv");
+    }
+
+    #[test]
     fn total_counts() {
         assert_eq!(NUM_SLOTS * NUM_CURVES * NUM_NODES * 3, 1134);
-        assert_eq!(NUM_SLOTS * NUM_CURVES * 2, 126);
+        assert_eq!(NUM_SLOTS * NUM_CURVES * 2, 126);  // tilt + offset
+        assert_eq!(NUM_SLOTS * NUM_CURVES * 3, 189);  // tilt + offset + curvature
         assert_eq!(NUM_MATRIX_ROWS * NUM_SLOTS, 81);
     }
 }

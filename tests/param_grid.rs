@@ -1,13 +1,14 @@
 //! Param generation smoke tests.
 //!
 //! Verifies that `SpectralForgeParams::default().param_map()` includes the
-//! full 1341-entry automation grid produced by `build.rs`.
+//! full 1404-entry automation grid produced by `build.rs`.
 //!
 //! Counts (from the plan):
 //!   - Graph nodes : 9 slots × 7 curves × 6 nodes × 3 fields (x,y,q) = 1134
 //!   - Tilt+offset : 9 slots × 7 curves × 2 kinds                    =  126
+//!   - Curvature   : 9 slots × 7 curves                               =   63
 //!   - Matrix      : 9 rows × 9 cols                                 =   81
-//!   - Total                                                         = 1341
+//!   - Total                                                         = 1404
 
 use nih_plug::prelude::Params;
 use spectral_forge::params::SpectralForgeParams;
@@ -49,6 +50,18 @@ fn is_generated_tilt_or_offset_id(id: &str) -> bool {
         && b[3].is_ascii_digit()
 }
 
+fn is_generated_curv_id(id: &str) -> bool {
+    if !id.ends_with("curv") {
+        return false;
+    }
+    let b = id.as_bytes();
+    b.len() >= 7
+        && b[0] == b's'
+        && b[1].is_ascii_digit()
+        && b[2] == b'c'
+        && b[3].is_ascii_digit()
+}
+
 fn is_matrix_id(id: &str) -> bool {
     id.starts_with("mr")
 }
@@ -77,6 +90,9 @@ fn param_ids_constants_match_expected_dimensions() {
         * spectral_forge::param_ids::NUM_CURVES
         * 2;  // tilt, offset
     assert_eq!(expected_to, 126);
+    let expected_curv = spectral_forge::param_ids::NUM_SLOTS
+        * spectral_forge::param_ids::NUM_CURVES;  // 63
+    assert_eq!(expected_curv, 63);
     let expected_matrix = spectral_forge::param_ids::NUM_MATRIX_ROWS
         * spectral_forge::param_ids::NUM_SLOTS;
     assert_eq!(expected_matrix, 81);
@@ -90,12 +106,15 @@ fn param_map_contains_expected_count() {
 
     let graph_count  = ids.iter().filter(|id| is_graph_node_id(id)).count();
     let to_count     = ids.iter().filter(|id| is_generated_tilt_or_offset_id(id)).count();
+    let curv_count   = ids.iter().filter(|id| is_generated_curv_id(id)).count();
     let matrix_count = ids.iter().filter(|id| is_matrix_id(id)).count();
 
     // Graph nodes: 9 × 7 × 6 × 3 = 1134
     assert_eq!(graph_count, 1134, "graph-node ID count mismatch");
     // Tilt+offset: 9 × 7 × 2 = 126 (generator-emitted only; legacy globals excluded)
     assert_eq!(to_count, 126, "tilt/offset ID count mismatch");
+    // Curvature: 9 × 7 = 63
+    assert_eq!(curv_count, 63, "curvature ID count mismatch");
     // Matrix: 9 × 9 = 81
     assert_eq!(matrix_count, 81, "matrix ID count mismatch");
 }
@@ -111,6 +130,8 @@ fn specific_ids_are_present() {
     assert!(ids.contains("s8c6n5q"), "missing s8c6n5q");
     assert!(ids.contains("s4c3tilt"), "missing s4c3tilt");
     assert!(ids.contains("s4c3offset"), "missing s4c3offset");
+    assert!(ids.contains("s4c3curv"), "missing s4c3curv");
+    assert!(ids.contains("s0c0curv"), "missing s0c0curv");
     assert!(ids.contains("mr8c0"), "missing mr8c0");
 }
 

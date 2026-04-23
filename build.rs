@@ -1,6 +1,6 @@
 //! Generates `params_gen.rs` — a top-level `pub struct GeneratedParams` with
-//! 1341 `FloatParam` fields for graph nodes, tilt/offset, and matrix sends,
-//! plus a `Default` impl and an `extend_param_map` method.
+//! 1404 `FloatParam` fields for graph nodes, tilt/offset, curvature, and matrix
+//! sends, plus a `Default` impl and an `extend_param_map` method.
 //!
 //! The generated file is `include!`d at the top of `src/params.rs`. The main
 //! `SpectralForgeParams` struct holds a `generated: GeneratedParams` field and
@@ -41,7 +41,7 @@ fn main() {
     .unwrap();
     writeln!(
         f,
-        "// `GeneratedParams` (1341 FloatParams), its Default, and a helper"
+        "// `GeneratedParams` (1404 FloatParams), its Default, and a helper"
     )
     .unwrap();
     writeln!(
@@ -56,6 +56,7 @@ fn main() {
     writeln!(f, "pub struct GeneratedParams {{").unwrap();
     emit_graph_node_fields(&mut f);
     emit_tilt_offset_fields(&mut f);
+    emit_curvature_fields(&mut f);
     emit_matrix_fields(&mut f);
     writeln!(f, "}}").unwrap();
     writeln!(f).unwrap();
@@ -66,6 +67,7 @@ fn main() {
     writeln!(f, "        Self {{").unwrap();
     emit_graph_node_inits(&mut f);
     emit_tilt_offset_inits(&mut f);
+    emit_curvature_inits(&mut f);
     emit_matrix_inits(&mut f);
     writeln!(f, "        }}").unwrap();
     writeln!(f, "    }}").unwrap();
@@ -86,6 +88,7 @@ fn main() {
     .unwrap();
     emit_graph_node_map_entries(&mut f);
     emit_tilt_offset_map_entries(&mut f);
+    emit_curvature_map_entries(&mut f);
     emit_matrix_map_entries(&mut f);
     writeln!(f, "    }}").unwrap();
     writeln!(f, "}}").unwrap();
@@ -97,6 +100,8 @@ fn main() {
     emit_tilt_dispatch(&mut f);
     writeln!(f).unwrap();
     emit_offset_dispatch(&mut f);
+    writeln!(f).unwrap();
+    emit_curvature_dispatch(&mut f);
     writeln!(f).unwrap();
     emit_matrix_dispatch(&mut f);
 }
@@ -336,6 +341,59 @@ fn emit_matrix_dispatch(f: &mut File) {
     for r in 0..NUM_MATRIX_ROWS {
         for col in 0..NUM_SLOTS {
             writeln!(f, "            ({r}, {col}) => &$self.generated.mr{r}c{col},").unwrap();
+        }
+    }
+    writeln!(f, "            _ => unreachable!(),").unwrap();
+    writeln!(f, "        }}").unwrap();
+    writeln!(f, "    }};").unwrap();
+    writeln!(f, "}}").unwrap();
+}
+
+fn emit_curvature_fields(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for c in 0..NUM_CURVES {
+            let rust_name = format!("s{}c{}_curv", s, c);
+            writeln!(f, "    pub {rust_name}: FloatParam,").unwrap();
+        }
+    }
+}
+
+fn emit_curvature_inits(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for c in 0..NUM_CURVES {
+            let id        = format!("s{}c{}curv", s, c);
+            let rust_name = format!("s{}c{}_curv", s, c);
+            writeln!(
+                f,
+                "            {rust_name}: FloatParam::new(\"{id}\", 0.0f32, \
+                 FloatRange::Linear {{ min: 0.0f32, max: 1.0f32 }})\
+                 .with_smoother(SmoothingStyle::Linear(2.0))\
+                 .hide_in_generic_ui(),"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_curvature_map_entries(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for c in 0..NUM_CURVES {
+            let id        = format!("s{}c{}curv", s, c);
+            let rust_name = format!("s{}c{}_curv", s, c);
+            writeln!(
+                f,
+                "        out.push(({id:?}.to_string(), self.{rust_name}.as_ptr(), String::new()));"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_curvature_dispatch(f: &mut File) {
+    writeln!(f, "macro_rules! curv_dispatch {{").unwrap();
+    writeln!(f, "    ($self:expr, $s:expr, $c:expr) => {{").unwrap();
+    writeln!(f, "        match ($s, $c) {{").unwrap();
+    for s in 0..NUM_SLOTS {
+        for c in 0..NUM_CURVES {
+            writeln!(f, "            ({s}, {c}) => &$self.generated.s{s}c{c}_curv,").unwrap();
         }
     }
     writeln!(f, "            _ => unreachable!(),").unwrap();
