@@ -374,22 +374,23 @@ pub fn create_editor(
                             }
                         };
 
-                        // Read tilt/offset lock-free from automatable params.
-                        let slot_meta: [(f32, f32); 7] = std::array::from_fn(|c| {
-                            let t = params.tilt_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0);
-                            let o = params.offset_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0);
-                            (t, o)
+                        // Read tilt/offset/curvature lock-free from automatable params.
+                        let slot_meta: [(f32, f32, f32); 7] = std::array::from_fn(|c| {
+                            let t  = params.tilt_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0);
+                            let o  = params.offset_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0);
+                            let cv = params.curvature_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0);
+                            (t, o, cv)
                         });
 
                         // Draw inactive curves (dim) — display_curve_idx maps to correct y-axis scale
                         for i in 0..num_c.min(7) {
                             if i == editing_curve { continue; }
-                            let (tilt, offset) = slot_meta[i];
+                            let (tilt, offset, curvature) = slot_meta[i];
                             let disp_i = crv::display_curve_idx(editing_type, i, slot_gain_mode_snap);
                             crv::paint_response_curve(
                                 ui.painter(), curve_rect, &all_gains[i], disp_i,
                                 spec.color_dim, 1.0,
-                                db_min, db_max, atk_ms, rel_ms, sr, fft_size, tilt, offset,
+                                db_min, db_max, atk_ms, rel_ms, sr, fft_size, tilt, offset, curvature,
                             );
                         }
 
@@ -410,14 +411,14 @@ pub fn create_editor(
                                 }
                             }
 
-                            let (tilt, offset) = slot_meta[editing_curve];
+                            let (tilt, offset, curvature) = slot_meta[editing_curve];
                             let disp_curve = crv::display_curve_idx(
                                 editing_type, editing_curve, slot_gain_mode_snap,
                             );
                             crv::paint_response_curve(
                                 ui.painter(), curve_rect, &all_gains[editing_curve], disp_curve,
                                 spec.color_lit, 2.0,
-                                db_min, db_max, atk_ms, rel_ms, sr, fft_size, tilt, offset,
+                                db_min, db_max, atk_ms, rel_ms, sr, fft_size, tilt, offset, curvature,
                             );
 
                             let mut nodes = slot_nodes[editing_curve];
@@ -797,6 +798,24 @@ pub fn create_editor(
                                     crate::editor::delayed_tooltip(ui, &resp,
                                         format!("Slot {} · {} · Tilt", editing_slot + 1, curve_label));
                                     ui.label(egui::RichText::new("Tilt").color(crv_col).size(9.0));
+                                });
+                            }
+
+                            if let Some(curv_p) = params.curvature_param(editing_slot, editing_curve) {
+                                let mut curv_val = curv_p.value();
+                                ui.vertical(|ui| {
+                                    let resp = ui.add(
+                                        egui::DragValue::new(&mut curv_val)
+                                            .range(0.0..=1.0)
+                                            .speed(1.0 / 300.0)
+                                            .fixed_decimals(2)
+                                    );
+                                    if resp.drag_started() { setter.begin_set_parameter(curv_p); }
+                                    if resp.changed() { setter.set_parameter(curv_p, curv_val.clamp(0.0, 1.0)); }
+                                    if resp.drag_stopped() { setter.end_set_parameter(curv_p); }
+                                    crate::editor::delayed_tooltip(ui, &resp,
+                                        format!("Slot {} · {} · Curvature", editing_slot + 1, curve_label));
+                                    ui.label(egui::RichText::new("Curve").color(crv_col).size(9.0));
                                 });
                             }
                         }

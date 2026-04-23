@@ -342,16 +342,25 @@ fn log_to_y(v: f32, y_min: f32, y_max: f32, rect: Rect) -> f32 {
 /// In log-normalised [0, 20 Hz … 20 kHz = 1] space this sits at ≈ 0.566.
 const TILT_PIVOT_NORM: f32 = 0.566_32; // log10(1000/20) / log10(20000/20)
 
-/// Apply per-curve tilt (spectral slope pivoted at 1 kHz) and additive offset to a raw gain.
-/// `freq_hz` — the centre frequency of this bin in Hz.
+/// Apply per-curve tilt, additive offset, and curvature (S-curve blend) to a raw gain.
+/// `curvature` ∈ [0, 1]: 0 = straight tilt, 1 = full smoothstep S-curve pivoted at 1 kHz.
+/// See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §2.
 #[inline]
-pub fn apply_curve_adjustments(gain: f32, freq_hz: f32, tilt: f32, offset: f32) -> f32 {
+pub fn apply_curve_adjustments(gain: f32, freq_hz: f32, tilt: f32, offset: f32, curvature: f32) -> f32 {
+    // curvature only shapes the tilt; if tilt=0, curvature has no effect.
     if tilt.abs() < 1e-6 && offset.abs() < 1e-6 { return gain; }
     // Map freq to log-normalised [0, 1] (20 Hz → 0, 20 kHz → 1).
     const LOG_20: f32 = 1.301_030; // log10(20.0)
     const LOG_RANGE: f32 = 3.0;    // log10(20000/20) = log10(1000)
+    // Pre-computed smoothstep value at the pivot — centres the sigmoid shape there.
+    const S_PIVOT: f32 = 3.0 * TILT_PIVOT_NORM * TILT_PIVOT_NORM
+                       - 2.0 * TILT_PIVOT_NORM * TILT_PIVOT_NORM * TILT_PIVOT_NORM;
     let norm = ((freq_hz.max(20.0).log10() - LOG_20) / LOG_RANGE).clamp(0.0, 1.0);
-    let t = tilt * (norm - TILT_PIVOT_NORM);
+    let linear_shape  = norm - TILT_PIVOT_NORM;
+    let s             = 3.0 * norm * norm - 2.0 * norm * norm * norm; // smoothstep(norm)
+    let sigmoid_shape = s - S_PIVOT;
+    let shape = linear_shape + curvature * (sigmoid_shape - linear_shape);
+    let t = tilt * shape;
     ((gain + offset) * (1.0 + t)).max(0.0)
 }
 
@@ -598,17 +607,18 @@ pub fn paint_response_curve(
     fft_size: usize,
     tilt: f32,
     offset: f32,
+    curvature: f32,
 ) {
     if gains.len() < 2 { return; }
     let n = gains.len();
     let max_hz = (sample_rate / 2.0).max(20_001.0);
 
     // Coloured response line — dashed for attack/release, solid for all others.
-    // Tilt and offset are applied to the raw gain before display mapping.
+    // Tilt, offset, and curvature are applied to the raw gain before display mapping.
     let pts: Vec<Pos2> = (0..n).map(|k| {
         let f_hz = (k as f32 * sample_rate / fft_size as f32).max(20.0);
         let x    = freq_to_x_max(f_hz, max_hz, rect);
-        let adj  = apply_curve_adjustments(gains[k], f_hz, tilt, offset);
+        let adj  = apply_curve_adjustments(gains[k], f_hz, tilt, offset, curvature);
         let v    = gain_to_display(curve_idx, adj, global_attack_ms, global_release_ms, db_min, db_max);
         let y    = physical_to_y(v, curve_idx, db_min, db_max, rect);
         Pos2::new(x, y)
