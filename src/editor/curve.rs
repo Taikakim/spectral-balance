@@ -563,10 +563,10 @@ fn curve_grid_lines(curve_idx: usize, db_min: f32, db_max: f32) -> Vec<(f32, Str
 /// Paint background grid: vertical Hz lines + curve-specific horizontal lines.
 /// `sample_rate` is used to extend the grid beyond 20 kHz at high sample rates.
 pub fn paint_grid(painter: &Painter, rect: Rect, curve_idx: usize, db_min: f32, db_max: f32, sample_rate: f32) {
+    // UI parameter contract: see docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §4
+    let scale   = painter.ctx().pixels_per_point();
     let nyquist = sample_rate / 2.0;
     let max_hz  = nyquist.max(20_001.0);
-    // UI parameter contract: see docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §4
-    let scale = painter.ctx().pixels_per_point();
     let grid_stroke = Stroke::new(th::scaled_stroke(th::STROKE_THIN, scale), th::GRID_LINE);
     let font = nih_plug_egui::egui::FontId::proportional(th::scaled(th::FONT_SIZE_GRID, scale));
 
