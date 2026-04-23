@@ -147,6 +147,9 @@ fn assign_module(params: &SpectralForgeParams, slot: usize, ty: ModuleType) {
     for c in 0..7 {
         meta[slot][c] = (0.0, 0.0);
     }
+    // NOTE: curvature FloatParams (s{slot}c{c}curv) are not reset here because
+    // assign_module has no access to ParamSetter. Curvature survives module type
+    // changes — the user can reset it via the Curve DragValue in the editor.
     // Reset editing_curve to 0 if it's now out of range.
     let num_c = spec.num_curves;
     let mut ec = params.editing_curve.lock();

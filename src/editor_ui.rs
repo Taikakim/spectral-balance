@@ -815,7 +815,7 @@ pub fn create_editor(
                                     if resp.drag_stopped() { setter.end_set_parameter(curv_p); }
                                     crate::editor::delayed_tooltip(ui, &resp,
                                         format!("Slot {} · {} · Curvature", editing_slot + 1, curve_label));
-                                    ui.label(egui::RichText::new("Curve").color(crv_col).size(9.0));
+                                    ui.label(egui::RichText::new("Curv").color(crv_col).size(9.0));
                                 });
                             }
                         }
