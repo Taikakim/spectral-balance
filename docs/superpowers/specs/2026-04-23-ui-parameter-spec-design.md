@@ -71,9 +71,11 @@ pub struct CurveTransform {
 
 ### Offset
 
-Shifts the curve's neutral origin across the full physical display range. At `offset = -1.0`
-the origin sits at `y_min`; at `+1.0` it sits at `y_max`. The `gain_to_phys` function handles
-unit conversion internally — the offset rule is universal across all curve types.
+Shifts the curve's neutral origin across the full physical display range. At `offset = 0.0`
+the origin is at the curve's natural neutral (e.g. -20 dBFS for threshold, 1.0 for ratio).
+At `offset = -1.0` the origin sits at `y_min`; at `+1.0` it sits at `y_max`. The mapping is
+linear between these three anchor points. The `gain_to_phys` function handles unit conversion
+internally — the offset rule is universal across all curve types.
 
 ### Tilt
 
