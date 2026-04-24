@@ -94,7 +94,7 @@ impl SpectralModule for DynamicsModule {
             //         [4]=knee, [5]=mix
             let t    = curves.get(0).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
             let t_db = linear_to_db(t);
-            self.bp_threshold[k] = (-20.0 + t_db * (60.0 / 18.0)).clamp(-80.0, 0.0);
+            self.bp_threshold[k] = (-20.0 + t_db * (60.0 / 18.0)).clamp(-60.0, 0.0);
 
             let r = curves.get(1).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
             self.bp_ratio[k] = r.clamp(1.0, 20.0);
