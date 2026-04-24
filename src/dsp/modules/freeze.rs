@@ -3,11 +3,10 @@ use crate::params::{FxChannelTarget, StereoLink};
 use super::{ModuleContext, ModuleType, SpectralModule};
 
 /// Map a per-bin threshold curve gain (linear, 1.0 = neutral) to dBFS threshold.
-/// Default pivot: curve=1.0 → -50 dB (spec §7).
+/// Linear in gain space: gain=1.0 → -20 dBFS (neutral); gain=2.0 → 0 dBFS (y_max);
+/// gain≤-2.0 → -80 dBFS (y_min, clamped). Matches off_freeze_thresh calibration.
 pub fn curve_to_threshold_db(curve_gain: f32) -> f32 {
-    use crate::dsp::utils::linear_to_db;
-    let thr_db = linear_to_db(curve_gain);
-    (-50.0 + thr_db * (60.0 / 18.0)).clamp(-80.0, 0.0)
+    (-40.0 + curve_gain * 20.0).clamp(-80.0, 0.0)
 }
 
 pub struct FreezeModule {
@@ -19,6 +18,8 @@ pub struct FreezeModule {
     freeze_captured:  bool,
     fft_size:         usize,
     sample_rate:      f32,
+    #[cfg(any(test, feature = "probe"))]
+    last_probe: crate::dsp::modules::ProbeSnapshot,
 }
 
 impl FreezeModule {
@@ -32,6 +33,8 @@ impl FreezeModule {
             freeze_captured:  false,
             fft_size:         2048,
             sample_rate:      44100.0,
+            #[cfg(any(test, feature = "probe"))]
+            last_probe: Default::default(),
         }
     }
 }
@@ -85,6 +88,18 @@ impl SpectralModule for FreezeModule {
         let norm_factor = ctx.fft_size as f32 / 4.0;
 
         let n = bins.len();
+
+        #[cfg(any(test, feature = "probe"))]
+        let mut probe_length_ms:     f32 = 0.0;
+        #[cfg(any(test, feature = "probe"))]
+        let mut probe_threshold_db:  f32 = 0.0;
+        #[cfg(any(test, feature = "probe"))]
+        let mut probe_portamento_ms: f32 = 0.0;
+        #[cfg(any(test, feature = "probe"))]
+        let mut probe_resistance:    f32 = 0.0;
+        #[cfg(any(test, feature = "probe"))]
+        let mut probe_mix_pct:       f32 = 0.0;
+
         for k in 0..n {
             let dry = bins[k];
 
@@ -107,6 +122,14 @@ impl SpectralModule for FreezeModule {
             // is independent of signal level and FFT size.
             let resistance = curves.get(3).and_then(|c| c.get(k)).copied().unwrap_or(1.0)
                              .clamp(0.0, 2.0);
+
+            #[cfg(any(test, feature = "probe"))]
+            if k == n / 2 {
+                probe_length_ms     = length_ms;
+                probe_threshold_db  = threshold_db;
+                probe_portamento_ms = port_ms;
+                probe_resistance    = resistance;
+            }
 
             if self.freeze_port_t[k] < 1.0 {
                 // Portamento in progress: advance and interpolate.
@@ -135,15 +158,37 @@ impl SpectralModule for FreezeModule {
 
             let wet = self.frozen_bins[k];
             let mix = curves.get(4).and_then(|c| c.get(k)).copied().unwrap_or(1.0).clamp(0.0, 1.0);
+
+            #[cfg(any(test, feature = "probe"))]
+            if k == n / 2 {
+                probe_mix_pct = mix * 100.0;
+            }
+
             bins[k] = Complex::new(
                 dry.re * (1.0 - mix) + wet.re * mix,
                 dry.im * (1.0 - mix) + wet.im * mix,
             );
         }
+
+        #[cfg(any(test, feature = "probe"))]
+        {
+            self.last_probe = crate::dsp::modules::ProbeSnapshot {
+                length_ms:     Some(probe_length_ms),
+                threshold_db:  Some(probe_threshold_db),
+                portamento_ms: Some(probe_portamento_ms),
+                resistance:    Some(probe_resistance),
+                mix_pct:       Some(probe_mix_pct),
+                ..Default::default()
+            };
+        }
+
         suppression_out.fill(0.0);
     }
 
     fn tail_length(&self) -> u32 { self.fft_size as u32 }
     fn module_type(&self) -> ModuleType { ModuleType::Freeze }
     fn num_curves(&self) -> usize { 5 }
+
+    #[cfg(any(test, feature = "probe"))]
+    fn last_probe(&self) -> crate::dsp::modules::ProbeSnapshot { self.last_probe }
 }

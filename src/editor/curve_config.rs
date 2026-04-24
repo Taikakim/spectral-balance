@@ -101,10 +101,10 @@ fn dynamics_config(i: usize) -> CurveDisplayConfig {
 fn freeze_config(i: usize) -> CurveDisplayConfig {
     match i {
         // LENGTH: gain=1.0 → 500 ms (gain_to_display: gain*500, range 0–4000 ms)
-        // Multiplicative: off=+1 → gain*8 → 4000 ms; off=-1 → gain/8 → ~62 ms (clamped)
-        // factor = 4000/500 = 8.0
+        // Multiplicative: off=+1 → gain*8 → 4000 ms; off=-1 → gain/8 → 62.5 ms
+        // factor = 4000/500 = 8.0; y_min matches off_freeze_length(1.0, -1.0) * 500
         0 => CurveDisplayConfig {
-            y_label: "ms", y_min: 10.0, y_max: 4000.0, y_log: true,
+            y_label: "ms", y_min: 62.5, y_max: 4000.0, y_log: true,
             grid_lines: &[(100.0, "100ms"), (500.0, "500ms"), (1000.0, "1s"), (2000.0, "2s")],
             y_natural: 500.0,
             offset_fn: off_freeze_length,
@@ -119,9 +119,10 @@ fn freeze_config(i: usize) -> CurveDisplayConfig {
             offset_fn: off_freeze_thresh,
         },
         // PORTAMENTO: gain=1.0 → 200 ms; multiplicative with factor = 1000/200 = 5.0
+        // y_min matches off_portamento(1.0, -1.0) * 200 = 40 ms
         2 => CurveDisplayConfig {
-            y_label: "ms", y_min: 1.0, y_max: 1000.0, y_log: true,
-            grid_lines: &[(10.0, "10ms"), (100.0, "100ms"), (500.0, "500ms"), (1000.0, "1s")],
+            y_label: "ms", y_min: 40.0, y_max: 1000.0, y_log: true,
+            grid_lines: &[(40.0, "40ms"), (100.0, "100ms"), (500.0, "500ms"), (1000.0, "1s")],
             y_natural: 200.0,
             offset_fn: off_portamento,
         },

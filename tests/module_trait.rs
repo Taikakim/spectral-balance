@@ -65,7 +65,7 @@ fn per_slot_sc_defaults() {
 }
 
 #[test]
-fn freeze_threshold_default_is_minus_50_db() {
+fn freeze_threshold_default_is_minus_20_db() {
     use num_complex::Complex;
     use spectral_forge::dsp::modules::{FreezeModule, ModuleContext, SpectralModule};
     use spectral_forge::params::{FxChannelTarget, StereoLink};
@@ -73,8 +73,8 @@ fn freeze_threshold_default_is_minus_50_db() {
     let mut m = FreezeModule::new();
     m.reset(48000.0, 2048);
 
-    // Feed a pure silent hop; check that the curve gain of 1.0 maps to a threshold lin
-    // that corresponds to -50 dBFS (within 0.5 dB).
+    // Feed a pure silent hop; check that the curve gain of 1.0 maps to a threshold of -20 dBFS.
+    // This is the y_natural value per curve_config freeze_config(1): gain=1.0 → -20 dBFS.
     let num_bins = 1025usize;
     let mut bins = vec![Complex::new(0.0, 0.0); num_bins];
     let curves: Vec<Vec<f32>> = (0..5).map(|_| vec![1.0f32; num_bins]).collect();
@@ -92,27 +92,23 @@ fn freeze_threshold_default_is_minus_50_db() {
     m.process(0, StereoLink::Linked, FxChannelTarget::All,
               &mut bins, None, &curves_ref, &mut supp, &ctx);
 
-    // Now craft a bin with magnitude exactly at linear_to_db(-50) * norm_factor.
+    // Now craft bins at the expected threshold level (-20 dBFS) scaled by norm_factor.
     // norm_factor = fft_size / 4 = 512.
     let norm_factor = 2048.0f32 / 4.0;
-    let thr_lin_expected_minus_50 = 10.0f32.powf(-50.0 / 20.0) * norm_factor;
-    // With curve=1.0 → threshold should be -50 dB. Feed a bin *just above* and one *just below*
-    // and ensure only the above-threshold one triggers accumulation.
-    // (This is a behavioural sanity check on the new mapping.)
-    let just_below = thr_lin_expected_minus_50 * 0.9;
-    let just_above = thr_lin_expected_minus_50 * 1.1;
-    // Per-bin [k=100]: just_above; per-bin [k=200]: just_below.
+    let thr_lin_expected_minus_20 = 10.0f32.powf(-20.0 / 20.0) * norm_factor;
+    // Feed a bin just above and one just below the -20 dBFS threshold.
+    let just_below = thr_lin_expected_minus_20 * 0.9;
+    let just_above = thr_lin_expected_minus_20 * 1.1;
     bins[100] = Complex::new(just_above, 0.0);
     bins[200] = Complex::new(just_below, 0.0);
     m.process(0, StereoLink::Linked, FxChannelTarget::All,
               &mut bins, None, &curves_ref, &mut supp, &ctx);
-    // The test intent: threshold mapping pivots at -50 dB when curve=1.0. Direct state inspection
-    // would be fragile; instead we assert the mapping formula holds by calling a pub-for-test helper.
+    // Assert the calibration formula: curve=1.0 → -20 dBFS (matches y_natural from curve_config).
+    let actual = spectral_forge::dsp::modules::freeze::curve_to_threshold_db(1.0);
     assert!(
-        spectral_forge::dsp::modules::freeze::curve_to_threshold_db(1.0).abs() < 51.0
-            && spectral_forge::dsp::modules::freeze::curve_to_threshold_db(1.0).abs() > 49.0,
-        "curve=1.0 must map to -50 dB ±1 dB, got {}",
-        spectral_forge::dsp::modules::freeze::curve_to_threshold_db(1.0),
+        (actual - (-20.0)).abs() < 1.0,
+        "curve=1.0 must map to -20 dBFS ±1 dB, got {}",
+        actual,
     );
 }
 
