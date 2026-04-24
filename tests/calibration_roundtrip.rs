@@ -163,3 +163,105 @@ fn dynamics_attack_offset_plus_one_multiplies_global() {
     let observed = probe.attack_ms.unwrap();
     assert!(observed >= 500.0 - 1.0, "attack should reach DSP clamp 500, got {}", observed);
 }
+
+#[test]
+fn freeze_length_offset_plus_one_hits_y_max() {
+    let mut m = create_module(ModuleType::Freeze, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::Freeze, 0, GainMode::Add);
+    let g = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 0, g);
+    let observed = probe.length_ms.expect("freeze must probe length");
+    assert!(
+        (observed - cfg.y_max).abs() < 50.0,
+        "freeze length offset=+1 should give ≈{} ms, got {}", cfg.y_max, observed,
+    );
+}
+
+#[test]
+fn freeze_length_offset_minus_one_hits_y_min() {
+    let mut m = create_module(ModuleType::Freeze, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::Freeze, 0, GainMode::Add);
+    let g = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 0, g);
+    let observed = probe.length_ms.expect("freeze must probe length");
+    assert!(
+        (observed - cfg.y_min).abs() < 5.0,
+        "freeze length offset=-1 should give ≈{} ms, got {}", cfg.y_min, observed,
+    );
+}
+
+#[test]
+fn freeze_threshold_offset_extremes() {
+    let mut m = create_module(ModuleType::Freeze, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::Freeze, 1, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 1, g_hi);
+    assert!((probe.threshold_db.unwrap() - cfg.y_max).abs() < 1.0,
+        "freeze threshold hi: want {}, got {}", cfg.y_max, probe.threshold_db.unwrap());
+
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 1, g_lo);
+    assert!((probe.threshold_db.unwrap() - cfg.y_min).abs() < 1.0,
+        "freeze threshold lo: want {}, got {}", cfg.y_min, probe.threshold_db.unwrap());
+}
+
+#[test]
+fn freeze_portamento_offset_extremes() {
+    let mut m = create_module(ModuleType::Freeze, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::Freeze, 2, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 2, g_hi);
+    assert!((probe.portamento_ms.unwrap() - cfg.y_max).abs() < 5.0,
+        "freeze portamento hi: want {}, got {}", cfg.y_max, probe.portamento_ms.unwrap());
+
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 2, g_lo);
+    assert!((probe.portamento_ms.unwrap() - cfg.y_min).abs() < 1.0,
+        "freeze portamento lo: want {}, got {}", cfg.y_min, probe.portamento_ms.unwrap());
+}
+
+#[test]
+fn freeze_resistance_offset_extremes() {
+    let mut m = create_module(ModuleType::Freeze, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::Freeze, 3, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 3, g_hi);
+    assert!((probe.resistance.unwrap() - cfg.y_max).abs() < 0.05,
+        "freeze resistance hi: want {}, got {}", cfg.y_max, probe.resistance.unwrap());
+
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 3, g_lo);
+    assert!((probe.resistance.unwrap() - cfg.y_min).abs() < 0.05,
+        "freeze resistance lo: want {}, got {}", cfg.y_min, probe.resistance.unwrap());
+}
+
+#[test]
+fn freeze_mix_offset_extremes() {
+    let mut m = create_module(ModuleType::Freeze, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::Freeze, 4, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 4, g_hi);
+    assert!((probe.mix_pct.unwrap() - cfg.y_max).abs() < 1.0,
+        "freeze mix hi: want {}, got {}", cfg.y_max, probe.mix_pct.unwrap());
+
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 4, g_lo);
+    assert!((probe.mix_pct.unwrap() - cfg.y_min).abs() < 1.0,
+        "freeze mix lo: want {}, got {}", cfg.y_min, probe.mix_pct.unwrap());
+}
