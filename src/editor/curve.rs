@@ -1,6 +1,7 @@
 use serde::{Serialize, Deserialize};
 use nih_plug_egui::egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, Ui, Vec2};
 use crate::editor::theme as th;
+use crate::editor::curve_config::CurveDisplayConfig;
 use crate::dsp::modules::{GainMode, ModuleType};
 
 /// Return the curve label to show for `(module_type, curve_idx)`, accounting for
@@ -210,7 +211,9 @@ pub fn screen_to_freq(x: f32, rect: Rect, max_hz: f32) -> f32 {
 }
 
 /// Map a per-module curve slot index to the canonical display index used by
-/// gain_to_display, physical_to_y, screen_y_to_physical, curve_grid_lines, and curve_y_unit.
+/// gain_to_display, physical_to_y, and screen_y_to_physical. The per-curve
+/// grid lines and Y-axis unit label now live in `CurveDisplayConfig` and are
+/// looked up via `curve_config::curve_display_config`.
 ///
 /// Display indices:
 ///   0  Threshold dBFS           1  Ratio 1–20           2/3 Attack/Release ms
@@ -301,25 +304,13 @@ pub fn screen_y_to_physical(y: f32, curve_idx: usize, db_min: f32, db_max: f32, 
         9 => -80.0 + t * 80.0,
         10 => 1000.0_f32.powf(t),
         11 => t * 2.0,                    // Resistance 0–2
-        12 => -18.0 + t * 36.0,           // Dry-mix: screen y maps to ±18 dB (reported raw; tooltip converts to %)
+        12 => {
+            // Dry-mix %: screen y → dB (-18..+18) → clamped wet/dry percentage.
+            // Matches the grid labels: 0 dB=100 %, -6 dB=50 %, -12 dB=25 %, -18 dB≈12 %.
+            let db = -18.0 + t * 36.0;
+            (100.0 * 10f32.powf(db / 20.0)).clamp(0.0, 100.0)
+        }
         _ => 0.0,
-    }
-}
-
-/// Unit label for a curve's y-axis (used in cursor tooltip, indexed by display_curve_idx).
-pub fn curve_y_unit(display_idx: usize) -> &'static str {
-    // UI parameter contract: see docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md
-    match display_idx {
-        0 | 9  => "dBFS",
-        1      => "x",
-        2 | 3  => "ms",
-        4      => "dB",
-        5      => "dB",
-        6 | 7  => "%",
-        8 | 10 => "ms",
-        11     => "",       // Resistance: dimensionless
-        12     => "%",      // Dry-mix percentage (tooltip formats itself)
-        _      => "",
     }
 }
 
@@ -334,12 +325,15 @@ pub fn format_freq_hz(hz: f32) -> String {
 
 /// Paint cursor tooltip: "440 Hz  /  -18.3 dBFS"
 /// Single shared routine for all curves — no per-curve hover paths.
+/// The physical Y value comes from `screen_y_to_physical` (indexed by `display_idx`);
+/// the unit label and formatting come from `cfg`.
 /// See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §3.
 pub fn paint_hover_text(
     painter: &Painter,
     cursor_pos: Pos2,
     rect: Rect,
     display_idx: usize,
+    cfg: &CurveDisplayConfig,
     db_min: f32,
     db_max: f32,
     sample_rate: f32,
@@ -348,11 +342,10 @@ pub fn paint_hover_text(
     let nyquist = (sample_rate / 2.0).max(20_001.0);
     let freq_hz = screen_to_freq(cursor_pos.x, rect, nyquist);
     let phys    = screen_y_to_physical(cursor_pos.y, display_idx, db_min, db_max, rect);
-    let unit    = curve_y_unit(display_idx);
-    let text = if unit.is_empty() {
+    let text = if cfg.y_label.is_empty() {
         format!("{}  /  {:.2}", format_freq_hz(freq_hz), phys)
     } else {
-        format!("{}  /  {:.1} {}", format_freq_hz(freq_hz), phys, unit)
+        format!("{}  /  {:.1} {}", format_freq_hz(freq_hz), phys, cfg.y_label)
     };
     let tip_pos = cursor_pos + vec2(12.0, -28.0);
     let scale  = painter.ctx().pixels_per_point();
@@ -492,90 +485,21 @@ const HZ_VERTICALS_HI: &[f32] = &[
 /// See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §3.
 const HZ_LABELS: &[(f32, &str)] = &[(100., "100"), (1_000., "1k"), (10_000., "10k")];
 
-/// Grid horizontal lines per curve type: (physical value, label).
-fn curve_grid_lines(curve_idx: usize, db_min: f32, db_max: f32) -> Vec<(f32, String)> {
-    match curve_idx {
-        0 => {
-            // Threshold: one reference line at -12 dBFS (fixed)
-            if -12.0 >= db_min && -12.0 <= db_max {
-                vec![(-12.0, "-12 dB".to_string())]
-            } else {
-                vec![]
-            }
-        }
-        1 => vec![
-            (1.25,  "1:1.25".to_string()),
-            (2.5,   "1:2.5".to_string()),
-            (5.0,   "1:5".to_string()),
-            (10.0,  "1:10".to_string()),
-        ],
-        2 | 3 => vec![
-            (64.0,  "64ms".to_string()),
-            (128.0, "128ms".to_string()),
-            (256.0, "256ms".to_string()),
-            (512.0, "512ms".to_string()),
-        ],
-        4 => vec![
-            (3.0,  "3dB".to_string()),
-            (6.0,  "6dB".to_string()),
-            (12.0, "12dB".to_string()),
-            (24.0, "24dB".to_string()),
-        ],
-        5 => vec![
-            (-12.0, "-12dB".to_string()),
-            ( -6.0,  "-6dB".to_string()),
-            (  0.0,   "0dB".to_string()),
-            (  6.0,  "+6dB".to_string()),
-            ( 12.0, "+12dB".to_string()),
-        ],
-        6 => vec![
-            (20.0,  "20%".to_string()),
-            (40.0,  "40%".to_string()),
-            (60.0,  "60%".to_string()),
-            (80.0,  "80%".to_string()),
-        ],
-        7 => vec![
-            (50.0,  "50%".to_string()),
-            (100.0, "100%".to_string()),
-            (150.0, "150%".to_string()),
-        ],
-        8 => vec![
-            (100.0,  "100ms".to_string()),
-            (500.0,  "500ms".to_string()),
-            (1000.0, "1s".to_string()),
-            (2000.0, "2s".to_string()),
-        ],
-        9 => vec![
-            (-12.0, "-12dB".to_string()),
-            (-40.0, "-40dB".to_string()),
-            (-60.0, "-60dB".to_string()),
-        ],
-        10 => vec![
-            (10.0,  "10ms".to_string()),
-            (100.0, "100ms".to_string()),
-            (500.0, "500ms".to_string()),
-        ],
-        11 => vec![
-            (0.5,  "0.5".to_string()),
-            (1.0,  "1.0".to_string()),
-            (1.5,  "1.5".to_string()),
-        ],
-        // Dry-mix %: same screen scale as idx 5 (±18 dB) but labelled as the
-        // clamped wet/dry percentage the Pull/Match modes actually apply.
-        //   0 dB → 100 % dry,  −6 dB → 50 %,  −12 dB → 25 %, −18 dB → ~12 %
-        12 => vec![
-            (  0.0, "100%".to_string()),
-            ( -6.0,  "50%".to_string()),
-            (-12.0,  "25%".to_string()),
-            (-18.0,  "12%".to_string()),
-        ],
-        _ => vec![],
-    }
-}
-
-/// Paint background grid: vertical Hz lines + curve-specific horizontal lines.
+/// Paint background grid: vertical Hz lines + curve-specific horizontal lines + Y-axis label.
+/// `cfg` supplies the horizontal grid lines and Y-axis unit label.
+/// `display_idx` is the canonical curve index used by `physical_to_y` to map each
+/// `cfg.grid_lines` physical value back to a pixel Y position.
 /// `sample_rate` is used to extend the grid beyond 20 kHz at high sample rates.
-pub fn paint_grid(painter: &Painter, rect: Rect, curve_idx: usize, db_min: f32, db_max: f32, sample_rate: f32) {
+/// See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §3.
+pub fn paint_grid(
+    painter: &Painter,
+    rect: Rect,
+    cfg: &CurveDisplayConfig,
+    display_idx: usize,
+    db_min: f32,
+    db_max: f32,
+    sample_rate: f32,
+) {
     // UI parameter contract: see docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §4
     let scale   = painter.ctx().pixels_per_point();
     let nyquist = sample_rate / 2.0;
@@ -630,9 +554,16 @@ pub fn paint_grid(painter: &Painter, rect: Rect, curve_idx: usize, db_min: f32, 
         );
     }
 
-    // Horizontal lines per curve type
-    for (v, label) in curve_grid_lines(curve_idx, db_min, db_max) {
-        let y = physical_to_y(v, curve_idx, db_min, db_max, rect);
+    // Horizontal grid lines driven by CurveDisplayConfig.grid_lines.
+    // See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §3.
+    for &(v, label) in cfg.grid_lines {
+        // Skip values that fall outside the curve's configured display range
+        // (e.g. Threshold grid line -48 dBFS when db_min > -48).
+        if v < cfg.y_min || v > cfg.y_max { continue; }
+        // For curves whose runtime display range is user-adjustable (threshold),
+        // also respect the current db_min/db_max window.
+        if display_idx == 0 && (v < db_min || v > db_max) { continue; }
+        let y = physical_to_y(v, display_idx, db_min, db_max, rect);
         painter.line_segment(
             [Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)],
             grid_stroke,
@@ -642,6 +573,21 @@ pub fn paint_grid(painter: &Painter, rect: Rect, curve_idx: usize, db_min: f32, 
             nih_plug_egui::egui::Align2::LEFT_BOTTOM,
             label,
             font.clone(),
+            th::GRID_TEXT,
+        );
+    }
+
+    // Y-axis unit label at top-left of the rect.
+    // See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §3.
+    if !cfg.y_label.is_empty() {
+        let label_font = nih_plug_egui::egui::FontId::proportional(
+            th::scaled(th::FONT_SIZE_LABEL, scale),
+        );
+        painter.text(
+            Pos2::new(rect.left() + 2.0, rect.top() + 2.0),
+            nih_plug_egui::egui::Align2::LEFT_TOP,
+            cfg.y_label,
+            label_font,
             th::GRID_TEXT,
         );
     }
