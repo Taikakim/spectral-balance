@@ -735,7 +735,7 @@ pub fn create_editor(
                         if editing_curve < spec.num_curves {
                             ui.add_space(8.0);
                             let crv_col = spec.color_lit;
-                            const TILT_MAX: f32 = 2.0;
+                            use crate::dsp::modules::TILT_MAX;
                             let off_max = crv::curve_offset_max(crv::display_curve_idx(editing_type, editing_curve, editing_gain_mode));
 
                             let curve_label = spec.curve_labels.get(editing_curve).copied().unwrap_or("");

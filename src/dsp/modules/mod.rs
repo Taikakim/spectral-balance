@@ -222,6 +222,10 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
 
 // ── apply_curve_transform ──────────────────────────────────────────────────
 
+/// Maximum physical tilt in dB/octave units (normalized tilt × TILT_MAX = physical tilt).
+/// Shared between the audio thread (pipeline.rs) and the GUI (editor_ui.rs).
+pub const TILT_MAX: f32 = 2.0;
+
 /// Apply spectral tilt (pivoted at 1 kHz), additive offset, and curvature (S-curve blend)
 /// to a slice of per-bin curve gains, then clamp to [0, ∞).
 /// curvature ∈ [0, 1]: 0 = straight tilt, 1 = full smoothstep S-curve pivoted at 1 kHz.
