@@ -446,6 +446,124 @@ fn gain_peak_hold_offset_extremes() {
         "gain peak hold lo: want {}, got {}", cfg.y_min, probe.peak_hold_ms.unwrap());
 }
 
+// ── MidSide ──────────────────────────────────────────────────────────────────
+
+#[test]
+fn mid_side_balance_offset_extremes() {
+    let mut m = create_module(ModuleType::MidSide, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::MidSide, 0, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 0, g_hi);
+    assert!((probe.balance_pct.unwrap() - cfg.y_max).abs() < 2.0,
+        "mid_side balance hi: want {}, got {}", cfg.y_max, probe.balance_pct.unwrap());
+
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 0, g_lo);
+    assert!((probe.balance_pct.unwrap() - cfg.y_min).abs() < 2.0,
+        "mid_side balance lo: want {}, got {}", cfg.y_min, probe.balance_pct.unwrap());
+}
+
+#[test]
+fn mid_side_expansion_offset_extremes() {
+    let mut m = create_module(ModuleType::MidSide, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::MidSide, 1, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 1, g_hi);
+    assert!((probe.expansion_pct.unwrap() - cfg.y_max).abs() < 2.0,
+        "mid_side expansion hi: want {}, got {}", cfg.y_max, probe.expansion_pct.unwrap());
+
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 1, g_lo);
+    assert!((probe.expansion_pct.unwrap() - cfg.y_min).abs() < 2.0,
+        "mid_side expansion lo: want {}, got {}", cfg.y_min, probe.expansion_pct.unwrap());
+}
+
+#[test]
+fn mid_side_decorrel_offset_extremes() {
+    let mut m = create_module(ModuleType::MidSide, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::MidSide, 2, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 2, g_hi);
+    assert!((probe.decorrel_pct.unwrap() - cfg.y_max).abs() < 1.0,
+        "mid_side decorrel hi: want {}, got {}", cfg.y_max, probe.decorrel_pct.unwrap());
+
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 2, g_lo);
+    assert!((probe.decorrel_pct.unwrap() - cfg.y_min).abs() < 1.0,
+        "mid_side decorrel lo: want {}, got {}", cfg.y_min, probe.decorrel_pct.unwrap());
+}
+
+/// NOTE: TRANSIENT (curve 3) is currently a STUB — the MidSide DSP does not
+/// consume this curve. The probe reads curve 3 at probe_k so the calibration
+/// contract is enforced for when this parameter is implemented.
+#[test]
+fn mid_side_transient_offset_extremes() {
+    let mut m = create_module(ModuleType::MidSide, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::MidSide, 3, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 3, g_hi);
+    assert!((probe.transient_pct.unwrap() - cfg.y_max).abs() < 1.0,
+        "mid_side transient hi: want {}, got {}", cfg.y_max, probe.transient_pct.unwrap());
+
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 3, g_lo);
+    assert!((probe.transient_pct.unwrap() - cfg.y_min).abs() < 1.0,
+        "mid_side transient lo: want {}, got {}", cfg.y_min, probe.transient_pct.unwrap());
+}
+
+/// NOTE: PAN (curve 4) is currently a STUB — the MidSide DSP does not
+/// consume this curve. The probe reads curve 4 at probe_k so the calibration
+/// contract is enforced for when this parameter is implemented.
+#[test]
+fn mid_side_pan_offset_extremes() {
+    let mut m = create_module(ModuleType::MidSide, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::MidSide, 4, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 4, g_hi);
+    assert!((probe.pan_pct.unwrap() - cfg.y_max).abs() < 1.0,
+        "mid_side pan hi: want {}, got {}", cfg.y_max, probe.pan_pct.unwrap());
+
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 4, g_lo);
+    assert!((probe.pan_pct.unwrap() - cfg.y_min).abs() < 1.0,
+        "mid_side pan lo: want {}, got {}", cfg.y_min, probe.pan_pct.unwrap());
+}
+
+// ── TS Split ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn ts_split_sensitivity_offset_extremes() {
+    let mut m = create_module(ModuleType::TransientSustainedSplit, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::TransientSustainedSplit, 0, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 0, g_hi);
+    assert!((probe.sensitivity_pct.unwrap() - cfg.y_max).abs() < 1.0,
+        "ts_split sensitivity hi: want {}, got {}", cfg.y_max, probe.sensitivity_pct.unwrap());
+
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 0, g_lo);
+    assert!((probe.sensitivity_pct.unwrap() - cfg.y_min).abs() < 1.0,
+        "ts_split sensitivity lo: want {}, got {}", cfg.y_min, probe.sensitivity_pct.unwrap());
+}
+
 /// T3b: GUI display-mapping contract — the scalar functions in
 /// `editor::curve` that convert curve gains → physical units and
 /// physical units ↔ pixel y must agree with the DSP and with the

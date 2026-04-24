@@ -7,11 +7,18 @@ pub struct MidSideModule {
     /// xorshift64 state for phase decorrelation. Must never be zero.
     rng_state: u64,
     num_bins:  usize,
+    #[cfg(any(test, feature = "probe"))]
+    last_probe: crate::dsp::modules::ProbeSnapshot,
 }
 
 impl MidSideModule {
     pub fn new() -> Self {
-        Self { rng_state: 0xdeadbeefcafebabe, num_bins: 0 }
+        Self {
+            rng_state: 0xdeadbeefcafebabe,
+            num_bins: 0,
+            #[cfg(any(test, feature = "probe"))]
+            last_probe: Default::default(),
+        }
     }
 
 
@@ -47,6 +54,32 @@ impl SpectralModule for MidSideModule {
         let balance   = curves.get(0).copied().unwrap_or(&[] as &[f32]);
         let expansion = curves.get(1).copied().unwrap_or(&[] as &[f32]);
         let decorrel  = curves.get(2).copied().unwrap_or(&[] as &[f32]);
+
+        // ── Probe: populate all 5 declared-curve fields regardless of which
+        // channel the DSP path actually consumes them on. Curves 3 (TRANSIENT)
+        // and 4 (PAN) are currently STUBS — the DSP does not consume them;
+        // the probe reads them for calibration-contract tests only. Future
+        // implementation must preserve the declared [0, 100]% range.
+        #[cfg(any(test, feature = "probe"))]
+        let probe_k = if n == 0 { 0 } else { n / 2 };
+        #[cfg(any(test, feature = "probe"))]
+        if n > 0 {
+            let bal_raw = balance.get(probe_k).copied().unwrap_or(1.0).clamp(0.0, 2.0);
+            let exp_raw = expansion.get(probe_k).copied().unwrap_or(1.0).max(0.0);
+            let dec_raw = decorrel.get(probe_k).copied().unwrap_or(0.0).clamp(0.0, 2.0);
+            let trans_raw = curves.get(3).and_then(|c| c.get(probe_k))
+                                  .copied().unwrap_or(1.0).clamp(0.0, 1.0);
+            let pan_raw = curves.get(4).and_then(|c| c.get(probe_k))
+                                .copied().unwrap_or(1.0).clamp(0.0, 1.0);
+            self.last_probe = crate::dsp::modules::ProbeSnapshot {
+                balance_pct:   Some(bal_raw * 100.0),
+                expansion_pct: Some(exp_raw * 100.0),
+                decorrel_pct:  Some(dec_raw * 100.0),
+                transient_pct: Some(trans_raw * 100.0),
+                pan_pct:       Some(pan_raw * 100.0),
+                ..Default::default()
+            };
+        }
 
         match channel {
             0 => {
@@ -92,4 +125,7 @@ impl SpectralModule for MidSideModule {
 
     fn module_type(&self) -> ModuleType { ModuleType::MidSide }
     fn num_curves(&self) -> usize { 5 }
+
+    #[cfg(any(test, feature = "probe"))]
+    fn last_probe(&self) -> crate::dsp::modules::ProbeSnapshot { self.last_probe }
 }
