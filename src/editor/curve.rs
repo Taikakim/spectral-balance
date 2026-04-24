@@ -300,9 +300,9 @@ pub fn screen_y_to_physical(y: f32, curve_idx: usize, db_min: f32, db_max: f32, 
         5 => -18.0 + t * 36.0,
         6 => t * 100.0,
         7 => t * 200.0,
-        8 => 10.0 * 400.0_f32.powf(t),   // Freeze Length: 10ms–4000ms log
+        8 => 62.5 * (4000.0_f32 / 62.5).powf(t),   // Freeze Length: 62.5ms–4000ms log (matches config y_min)
         9 => -80.0 + t * 80.0,
-        10 => 1000.0_f32.powf(t),
+        10 => 40.0 * (1000.0_f32 / 40.0).powf(t),  // Portamento: 40ms–1000ms log (matches config y_min)
         11 => t * 2.0,                    // Resistance 0–2
         12 => {
             // Dry-mix %: screen y → dB (-18..+18) → clamped wet/dry percentage.
@@ -438,8 +438,9 @@ pub fn gain_to_display(
         7 => gain.clamp(0.0, 2.0) * 100.0,                  // Phase Amount: 0-200%
         8 => (gain * 500.0).clamp(0.0, 4000.0),             // Freeze Length: 0-4000ms (neutral=500ms)
         9 => {                                               // Freeze Threshold: dBFS
-            let t_db = if gain > 1e-10 { 20.0 * gain.log10() } else { -120.0 };
-            (-20.0 + t_db * (60.0 / 18.0)).clamp(-80.0, 0.0)
+            // Matches the DSP formula in freeze::curve_to_threshold_db:
+            // linear in gain — gain=1.0 → -20, gain=2.0 → 0, gain=-2.0 → -80 (clamped).
+            (-40.0 + gain * 20.0).clamp(-80.0, 0.0)
         }
         10 => (gain * 200.0).clamp(0.0, 1000.0),            // Portamento/SC Smooth: 0-1000ms (neutral=200ms)
         11 => gain.clamp(0.0, 2.0),                          // Resistance: 0-2 (normalised excess)
@@ -459,9 +460,9 @@ pub fn physical_to_y(v: f32, curve_idx: usize, db_min: f32, db_max: f32, rect: R
         5 | 12 => linear_to_y(v, -18.0, 18.0, rect),
         6 => linear_to_y(v, 0.0, 100.0, rect),
         7 => linear_to_y(v, 0.0, 200.0, rect),
-        8 => log_to_y(v.max(10.0), 10.0, 4000.0, rect),    // Freeze Length 10ms–4000ms
+        8 => log_to_y(v.max(62.5), 62.5, 4000.0, rect),    // Freeze Length 62.5ms–4000ms (matches config y_min)
         9 => linear_to_y(v, -80.0, 0.0, rect),
-        10 => log_to_y(v.max(1.0), 1.0, 1000.0, rect),
+        10 => log_to_y(v.max(40.0), 40.0, 1000.0, rect),   // Portamento 40ms–1000ms (matches config y_min)
         11 => linear_to_y(v, 0.0, 2.0, rect),               // Resistance 0–2
         _ => rect.center().y,
     }
