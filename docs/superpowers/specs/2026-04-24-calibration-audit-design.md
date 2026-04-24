@@ -34,7 +34,11 @@ The test stays in the repo as a permanent guardrail against future calibration d
 
 ### Calibration probe
 
-Each `SpectralModule` gains a `#[cfg(test)]` probe field that records the last-computed internal parameters from a `process()` call. Shape:
+Each `SpectralModule` gains a probe field gated by `#[cfg(any(test, feature = "probe"))]` that records the last-computed internal parameters from a `process()` call.
+
+**Note on cfg gating (revised during T2):** The original design said `#[cfg(test)]` alone. That works for unit tests inside `src/`, but Cargo compiles integration tests (`tests/*.rs`) against the `rlib` with `cfg(test) = false`, so the probe type and trait method would be invisible. The fix: a `probe` Cargo feature (`[features] probe = []`), gate probe code with `cfg(any(test, feature = "probe"))`, and add `required-features = ["probe"]` to the `[[test]] name = "calibration_roundtrip"` Cargo manifest entry. The feature is opt-in (off by default), so `cargo build --release` and `cargo test` without flags emit no probe code — the zero-release-cost contract is preserved. The calibration test file runs via `cargo test --features probe`.
+
+Shape:
 
 ```rust
 #[cfg(test)]
@@ -62,7 +66,7 @@ All fields are `Option<f32>` so a module only populates the parameters it actual
 fn last_probe(&self) -> ProbeSnapshot;
 ```
 
-Default trait implementation returns `ProbeSnapshot::default()`; each module overrides for its own curves. The field is populated near the end of `process()` with the value computed for a single reference bin (bin `num_bins / 2`, chosen so the test exercises a non-degenerate frequency and any per-bin freq-scaling that applies), **only when `cfg(test)` is active**. Test cases fill the entire curves buffer with the extreme gain, so the reference bin's value equals the all-bins value modulo any freq-dependent scaling that the test tolerance accommodates. Zero cost in release builds.
+Default trait implementation returns `ProbeSnapshot::default()`; each module overrides for its own curves. The field is populated near the end of `process()` with the value computed for a single reference bin (bin `num_bins / 2`, chosen so the test exercises a non-degenerate frequency and any per-bin freq-scaling that applies), **only when `cfg(test)` or `feature = "probe"` is active**. Test cases fill the entire curves buffer with the extreme gain, so the reference bin's value equals the all-bins value modulo any freq-dependent scaling that the test tolerance accommodates. Zero cost in release builds.
 
 ### Test structure
 
