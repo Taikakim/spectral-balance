@@ -641,3 +641,41 @@ mod display_mapping_contract {
             "y=rect.bottom() should map back to 40 ms, got {}", v);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Neutral contract (T7): every offset_fn satisfies f(g, 0.0) == g
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn all_offset_fns_are_neutral_at_zero() {
+    use spectral_forge::editor::curve_config::{
+        off_thresh, off_ratio, off_atk_rel, off_knee, off_mix, off_gain_db,
+        off_gain_pct, off_amount_200, off_freeze_length, off_freeze_thresh,
+        off_portamento, off_resistance, off_identity,
+    };
+    let fns: &[(&str, fn(f32, f32) -> f32)] = &[
+        ("thresh",        off_thresh),
+        ("ratio",         off_ratio),
+        ("atk_rel",       off_atk_rel),
+        ("knee",          off_knee),
+        ("mix",           off_mix),
+        ("gain_db",       off_gain_db),
+        ("gain_pct",      off_gain_pct),
+        ("amount_200",    off_amount_200),
+        ("freeze_length", off_freeze_length),
+        ("freeze_thresh", off_freeze_thresh),
+        ("portamento",    off_portamento),
+        ("resistance",    off_resistance),
+        ("identity",      off_identity),
+    ];
+    for (name, f) in fns {
+        for &g in &[0.1_f32, 0.5, 1.0, 2.0, 10.0] {
+            let result = f(g, 0.0);
+            assert!(
+                (result - g).abs() < 1e-5,
+                "{} violates neutral contract: f({}, 0.0) = {}, expected {}",
+                name, g, result, g,
+            );
+        }
+    }
+}
