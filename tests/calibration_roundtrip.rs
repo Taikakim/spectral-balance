@@ -266,6 +266,85 @@ fn freeze_mix_offset_extremes() {
         "freeze mix lo: want {}, got {}", cfg.y_min, probe.mix_pct.unwrap());
 }
 
+// ── PhaseSmear ───────────────────────────────────────────────────────────────
+
+#[test]
+fn phase_smear_amount_offset_extremes() {
+    let mut m = create_module(ModuleType::PhaseSmear, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::PhaseSmear, 0, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 0, g_hi);
+    assert!((probe.amount_pct.unwrap() - cfg.y_max).abs() < 0.1,
+        "phase smear amount hi: want {}, got {}", cfg.y_max, probe.amount_pct.unwrap());
+
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 0, g_lo);
+    assert!((probe.amount_pct.unwrap() - cfg.y_min).abs() < 0.1,
+        "phase smear amount lo: want {}, got {}", cfg.y_min, probe.amount_pct.unwrap());
+}
+
+#[test]
+fn phase_smear_peak_hold_offset_extremes() {
+    let mut m = create_module(ModuleType::PhaseSmear, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::PhaseSmear, 1, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 1, g_hi);
+    assert!((probe.peak_hold_ms.unwrap() - cfg.y_max).abs() < 1.0,
+        "phase smear peak hold hi: want {}, got {}", cfg.y_max, probe.peak_hold_ms.unwrap());
+
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 1, g_lo);
+    assert!((probe.peak_hold_ms.unwrap() - cfg.y_min).abs() < 1.0,
+        "phase smear peak hold lo: want {}, got {}", cfg.y_min, probe.peak_hold_ms.unwrap());
+}
+
+#[test]
+fn phase_smear_mix_offset_extremes() {
+    let mut m = create_module(ModuleType::PhaseSmear, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::PhaseSmear, 2, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 2, g_hi);
+    assert!((probe.mix_pct.unwrap() - cfg.y_max).abs() < 0.1,
+        "phase smear mix hi: want {}, got {}", cfg.y_max, probe.mix_pct.unwrap());
+
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 2, g_lo);
+    assert!((probe.mix_pct.unwrap() - cfg.y_min).abs() < 0.1,
+        "phase smear mix lo: want {}, got {}", cfg.y_min, probe.mix_pct.unwrap());
+}
+
+// ── Contrast ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn contrast_amount_offset_extremes() {
+    let mut m = create_module(ModuleType::Contrast, SAMPLE_RATE, FFT_SIZE);
+    m.reset(SAMPLE_RATE, FFT_SIZE);
+    let nc = m.num_curves();
+    let cfg = curve_display_config(ModuleType::Contrast, 0, GainMode::Add);
+
+    let g_hi = (cfg.offset_fn)(1.0, 1.0);
+    let probe = run_case(&mut m, nc, 0, g_hi);
+    assert!((probe.ratio.unwrap() - cfg.y_max).abs() < 0.1,
+        "contrast ratio hi: want {}, got {}", cfg.y_max, probe.ratio.unwrap());
+
+    // off_ratio(1, -1) = 1 + 19*(-1) = -18 when o>=0 branch is not taken;
+    // but off_ratio's negative branch returns g unchanged (1.0). Either way,
+    // the DSP clamps to min=1.0. So observed ratio should equal y_min (= 1.0).
+    let g_lo = (cfg.offset_fn)(1.0, -1.0);
+    let probe = run_case(&mut m, nc, 0, g_lo);
+    assert!((probe.ratio.unwrap() - cfg.y_min).abs() < 0.1,
+        "contrast ratio lo: want {}, got {}", cfg.y_min, probe.ratio.unwrap());
+}
+
 /// T3b: GUI display-mapping contract — the scalar functions in
 /// `editor::curve` that convert curve gains → physical units and
 /// physical units ↔ pixel y must agree with the DSP and with the

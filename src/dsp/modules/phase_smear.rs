@@ -9,6 +9,8 @@ pub struct PhaseSmearModule {
     peak_env: Vec<f32>,
     sample_rate: f32,
     fft_size: usize,
+    #[cfg(any(test, feature = "probe"))]
+    last_probe: crate::dsp::modules::ProbeSnapshot,
 }
 
 impl PhaseSmearModule {
@@ -18,6 +20,8 @@ impl PhaseSmearModule {
             peak_env: vec![0.0f32; MAX_NUM_BINS],
             sample_rate: 44100.0,
             fft_size: 2048,
+            #[cfg(any(test, feature = "probe"))]
+            last_probe: Default::default(),
         }
     }
 
@@ -48,6 +52,15 @@ impl SpectralModule for PhaseSmearModule {
         if bins.is_empty() { suppression_out.fill(0.0); return; }
         let last = bins.len() - 1;
         let hop_ms = self.fft_size as f32 / (OVERLAP as f32 * self.sample_rate) * 1000.0;
+        #[cfg(any(test, feature = "probe"))]
+        let probe_k = bins.len() / 2;
+
+        #[cfg(any(test, feature = "probe"))]
+        let mut probe_amount_pct:  f32 = 0.0;
+        #[cfg(any(test, feature = "probe"))]
+        let mut probe_peak_hold_ms: f32 = 0.0;
+        #[cfg(any(test, feature = "probe"))]
+        let mut probe_mix_pct:     f32 = 0.0;
 
         for k in 0..bins.len() {
             let dry = bins[k];
@@ -80,10 +93,31 @@ impl SpectralModule for PhaseSmearModule {
                 dry.re * (1.0 - mix) + wet.re * mix,
                 dry.im * (1.0 - mix) + wet.im * mix,
             );
+
+            #[cfg(any(test, feature = "probe"))]
+            if k == probe_k {
+                probe_amount_pct   = amount_curve * 100.0;
+                probe_peak_hold_ms = hold_ms;
+                probe_mix_pct      = mix * 100.0;
+            }
         }
+
+        #[cfg(any(test, feature = "probe"))]
+        {
+            self.last_probe = crate::dsp::modules::ProbeSnapshot {
+                amount_pct:    Some(probe_amount_pct),
+                peak_hold_ms:  Some(probe_peak_hold_ms),
+                mix_pct:       Some(probe_mix_pct),
+                ..Default::default()
+            };
+        }
+
         suppression_out.fill(0.0);
     }
 
     fn module_type(&self) -> ModuleType { ModuleType::PhaseSmear }
     fn num_curves(&self) -> usize { 3 }
+
+    #[cfg(any(test, feature = "probe"))]
+    fn last_probe(&self) -> crate::dsp::modules::ProbeSnapshot { self.last_probe }
 }
