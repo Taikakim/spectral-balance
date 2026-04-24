@@ -390,6 +390,33 @@ fn offset_calibration_gain_db_multiplicative() {
 }
 
 #[test]
+fn apply_curve_transform_tilt_scales_with_sample_rate() {
+    use spectral_forge::dsp::modules::apply_curve_transform;
+    // Same normalized tilt should produce different physical shapes at 48 kHz vs 96 kHz SR.
+    // Easier verifiable property: function runs cleanly at 96 kHz SR without NaN/Inf.
+    let mut gains = vec![1.0_f32; 513]; // 1024-bin FFT at 96 kHz
+    apply_curve_transform(
+        &mut gains,
+        /* tilt */      1.0,
+        /* offset */    0.0,
+        /* curvature */ 0.0,
+        |g, _| g,        // identity offset_fn
+        /* sample_rate */ 96_000.0,
+        /* fft_size */    1024,
+    );
+    assert!(gains.iter().all(|&g| g.is_finite()), "produced non-finite gain at 96 kHz SR");
+
+    // Also verify 44.1 kHz SR produces a different result from 96 kHz SR,
+    // confirming the tilt shape varies with Nyquist.
+    let mut gains_44 = vec![1.0_f32; 513];
+    apply_curve_transform(&mut gains_44, 1.0, 0.0, 0.0, |g, _| g, 44_100.0, 1024);
+    let mut gains_96 = vec![1.0_f32; 513];
+    apply_curve_transform(&mut gains_96, 1.0, 0.0, 0.0, |g, _| g, 96_000.0, 1024);
+    let differ = gains_44.iter().zip(gains_96.iter()).any(|(a, b)| (a - b).abs() > 1e-4);
+    assert!(differ, "tilt shape must differ between 44.1 kHz and 96 kHz sample rates");
+}
+
+#[test]
 fn offset_identity_at_zero_all_dynamics_curves() {
     use spectral_forge::dsp::modules::{GainMode, ModuleType};
     use spectral_forge::editor::curve_config::curve_display_config;

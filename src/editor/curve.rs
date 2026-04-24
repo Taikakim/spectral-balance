@@ -382,14 +382,12 @@ fn log_to_y(v: f32, y_min: f32, y_max: f32, rect: Rect) -> f32 {
 
 // ─── Physical value mapping ───────────────────────────────────────────────────
 
-/// Pivot frequency for the tilt control: 1 kHz.
-/// In log-normalised [0, 20 Hz … 20 kHz = 1] space this sits at ≈ 0.566.
-const TILT_PIVOT_NORM: f32 = 0.566_32; // log10(1000/20) / log10(20000/20)
-
 /// Apply per-curve tilt, calibrated offset, and curvature (S-curve blend) to a raw gain.
 /// `curvature` ∈ [0, 1]: 0 = straight tilt, 1 = full smoothstep S-curve pivoted at 1 kHz.
 /// `offset_fn` is the per-curve calibrated transform from `CurveDisplayConfig::offset_fn`.
-/// See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §2.
+/// `nyquist` — host Nyquist frequency (sample_rate / 2); governs the log-range used for
+/// the tilt shape so it matches any sample rate.
+/// See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §2 and §3.
 #[inline]
 pub fn apply_curve_adjustments(
     gain: f32,
@@ -398,20 +396,22 @@ pub fn apply_curve_adjustments(
     offset: f32,
     curvature: f32,
     offset_fn: fn(f32, f32) -> f32,
+    nyquist: f32,
 ) -> f32 {
     // curvature only shapes the tilt; if tilt=0, curvature has no effect.
     // offset_fn(g, 0.0) == g for all calibrations, so offset=0 is also a no-op.
     if tilt.abs() < 1e-6 && offset.abs() < 1e-6 { return gain; }
-    // Map freq to log-normalised [0, 1] (20 Hz → 0, 20 kHz → 1).
+    // Map freq to log-normalised [0, 1] (20 Hz → nyquist).
+    // Pivot at 1 kHz — computed dynamically so it stays centred at 1 kHz across sample rates.
     const LOG_20: f32 = 1.301_030; // log10(20.0)
-    const LOG_RANGE: f32 = 3.0;    // log10(20000/20) = log10(1000)
-    // Pre-computed smoothstep value at the pivot — centres the sigmoid shape there.
-    const S_PIVOT: f32 = 3.0 * TILT_PIVOT_NORM * TILT_PIVOT_NORM
-                       - 2.0 * TILT_PIVOT_NORM * TILT_PIVOT_NORM * TILT_PIVOT_NORM;
-    let norm = ((freq_hz.max(20.0).log10() - LOG_20) / LOG_RANGE).clamp(0.0, 1.0);
-    let linear_shape  = norm - TILT_PIVOT_NORM;
+    let log_range  = (nyquist / 20.0).log10(); // e.g. 3.0 at 20 kHz Nyquist (40 kHz SR)
+    let pivot      = (1000.0_f32 / 20.0).log10() / log_range;
+    // Smoothstep value at the pivot — centres the sigmoid shape there.
+    let s_pivot    = 3.0 * pivot * pivot - 2.0 * pivot * pivot * pivot;
+    let norm = ((freq_hz.max(20.0).log10() - LOG_20) / log_range).clamp(0.0, 1.0);
+    let linear_shape  = norm - pivot;
     let s             = 3.0 * norm * norm - 2.0 * norm * norm * norm; // smoothstep(norm)
-    let sigmoid_shape = s - S_PIVOT;
+    let sigmoid_shape = s - s_pivot;
     let shape = linear_shape + curvature * (sigmoid_shape - linear_shape);
     let t = tilt * shape;
     let g_off = offset_fn(gain, offset);
@@ -487,7 +487,10 @@ const HZ_VERTICALS_HI: &[f32] = &[
     21_000., 22_000., 24_000., 26_000., 28_000.,
     30_000., 35_000., 40_000., 45_000.,
 ];
-const HZ_LABELS: &[(f32, &str)] = &[(100., "100"), (1_000., "1k"), (10_000., "10k"), (20_000., "20k")];
+/// Fixed frequency labels shown on the X axis (excluding the rightmost Nyquist label,
+/// which is added dynamically by `paint_grid`).
+/// See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §3.
+const HZ_LABELS: &[(f32, &str)] = &[(100., "100"), (1_000., "1k"), (10_000., "10k")];
 
 /// Grid horizontal lines per curve type: (physical value, label).
 fn curve_grid_lines(curve_idx: usize, db_min: f32, db_max: f32) -> Vec<(f32, String)> {
@@ -612,8 +615,9 @@ pub fn paint_grid(painter: &Painter, rect: Rect, curve_idx: usize, db_min: f32, 
             th::GRID_TEXT,
         );
     }
-    // Extra label at Nyquist for high SR
-    if sample_rate > 44_100.0 {
+    // Always show the Nyquist label at the right edge.
+    // See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §3.
+    {
         let nyq_khz = (nyquist / 1000.0).round() as u32;
         let label = format!("{}k", nyq_khz);
         let x = freq_to_x_max(nyquist, max_hz, rect);
@@ -677,7 +681,7 @@ pub fn paint_response_curve(
     let pts: Vec<Pos2> = (0..n).map(|k| {
         let f_hz = (k as f32 * sample_rate / fft_size as f32).max(20.0);
         let x    = freq_to_x_max(f_hz, max_hz, rect);
-        let adj  = apply_curve_adjustments(gains[k], f_hz, tilt, offset, curvature, offset_fn);
+        let adj  = apply_curve_adjustments(gains[k], f_hz, tilt, offset, curvature, offset_fn, max_hz);
         let v    = gain_to_display(curve_idx, adj, global_attack_ms, global_release_ms, db_min, db_max);
         let y    = physical_to_y(v, curve_idx, db_min, db_max, rect);
         Pos2::new(x, y)
