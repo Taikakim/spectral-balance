@@ -272,9 +272,17 @@ pub fn create_editor(
                     const MATRIX_AREA_H: f32 = 9.0 * 44.0 + 4.0 * 22.0 + 14.0 + 30.0;
                     let strip_height = 105.0 + 28.0 + 28.0 + MATRIX_AREA_H;
                     let avail = ui.available_rect_before_wrap();
+                    // Clamp to the actual visible surface — at small UI scales the top
+                    // toolbar can overflow horizontally and push `available_rect_before_wrap`
+                    // wider than the panel; using that unclamped value would draw the curve
+                    // off the right edge of the window.
+                    let scr_max_x = ui.ctx().screen_rect().max.x;
                     let curve_rect = egui::Rect::from_min_max(
                         avail.min,
-                        egui::pos2(avail.max.x, (avail.max.y - strip_height).max(avail.min.y)),
+                        egui::pos2(
+                            avail.max.x.min(scr_max_x),
+                            (avail.max.y - strip_height).max(avail.min.y),
+                        ),
                     );
                     ui.allocate_rect(curve_rect, egui::Sense::hover());
 

@@ -347,9 +347,17 @@ pub fn paint_hover_text(
     } else {
         format!("{}  /  {:.1} {}", format_freq_hz(freq_hz), phys, cfg.y_label)
     };
-    let tip_pos = cursor_pos + vec2(12.0, -28.0);
     let scale  = painter.ctx().pixels_per_point();
     let galley = painter.layout_no_wrap(text, FontId::proportional(th::scaled(th::FONT_SIZE_HOVER, scale)), th::GRID_TEXT);
+    // Default position: above-right of cursor. Flip left if it would clip the right edge,
+    // flip down if it would clip the top edge.
+    let mut tip_pos = cursor_pos + vec2(12.0, -28.0);
+    if tip_pos.x + galley.size().x + 6.0 > rect.right() {
+        tip_pos.x = cursor_pos.x - 12.0 - galley.size().x;
+    }
+    if tip_pos.y - 3.0 < rect.top() {
+        tip_pos.y = cursor_pos.y + 16.0;
+    }
     let bg_rect = Rect::from_min_size(
         tip_pos - vec2(3.0, 3.0),
         galley.size() + vec2(6.0, 6.0),
