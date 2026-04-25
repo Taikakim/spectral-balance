@@ -1,4 +1,4 @@
-> **Status (2026-04-24): IN PROGRESS.** T1 (probe type) + T2 (Dynamics probe + threshold clamp) + T3 (Freeze probe + formula/y_min fixes) are merged. T4–T11 remain. Source of truth: this plan (for remaining tasks) + [../STATUS.md](../STATUS.md).
+> **Status (2026-04-26): IMPLEMENTED.** All 11 tasks merged: per-module ProbeSnapshot infrastructure, calibration round-trip tests for every module, threshold/length DSP clamp fixes (Dynamics, Freeze), neutral-contract test, 10 kHz curve cutoff fix, hover-tooltip right-edge flip, Freeze control row layout fix, spec addenda §2.3/§3.4/§4.4. The code is now the source of truth; this plan is kept for history. See [../STATUS.md](../STATUS.md).
 
 # Calibration Audit Implementation Plan
 

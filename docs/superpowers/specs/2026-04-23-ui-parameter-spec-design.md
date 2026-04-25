@@ -1,4 +1,4 @@
-> **Status (2026-04-24): IMPLEMENTED and LIVE.** This is the authoritative source of truth for curve display, transforms, axis rendering, hover text, and UI scaling — it remains normative even though the matching plan is merged. Addenda §2.3 / §3.4 / §4.4 are pending from calibration-audit T10. See [../STATUS.md](../STATUS.md).
+> **Status (2026-04-26): IMPLEMENTED and LIVE.** This is the authoritative source of truth for curve display, transforms, axis rendering, hover text, and UI scaling — it remains normative even though the matching plan is merged. Includes addenda §2.3 (calibration contract), §3.4 (curve/node rendering at limits), and §4.4 (control row consistency) merged from calibration-audit T10. See [../STATUS.md](../STATUS.md).
 
 # Spectral Forge — UI Parameter Specification
 

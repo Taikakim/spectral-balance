@@ -1,6 +1,6 @@
 # Superpowers plans & specs — implementation status
 
-**Last updated:** 2026-04-24
+**Last updated:** 2026-04-26
 
 This index is the authoritative status of every plan and design spec under
 `docs/superpowers/`. **Agents: consult this file before following any plan or
@@ -36,7 +36,7 @@ but if the two disagree, this index wins.
 | 2026-04-21-bin-physics-infrastructure.md | DEFERRED | No `BinPhysics` code exists yet. Required for the Circuit/Life/Kinetics/Harmony/Modulate/Past/Rhythm module specs. |
 | 2026-04-21-sidechain-refactor-plan.md | IMPLEMENTED | Single SC port + per-slot gain/channel selector; peak-hold curve; Freeze default threshold fix. |
 | 2026-04-23-ui-parameter-spec.md | IMPLEMENTED | `CurveDisplayConfig`, curvature transform, shared hover routine, UI scaling. |
-| 2026-04-24-calibration-audit.md | IN PROGRESS | T1–T3 merged (probe type, Dynamics probe, Freeze probe + formula fixes). T4–T11 pending. Tracked in the active TaskList. |
+| 2026-04-24-calibration-audit.md | IMPLEMENTED | All 11 tasks merged: per-module ProbeSnapshot + calibration round-trip tests, Dynamics/Freeze DSP clamp fixes, 10 kHz curve cutoff fix, hover-tooltip flip, Freeze row layout fix, UI spec addenda §2.3/§3.4/§4.4. |
 | 2026-04-24-ui-spec-cleanup.md | IMPLEMENTED | Closed the 2026-04-24 spec-deviation review. |
 
 ## Design specs (`docs/superpowers/specs/`)
@@ -57,8 +57,8 @@ but if the two disagree, this index wins.
 | 2026-04-21-past-module.md | DEFERRED | Depends on BinPhysics + history-buffer infra. |
 | 2026-04-21-rhythm-module.md | DEFERRED | Depends on BinPhysics + host-BPM-sync infra. |
 | 2026-04-21-sidechain-refactor-design.md | IMPLEMENTED | |
-| 2026-04-23-ui-parameter-spec-design.md | IMPLEMENTED | **Authoritative source of truth for UI parameter display.** Addenda §2.3 / §3.4 / §4.4 pending from calibration-audit T10. |
-| 2026-04-24-calibration-audit-design.md | IN PROGRESS | Paired with plan `2026-04-24-calibration-audit.md`. |
+| 2026-04-23-ui-parameter-spec-design.md | IMPLEMENTED | **Authoritative source of truth for UI parameter display.** Includes addenda §2.3 / §3.4 / §4.4 merged from calibration-audit T10. |
+| 2026-04-24-calibration-audit-design.md | IMPLEMENTED | Paired with plan `2026-04-24-calibration-audit.md`; all 11 tasks merged. |
 
 ---
 

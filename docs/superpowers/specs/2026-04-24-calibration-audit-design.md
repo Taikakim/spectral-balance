@@ -1,4 +1,4 @@
-> **Status (2026-04-24): IN PROGRESS.** Paired with plan `../plans/2026-04-24-calibration-audit.md`. T1–T3 merged; T4–T11 pending. Source of truth: [../STATUS.md](../STATUS.md).
+> **Status (2026-04-26): IMPLEMENTED.** Paired with plan `../plans/2026-04-24-calibration-audit.md`. All 11 tasks merged. Source of truth: [../STATUS.md](../STATUS.md).
 
 # Calibration Audit — Design
 
