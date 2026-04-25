@@ -14,6 +14,8 @@ pub struct ContrastModule {
     bp_mix:       Vec<f32>,
     num_bins:     usize,
     sample_rate:  f32,
+    #[cfg(any(test, feature = "probe"))]
+    last_probe: crate::dsp::modules::ProbeSnapshot,
 }
 
 impl ContrastModule {
@@ -29,6 +31,8 @@ impl ContrastModule {
             bp_mix:       Vec::new(),
             num_bins:     0,
             sample_rate:  44100.0,
+            #[cfg(any(test, feature = "probe"))]
+            last_probe: Default::default(),
         }
     }
 }
@@ -86,8 +90,20 @@ impl SpectralModule for ContrastModule {
             smoothing_semitones: ctx.suppression_width,
         };
         self.engine.process_bins(bins, sidechain, &params, self.sample_rate, suppression_out);
+
+        #[cfg(any(test, feature = "probe"))]
+        {
+            let k = self.num_bins / 2;
+            self.last_probe = crate::dsp::modules::ProbeSnapshot {
+                ratio: Some(self.bp_ratio[k]),
+                ..Default::default()
+            };
+        }
     }
 
     fn module_type(&self) -> ModuleType { ModuleType::Contrast }
     fn num_curves(&self) -> usize { 1 }
+
+    #[cfg(any(test, feature = "probe"))]
+    fn last_probe(&self) -> crate::dsp::modules::ProbeSnapshot { self.last_probe }
 }

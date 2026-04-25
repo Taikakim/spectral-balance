@@ -101,10 +101,10 @@ fn dynamics_config(i: usize) -> CurveDisplayConfig {
 fn freeze_config(i: usize) -> CurveDisplayConfig {
     match i {
         // LENGTH: gain=1.0 → 500 ms (gain_to_display: gain*500, range 0–4000 ms)
-        // Multiplicative: off=+1 → gain*8 → 4000 ms; off=-1 → gain/8 → ~62 ms (clamped)
-        // factor = 4000/500 = 8.0
+        // Multiplicative: off=+1 → gain*8 → 4000 ms; off=-1 → gain/8 → 62.5 ms
+        // factor = 4000/500 = 8.0; y_min matches off_freeze_length(1.0, -1.0) * 500
         0 => CurveDisplayConfig {
-            y_label: "ms", y_min: 10.0, y_max: 4000.0, y_log: true,
+            y_label: "ms", y_min: 62.5, y_max: 4000.0, y_log: true,
             grid_lines: &[(100.0, "100ms"), (500.0, "500ms"), (1000.0, "1s"), (2000.0, "2s")],
             y_natural: 500.0,
             offset_fn: off_freeze_length,
@@ -119,9 +119,10 @@ fn freeze_config(i: usize) -> CurveDisplayConfig {
             offset_fn: off_freeze_thresh,
         },
         // PORTAMENTO: gain=1.0 → 200 ms; multiplicative with factor = 1000/200 = 5.0
+        // y_min matches off_portamento(1.0, -1.0) * 200 = 40 ms
         2 => CurveDisplayConfig {
-            y_label: "ms", y_min: 1.0, y_max: 1000.0, y_log: true,
-            grid_lines: &[(10.0, "10ms"), (100.0, "100ms"), (500.0, "500ms"), (1000.0, "1s")],
+            y_label: "ms", y_min: 40.0, y_max: 1000.0, y_log: true,
+            grid_lines: &[(40.0, "40ms"), (100.0, "100ms"), (500.0, "500ms"), (1000.0, "1s")],
             y_natural: 200.0,
             offset_fn: off_portamento,
         },
@@ -153,12 +154,17 @@ fn phase_smear_config(i: usize) -> CurveDisplayConfig {
             y_natural: 100.0,
             offset_fn: off_amount_200,
         },
-        // PEAK HOLD: gain=1.0 → 200 ms (gain_to_display: gain*200, range 0–1000ms); log
-        // Multiplicative: factor = 1000/200 = 5.0
+        // PEAK HOLD: driven by shared `peak_hold_curve_to_ms` helper (log-piecewise,
+        // clamps curve input to 0..=2 and maps to 1..50..500 ms). With
+        // off_portamento(g, o) = g * 5^o, offset=-1 yields input 0.2 → ≈2.19 ms;
+        // offset=0 yields 50 ms; offset=+1 yields input 5.0 (clamped to 2) → 500 ms.
+        // y_natural stays at 50 ms (the helper's neutral output for gain=1.0).
+        // The helper is shared with Gain's PEAK HOLD (T5's territory) — narrowing
+        // the config here matches the real DSP range without touching the helper.
         1 => CurveDisplayConfig {
-            y_label: "ms", y_min: 1.0, y_max: 1000.0, y_log: true,
-            grid_lines: &[(10.0, "10ms"), (100.0, "100ms"), (500.0, "500ms"), (1000.0, "1s")],
-            y_natural: 200.0,
+            y_label: "ms", y_min: 2.0, y_max: 500.0, y_log: true,
+            grid_lines: &[(5.0, "5ms"), (50.0, "50ms"), (200.0, "200ms"), (500.0, "500ms")],
+            y_natural: 50.0,
             offset_fn: off_portamento,
         },
         // MIX: same as dynamics mix
@@ -203,11 +209,16 @@ fn gain_config(i: usize, gain_mode: GainMode) -> CurveDisplayConfig {
                 offset_fn: off_gain_db,
             },
         },
-        // PEAK HOLD: same as phase smear peak hold
+        // PEAK HOLD: same as phase smear peak hold — driven by shared
+        // `peak_hold_curve_to_ms` helper (log-piecewise, clamps curve input to
+        // 0..=2 and maps to 1..50..500 ms). With off_portamento(g, o) = g * 5^o,
+        // offset=-1 yields input 0.2 → ≈2.19 ms; offset=0 yields 50 ms;
+        // offset=+1 yields input 5.0 (clamped to 2) → 500 ms. The config range
+        // matches the real DSP output range.
         1 => CurveDisplayConfig {
-            y_label: "ms", y_min: 1.0, y_max: 1000.0, y_log: true,
-            grid_lines: &[(10.0, "10ms"), (100.0, "100ms"), (500.0, "500ms"), (1000.0, "1s")],
-            y_natural: 200.0,
+            y_label: "ms", y_min: 2.0, y_max: 500.0, y_log: true,
+            grid_lines: &[(5.0, "5ms"), (50.0, "50ms"), (200.0, "200ms"), (500.0, "500ms")],
+            y_natural: 50.0,
             offset_fn: off_portamento,
         },
         _ => default_config(),
