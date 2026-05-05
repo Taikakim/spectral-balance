@@ -80,6 +80,27 @@ fn future_active_layout_matches_kernel_signatures() {
         "PreEcho should expose all 5 curves including THRESHOLD");
 }
 
+/// Rhythm has 3 modes. Curves: 0=AMOUNT, 1=DIVISION, 2=ATTACK_FADE, 3=TARGET_PHASE, 4=MIX.
+/// Euclidean and Arpeggiator do not read TARGET_PHASE(3); PhaseReset reads all 5.
+#[test]
+fn rhythm_active_layout_matches_kernel_signatures() {
+    use spectral_forge::dsp::modules::rhythm::RhythmMode;
+
+    let layout_fn = module_spec(ModuleType::Rhythm).active_layout
+        .expect("Rhythm should declare an active_layout");
+
+    let modes_and_active: &[(RhythmMode, &[u8])] = &[
+        (RhythmMode::Euclidean,   &[0, 1, 2, 4]),
+        (RhythmMode::Arpeggiator, &[0, 1, 2, 4]),
+        (RhythmMode::PhaseReset,  &[0, 1, 2, 3, 4]),
+    ];
+    for (mode, expected) in modes_and_active {
+        let layout = layout_fn(*mode as u8);
+        assert_eq!(layout.active, *expected,
+            "Rhythm {:?}: expected active {:?}, got {:?}", mode, expected, layout.active);
+    }
+}
+
 /// Punch has 2 modes. Curves: 0=AMOUNT, 1=WIDTH, 2=FILL_MODE, 3=AMP_FILL, 4=HEAL, 5=MIX.
 /// Both Direct and Inverse use the same kernel and read all 6 curves.
 #[test]

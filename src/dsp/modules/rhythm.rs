@@ -421,3 +421,44 @@ impl SpectralModule for RhythmModule {
     #[cfg(any(test, feature = "probe"))]
     fn last_probe(&self) -> crate::dsp::modules::ProbeSnapshot { self.last_probe }
 }
+
+/// Per-mode `CurveLayout` for Rhythm.
+///
+/// Curves: 0=AMOUNT, 1=DIVISION, 2=ATTACK_FADE, 3=TARGET_PHASE, 4=MIX.
+///
+/// - Euclidean: reads AMOUNT(0), DIVISION(1), ATTACK_FADE(2), MIX(4).
+///   TARGET_PHASE(3) is not read.
+/// - Arpeggiator: reads AMOUNT(0), DIVISION(1), ATTACK_FADE(2), MIX(4).
+///   TARGET_PHASE(3) is explicitly discarded (`let _ = tphase_curve`).
+/// - PhaseReset: reads all 5 — AMOUNT(0), DIVISION(1), ATTACK_FADE(2),
+///   TARGET_PHASE(3) for the phase target, MIX(4).
+///
+/// Wired via `active_layout: Some(crate::dsp::modules::rhythm::active_layout)` on RHY.
+pub fn active_layout(mode_byte: u8) -> super::CurveLayout {
+    match mode_byte {
+        0 => super::CurveLayout {
+            // Euclidean: pulse-count from AMOUNT, steps from DIVISION,
+            // attack/fade shape from ATTACK_FADE. TARGET_PHASE unused.
+            active:          &[0, 1, 2, 4],
+            label_overrides: &[],
+            help_for:        |_| "",
+            mode_overview:   Some("Euclidean: distributes pulses evenly across steps using the Bjorklund algorithm; ATTACK_FADE shapes step edges."),
+        },
+        1 => super::CurveLayout {
+            // Arpeggiator: voice-gate step mapping from AMOUNT, steps from DIVISION,
+            // envelope attack from ATTACK_FADE. TARGET_PHASE explicitly unused.
+            active:          &[0, 1, 2, 4],
+            label_overrides: &[],
+            help_for:        |_| "",
+            mode_overview:   Some("Arpeggiator: 8-voice step sequencer gates spectral peaks per step; ATTACK_FADE sets gate ramp-up."),
+        },
+        _ => super::CurveLayout {
+            // PhaseReset: strength from AMOUNT, steps from DIVISION, edge window from
+            // ATTACK_FADE, phase target from TARGET_PHASE (mapped [-π, +π]). All 5 active.
+            active:          &[0, 1, 2, 3, 4],
+            label_overrides: &[],
+            help_for:        |_| "",
+            mode_overview:   Some("Phase Reset: snaps per-bin phase toward TARGET_PHASE at each step boundary; ATTACK_FADE controls the edge window."),
+        },
+    }
+}

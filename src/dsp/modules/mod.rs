@@ -679,7 +679,7 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         needs_harmonic_groups: false,
         // Arpeggiator NoteIn trigger reads ctx.midi_notes (Phase 6.6 Task 6).
         needs_midi: true,
-        active_layout: None,
+        active_layout: Some(crate::dsp::modules::rhythm::active_layout),
     };
     static GEO: ModuleSpec = ModuleSpec {
         display_name: "Geometry",
