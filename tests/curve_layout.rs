@@ -38,10 +38,12 @@ fn past_module_spec_has_active_layout_some() {
 /// should return `Some`.
 #[test]
 fn default_module_specs_have_active_layout_none() {
+    // All multi-mode modules that have opted into active_layout.
     let mode_bearing = [
-        ModuleType::Past, ModuleType::Future, ModuleType::Geometry, ModuleType::Circuit,
-        ModuleType::Life, ModuleType::Kinetics, ModuleType::Harmony,
-        ModuleType::Modulate, ModuleType::Rhythm,
+        ModuleType::Past, ModuleType::Future, ModuleType::Circuit,
+        ModuleType::Geometry, ModuleType::Punch, ModuleType::Rhythm,
+        ModuleType::Modulate, ModuleType::Harmony, ModuleType::Kinetics,
+        ModuleType::Life,
     ];
     for ty in [
         ModuleType::Dynamics, ModuleType::Freeze, ModuleType::PhaseSmear,
@@ -76,6 +78,26 @@ fn future_active_layout_matches_kernel_signatures() {
     let layout_pe = layout_fn(FutureMode::PreEcho as u8);
     assert_eq!(layout_pe.active, &[0u8, 1, 2, 3, 4],
         "PreEcho should expose all 5 curves including THRESHOLD");
+}
+
+/// Geometry has 2 modes. Curves: 0=AMOUNT, 1=MODE_CAP, 2=DAMP_REL, 3=THRESH, 4=MIX.
+/// Chladni does not read THRESH(3); Helmholtz reads all 5.
+#[test]
+fn geometry_active_layout_matches_kernel_signatures() {
+    use spectral_forge::dsp::modules::geometry::GeometryMode;
+
+    let layout_fn = module_spec(ModuleType::Geometry).active_layout
+        .expect("Geometry should declare an active_layout");
+
+    let modes_and_active: &[(GeometryMode, &[u8])] = &[
+        (GeometryMode::Chladni,    &[0, 1, 2, 4]),
+        (GeometryMode::Helmholtz,  &[0, 1, 2, 3, 4]),
+    ];
+    for (mode, expected) in modes_and_active {
+        let layout = layout_fn(*mode as u8);
+        assert_eq!(layout.active, *expected,
+            "Geometry {:?}: expected active {:?}, got {:?}", mode, expected, layout.active);
+    }
 }
 
 /// Circuit has 10 modes. Kernels were inspected to determine which curve indices

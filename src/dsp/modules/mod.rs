@@ -696,7 +696,7 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         needs_chromagram: false,
         needs_harmonic_groups: false,
         needs_midi: false,
-        active_layout: None,
+        active_layout: Some(crate::dsp::modules::geometry::active_layout),
     };
     static MODULATE: ModuleSpec = ModuleSpec {
         display_name: "Modulate",

@@ -340,3 +340,35 @@ impl SpectralModule for GeometryModule {
     #[cfg(any(test, feature = "probe"))]
     fn last_probe(&self) -> crate::dsp::modules::ProbeSnapshot { self.last_probe }
 }
+
+/// Per-mode `CurveLayout` for Geometry.
+///
+/// Curves: 0=AMOUNT, 1=MODE_CAP, 2=DAMP_REL, 3=THRESH, 4=MIX.
+///
+/// - Chladni: reads AMOUNT(0), MODE_CAP(1), DAMP_REL(2), MIX(4). THRESH(3) not read.
+/// - Helmholtz: reads all 5: AMOUNT(0), MODE_CAP(1)/capacity, DAMP_REL(2)/release,
+///   THRESH(3), MIX(4).
+///
+/// Wired via `active_layout: Some(crate::dsp::modules::geometry::active_layout)` on GEO.
+pub fn active_layout(mode_byte: u8) -> super::CurveLayout {
+    match mode_byte {
+        0 => super::CurveLayout {
+            // Chladni: AMOUNT drives settle force; MODE_CAP picks (m,n) eigenmode;
+            // DAMP_REL applies extra magnitude bleed; MIX blends dry/wet.
+            // THRESH(3) is not read by apply_chladni.
+            active:          &[0, 1, 2, 4],
+            label_overrides: &[],
+            help_for:        |_| "",
+            mode_overview:   Some("Chladni Plate Nodes: bins are projected onto a row-major eigenmode grid; energy at antinodes is suppressed and redistributed to nodes."),
+        },
+        _ => super::CurveLayout {
+            // Helmholtz: all 5 curves active.
+            // AMOUNT gates each trap; MODE_CAP=capacity; DAMP_REL=release fraction;
+            // THRESH=overflow trigger threshold; MIX=dry/wet per trap.
+            active:          &[0, 1, 2, 3, 4],
+            label_overrides: &[],
+            help_for:        |_| "",
+            mode_overview:   Some("Helmholtz Traps: 8 log-spaced bandpass traps absorb energy into fill levels; overflow re-injects at the 2nd-harmonic overtone."),
+        },
+    }
+}
