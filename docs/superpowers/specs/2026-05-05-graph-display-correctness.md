@@ -83,33 +83,46 @@ inspection.
 
 ## 3. Calibration fix patterns
 
-The bugs the audit will surface fall into a small number of categories. Each
-has a known fix shape.
+The bugs the audit surfaces fall into three groups. The full audit was run
+during plan-writing; results are summarized in this section.
 
-### 3.1 Log-gain dBFS thresholds (display indices 0 and 9)
+**Lerp shape recap (UI parameter spec §2 refined 2026-05-05):**
 
-**Symptom:** offset_fn is additive (`g + k·o`), but `gain_to_display` is
-logarithmic (`-20 + log10(g)·66.667`). Slider value (linear lerp in display
-space, per spec §2) and curve baseline diverge.
+- `y_log == false` → linear lerp in physical units.
+- `y_log == true` → geometric (log) lerp in physical units. Slider midpoint
+  reads as the geometric midpoint of the y-range — which renders at the
+  visual midpoint of the log axis. The same axis-aware lerp is used by both
+  the slider formatter and the response-curve apply path.
 
-**Fix for idx 9 (Freeze threshold, fixed range -80…0, neutral -20):** replace
-the additive `off_freeze_thresh` with a multiplicative form whose log produces
-the spec lerp.
+For most curves this means existing `offset_fn` implementations are already
+correct (they were calibrated multiplicatively for log axes by coincidence
+of design). The fixes below cover the cases where they are not.
+
+### 3.1 Log-gain dBFS thresholds (display indices 0 and 9, y_log=false)
+
+**Audit result:** RED for Dynamics/0 and Freeze/1.
+
+**Symptom:** `cfg.y_log == false` (linear axis in dBFS), so the lerp is linear
+in physical units. But `gain_to_display` for these indices is logarithmic in
+gain (`-20 + log10(g)·66.667`). The current `offset_fn`s are additive in gain,
+which is logarithmic in display — mismatched.
+
+**Fix for idx 9** (Freeze threshold, fixed range -80…0, neutral -20):
 
 ```rust
 pub fn off_freeze_thresh(g: f32, o: f32) -> f32 {
-    // Spec §2 lerp targets:
+    // Spec §2 lerp targets (y_log=false):
     //   v ≥ 0: display = -20 + 20·v (range -20..0)
     //   v < 0: display = -20 + 60·v (range -80..-20)
     // Inverse of gain→dBFS (`-20 + log10(g)·66.667`):
     //   g = 10^((display + 20) / 66.667)
-    //   v ≥ 0:  factor = 10^(0.3·v) (≈ 2^v)
+    //   v ≥ 0:  factor = 10^(0.3·v)  (≈ 2^v)
     //   v < 0:  factor = 10^(0.9·v)
     if o >= 0.0 { g * 10f32.powf(0.3 * o) } else { g * 10f32.powf(0.9 * o) }
 }
 ```
 
-**Fix for idx 0 (Dynamics threshold, range `db_min`…`db_max`, neutral -20):**
+**Fix for idx 0** (Dynamics threshold, range `db_min`…`db_max`, neutral -20):
 same shape, but the negative-branch exponent depends on `db_min` (runtime).
 Bake the spec's canonical `db_min = -60`:
 
@@ -121,43 +134,99 @@ pub fn off_thresh(g: f32, o: f32) -> f32 {
 }
 ```
 
-The 0.6 negative exponent comes from `(y_natural - y_min) / 66.667 = 40/66.667
-≈ 0.6` for the canonical -60 dBFS lower bound.
+The 0.6 negative exponent comes from `(y_natural − y_min) / 66.667 = 40/66.667
+≈ 0.6` for the canonical −60 dBFS lower bound.
 
-### 3.2 Multiplicative-time axes (display indices 2, 3 — attack/release ms)
+### 3.2 Multiplicative-time axes (display indices 2, 3 — attack/release ms, y_log=true)
+
+**Audit result:** RED for Dynamics/2 ATTACK and Dynamics/3 RELEASE.
 
 **Symptom:** `cfg.y_natural` is hardcoded to `1.0`, but `gain_to_display`
-multiplies by `global_attack_ms` (runtime). Slider says "1 ms" at neutral but
-the actual displayed curve sits at `global_attack_ms` (e.g. 10 ms).
+multiplies by `global_attack_ms` / `global_release_ms` (runtime). At neutral
+gain the curve sits at `global_attack_ms`, but the slider formatter treats
+`y_natural=1` as the geometric pivot — so the lerp anchors land in the wrong
+place. Existing `off_atk_rel` (`g · 1024^o`) also bakes `1024` as the
+multiplicative base, which only matches the lerp when `y_natural == 1`.
 
 **Fix:** extend `runtime_anchors` to substitute `y_natural` for indices 2 and
-3 from `global_attack_ms` and `global_release_ms`. Existing `off_atk_rel`
-(multiplicative `g · 1024^o`) is structurally correct — the bug is that the
-slider's anchors don't substitute. Call sites of `runtime_anchors` get the new
-arguments threaded.
+3 from `global_attack_ms` and `global_release_ms`. Both the formatter and the
+apply path then receive the runtime-correct anchors. The offset_fn's
+multiplicative base also needs to track runtime y_natural — change
+`off_atk_rel` to consume anchors:
 
-### 3.3 Linear-gain linear-display axes (display indices 6, 7, 11)
+```rust
+pub fn off_atk_rel(g: f32, o: f32, anchors: (f32, f32, f32)) -> f32 {
+    // Geometric lerp from y_natural to y_max (or to y_min):
+    //   v ≥ 0: phys = y_natural · (y_max / y_natural)^v
+    //   v < 0: phys = y_natural · (y_natural / y_min)^v
+    // gain_to_display(2, g, attack_ms) = attack_ms · g, so:
+    //   gain_off = phys / y_natural = (y_max/y_natural)^v  or  (y_natural/y_min)^v
+    let (y_min, y_nat, y_max) = anchors;
+    let factor = if o >= 0.0 { (y_max / y_nat).powf(o) } else { (y_nat / y_min).powf(o) };
+    g * factor
+}
+```
 
-**Symptom:** likely none. `g · k = display`, additive offset is linear in
-display. WYSIWYG holds by construction. Audit verifies and checks the box.
+This is the first offset_fn that takes anchors. The signature change ripples
+through `apply_curve_transform` (audio) and `apply_curve_adjustments` (GUI).
 
-If the audit flags any here, the cause is a wrong constant — e.g.,
-`off_amount_200` produces gain in [0, 2] but `cfg.y_max` says 200 instead of
-100. Trivial fix.
+### 3.3 Log-time axes with static y_natural (display indices 8, 10, y_log=true)
 
-### 3.4 Log-time axes with non-trivial neutral (display indices 8, 10)
+**Audit result:** GREEN for Freeze/0 LENGTH, Freeze/2 PORTAMENTO, Punch/4
+HEAL once the formatter switches to axis-aware lerp.
 
-**Symptom:** `g · 500 ms = display` (idx 8) is linear in gain, but the axis is
-log-rendered. `y_natural=500` and `off_freeze_length(g, o) = g · 8^o` should
-be consistent. Audit verifies.
+**Why:** their existing `offset_fn`s (`off_freeze_length: g · 8^o`,
+`off_portamento: g · 5^o`) were already calibrated multiplicatively, where
+the base equals `y_max / y_natural`. That happens to match the geometric
+lerp exactly. After the formatter starts doing geometric lerp on
+`y_log=true` axes, these curves test green without code change.
 
-### 3.5 Special cases
+Verify in the matrix; no fix expected.
 
-Each gets a row in the audit. Idx 13 (PAST Age/Delay) is known broken and
-deferred (§7.2). Other indices: ratio (idx 1), knee (idx 4), makeup/dB (idx 5,
-12) — verify with `check_wysiwyg`, fix any flagged.
+### 3.4 Linear-gain linear-display axes (display indices 6, 7, 11, y_log=false)
 
-### 3.6 Out-of-spec node range
+**Audit result:** mostly GREEN. Additive `offset_fn` matches linear lerp for
+linear-gain linear-display axes by construction.
+
+Exceptions surfaced by the audit:
+
+- **Past/3 SPREAD** (idx 6): `cfg.y_natural = 50` but `gain_to_display(6, 1) = 100`.
+  Mismatch at neutral. Fix: change `cfg.y_natural` to `100` (matching the gain
+  at neutral). The intended UX of "neutral around 50%" can be encoded by
+  having the user place nodes/offset at the desired value, not by lying about
+  neutral.
+- (No other exceptions found in the audit.)
+
+### 3.5 cfg / gain_to_display mismatches (Group 3)
+
+A class of bugs where `cfg.y_natural` or `cfg.y_min`/`y_max` doesn't match
+what `gain_to_display(idx, ...)` actually produces or clamps to. Per the
+refined Calibration Contract (UI parameter spec §2.3), these MUST agree.
+
+**Audit result:**
+
+- **Dynamics/4 KNEE** (idx 4): `cfg.y_min = 0` but `gain_to_display(4)` clamps
+  to `[1.5, 48]`. At v=-1 the slider says 0 dB knee but the curve clamps to
+  1.5 dB. Fix: change `gain_to_display(4)` clamp to `[0, 48]` (allowing 0 dB =
+  hard knee, a legitimate value).
+- **Past/2 THRESHOLD** (idx 9): `cfg.y_natural = -60` but `gain_to_display(9, 1) = -20`.
+  The cfg comment claims this gives "asymmetric range to reach -80"; in
+  practice it just breaks WYSIWYG at neutral. Fix: change `cfg.y_natural` to
+  `-20`. The slider's asymmetric reach to -80 is automatic from the new
+  multiplicative `off_freeze_thresh` calibration in §3.1.
+
+### 3.6 Deferred special cases
+
+- **Idx 13 (PAST Age/Delay):** `total_history_seconds` not plumbed end-to-end;
+  deferred (§7.2). Audit row stays red.
+- **Idx 10 PEAK HOLD** (PhaseSmear/1, Gain/1): the DSP function for PEAK HOLD
+  is `peak_hold_curve_to_ms` (log-piecewise, neutral=50 ms) but the cfg routes
+  through display idx 10 which assumes `gain·200` (neutral=200 ms). The cfg
+  and DSP are simply on different mappings. **Deferred** to a follow-up; this
+  plan does not fix PEAK HOLD. Audit row stays red with a "PEAK HOLD DSP
+  mismatch — separate follow-up" note.
+
+### 3.7 Out-of-spec node range
 
 `curve_widget`'s drag clamp allows `node.y ∈ [-2, +2]` (50% visual headroom
 beyond rect). Existing behavior, preserved as-is. Mention in spec; do not
@@ -412,37 +481,50 @@ plus any imports.
 
 ## Appendix A — `check_wysiwyg` helper
 
-The mechanical calibration check used by the audit and the regression test:
+The mechanical calibration check used by the audit and the regression test.
+Implements the axis-aware lerp from UI parameter spec §2:
 
 ```rust
+/// Axis-aware lerp from UI parameter spec §2. Linear in physical units when
+/// y_log=false, geometric (log) in physical units when y_log=true.
+pub fn axis_aware_lerp(cfg: &CurveDisplayConfig, anchors: (f32, f32, f32), v: f32) -> f32 {
+    let (y_min, y_nat, y_max) = anchors;
+    if cfg.y_log {
+        if v >= 0.0 { y_nat * (y_max / y_nat).powf(v) }
+        else        { y_nat * (y_nat / y_min).powf(v) }
+    } else {
+        if v >= 0.0 { y_nat + v * (y_max - y_nat) }
+        else        { y_nat + v * (y_nat - y_min) }
+    }
+}
+
 /// Returns Ok(()) if the offset slider's displayed value matches where the
 /// curve baseline actually renders, at v ∈ {-1, -0.5, 0, +0.5, +1}.
 pub fn check_wysiwyg(module: ModuleType, curve_idx: usize) -> Result<(), String> {
     let cfg = curve_display_config(module, curve_idx, GainMode::Add);
     let display_idx = display_curve_idx(module, curve_idx, GainMode::Add);
 
-    // Use canonical attack/release for the matrix; tasks that need real
-    // runtime substitution will pin specific values per index.
-    let attack_ms  = 1.0;
-    let release_ms = 1.0;
+    // Pin canonical runtime values for the matrix. Tasks that need real
+    // runtime substitution use these as the y_natural for indices 2/3.
+    let attack_ms  = 10.0;
+    let release_ms = 100.0;
+    let db_min     = -60.0;
+    let db_max     = 0.0;
+    let history    = 0.0;
+    let anchors = runtime_anchors(
+        &cfg, display_idx, history, db_min, db_max, attack_ms, release_ms,
+    );
 
     for &v in &[-1.0, -0.5, 0.0, 0.5, 1.0] {
-        let g_off = (cfg.offset_fn)(1.0, v);
+        let g_off = (cfg.offset_fn)(1.0, v, anchors);
         let display_actual = gain_to_display(
-            display_idx, g_off,
-            attack_ms, release_ms,
-            cfg.y_min, cfg.y_max,
-            /* total_history_seconds */ 0.0,
+            display_idx, g_off, attack_ms, release_ms, db_min, db_max, history,
         );
-        let display_expected = if v >= 0.0 {
-            cfg.y_natural + v * (cfg.y_max - cfg.y_natural)
-        } else {
-            cfg.y_natural + v * (cfg.y_natural - cfg.y_min)
-        };
+        let display_expected = axis_aware_lerp(&cfg, anchors, v);
         if (display_actual - display_expected).abs() > 0.5 {
             return Err(format!(
                 "{:?} curve {curve_idx} (display_idx {display_idx}): \
-                 v={v}: expected {display_expected:.2}, got {display_actual:.2}",
+                 v={v}: expected {display_expected:.3}, got {display_actual:.3}",
                 module
             ));
         }
@@ -451,15 +533,9 @@ pub fn check_wysiwyg(module: ModuleType, curve_idx: usize) -> Result<(), String>
 }
 ```
 
-The 0.5 dB/unit tolerance is generous for floating-point noise but tight
+The 0.5 (dB or unit) tolerance is generous for floating-point noise but tight
 enough to catch the kinds of bugs we're fixing (current discrepancies are
-tens of dBFS).
-
-**Helper evolution:** the version above reads anchors directly from
-`cfg.y_min` / `cfg.y_max` / `cfg.y_natural`. Once §3.2's `runtime_anchors`
-extension lands (substituting `global_attack_ms`/`global_release_ms` for
-indices 2 and 3), the helper switches to calling `runtime_anchors(cfg,
-display_idx, total_history_seconds, db_min, db_max, attack_ms, release_ms)`
-and uses the returned tuple. The matrix test then pins specific
-`attack_ms`/`release_ms` values per index so the check exercises the runtime
-substitution path.
+tens of dBFS). The `runtime_anchors` signature shown above is post-fix
+(includes `attack_ms`, `release_ms` substitution); the implementation plan's
+infrastructure task lands the signature change before any calibration tasks
+run the helper.

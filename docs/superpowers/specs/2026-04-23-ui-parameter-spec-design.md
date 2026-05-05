@@ -88,9 +88,30 @@ pub struct CurveTransform {
 
 Shifts the curve's neutral origin across the full physical display range. At `offset = 0.0`
 the origin is at the curve's natural neutral (e.g. -20 dBFS for threshold, 1.0 for ratio).
-At `offset = -1.0` the origin sits at `y_min`; at `+1.0` it sits at `y_max`. The mapping is
-linear between these three anchor points. The `gain_to_phys` function handles unit conversion
-internally — the offset rule is universal across all curve types.
+At `offset = -1.0` the origin sits at `y_min`; at `+1.0` it sits at `y_max`.
+
+**Lerp shape between anchor points is axis-aware**, governed by `cfg.y_log`:
+
+- **`y_log == false`** (linear axis, e.g. dBFS, %, dB): linear interpolation in physical units.
+  - `v ≥ 0`: `phys = y_natural + v · (y_max − y_natural)`
+  - `v < 0`: `phys = y_natural + v · (y_natural − y_min)`
+- **`y_log == true`** (log axis, e.g. ms, ratio): geometric (logarithmic) interpolation in
+  physical units. The slider's midpoint reads as the **geometric midpoint** of the range,
+  which lands at the visual middle of the log axis (the natural drag feel for a log display).
+  - `v ≥ 0`: `phys = y_natural · (y_max / y_natural)^v`
+  - `v < 0`: `phys = y_natural · (y_natural / y_min)^v`
+
+Both the offset slider's `custom_formatter` and the response-curve render path MUST use this
+same axis-aware lerp. WYSIWYG is mandatory: the value displayed in the slider equals the
+physical value at which the curve's flat (un-noded) regions render.
+
+The `offset_fn` paired with each curve produces a `gain_off` that, when fed through
+`gain_to_display`, returns this same `phys` value. For curves where `gain_to_display` is
+linear in gain (the default for `%`, `ms × multiplier`, etc.), the existing additive or
+multiplicative `offset_fn` already satisfies this. For curves where `gain_to_display` is
+logarithmic in gain (the dBFS thresholds at display indices 0 and 9), `offset_fn` is a
+multiplicative function whose log produces the required `phys`. See §3.1 of
+`2026-05-05-graph-display-correctness.md` for the calibration recipes.
 
 ### Tilt
 
@@ -127,6 +148,17 @@ declared `offset_fn` extremes. When the normalized `offset` is +1, the
 DSP-observed parameter must reach the config's `y_max`; when `offset` is -1,
 it must reach `y_min`. If a module clamps for DSP safety, the clamp values
 MUST match `y_min` and `y_max`. Any tighter clamp is a bug.
+
+**Neutral consistency:** `cfg.y_natural` MUST equal `gain_to_display(display_idx, 1.0, …)`
+for the curve. If a module wants the slider's neutral to land on a different physical
+value, the right answer is to change `gain_to_display` for that display index (or use a
+different display index), not to lie via `y_natural`. A divergence here breaks WYSIWYG at
+`v = 0`.
+
+**Clamp consistency:** `gain_to_display` per-index clamps (e.g. `clamp(1.5, 48)` on the
+knee axis) MUST match the `cfg.y_min` / `cfg.y_max` declared by every config that uses that
+display index. If two curves with different ranges share a display index, either widen the
+clamp (preferred) or split into two display indices.
 
 This contract is verified end-to-end by `tests/calibration_roundtrip.rs`.
 New modules MUST add themselves to that test's case table when they are
