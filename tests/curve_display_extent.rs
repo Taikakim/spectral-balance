@@ -95,3 +95,31 @@ fn physical_to_y_uses_cfg_y_log_for_axis_choice() {
     let y_50 = physical_to_y(50.0, &mix_cfg, anchors_mix, rect);
     assert!((y_50 - rect.center().y).abs() < 1.0);
 }
+
+#[test]
+fn screen_y_to_physical_inverts_physical_to_y_for_log_and_linear() {
+    use spectral_forge::editor::curve::{physical_to_y, screen_y_to_physical};
+    use spectral_forge::editor::curve_config::{curve_display_config};
+    use spectral_forge::dsp::modules::{GainMode, ModuleType};
+    use nih_plug_egui::egui::{Pos2, Rect};
+
+    let rect = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(100.0, 100.0));
+
+    // Log axis (Dynamics ratio).
+    let ratio_cfg = curve_display_config(ModuleType::Dynamics, 1, GainMode::Add);
+    let anchors_ratio = (ratio_cfg.y_min, ratio_cfg.y_natural, ratio_cfg.y_max);
+    for &v in &[1.5_f32, 4.0, 10.0] {
+        let y    = physical_to_y(v, &ratio_cfg, anchors_ratio, rect);
+        let back = screen_y_to_physical(y, &ratio_cfg, anchors_ratio, rect);
+        assert!((back - v).abs() < 0.05, "round-trip {v} → {y} → {back}");
+    }
+
+    // Linear axis (Mix %).
+    let mix_cfg = curve_display_config(ModuleType::Past, 4, GainMode::Add);
+    let anchors_mix = (mix_cfg.y_min, mix_cfg.y_natural, mix_cfg.y_max);
+    for &v in &[12.5_f32, 33.0, 78.0] {
+        let y    = physical_to_y(v, &mix_cfg, anchors_mix, rect);
+        let back = screen_y_to_physical(y, &mix_cfg, anchors_mix, rect);
+        assert!((back - v).abs() < 0.5, "round-trip {v} → {y} → {back}");
+    }
+}

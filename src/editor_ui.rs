@@ -637,7 +637,7 @@ pub fn create_editor(
                                     );
                                     crv::paint_hover_text(
                                         ui.painter(), hover, curve_rect, disp_curve, &hover_cfg,
-                                        db_min, db_max, sr,
+                                        db_min, db_max, total_history_seconds, sr,
                                     );
                                 }
                             }

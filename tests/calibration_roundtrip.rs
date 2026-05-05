@@ -611,7 +611,9 @@ mod display_mapping_contract {
     #[test]
     fn freeze_length_screen_y_to_physical_at_bottom_is_y_min() {
         let r = rect();
-        let v = screen_y_to_physical(r.bottom(), 8, -80.0, 0.0, r);
+        let cfg = curve_display_config(ModuleType::Freeze, 0, GainMode::Add);
+        let anchors = runtime_anchors(&cfg, 8, 0.0, -80.0, 0.0);
+        let v = screen_y_to_physical(r.bottom(), &cfg, anchors, r);
         assert!((v - 62.5).abs() < 1.0,
             "y=rect.bottom() should map back to 62.5 ms, got {}", v);
     }
@@ -622,7 +624,7 @@ mod display_mapping_contract {
         let cfg = curve_display_config(ModuleType::Freeze, 0, GainMode::Add);
         let anchors = runtime_anchors(&cfg, 8, 0.0, -80.0, 0.0);
         let y = physical_to_y(500.0, &cfg, anchors, r);
-        let v = screen_y_to_physical(y, 8, -80.0, 0.0, r);
+        let v = screen_y_to_physical(y, &cfg, anchors, r);
         assert!((v - 500.0).abs() < 1.0,
             "500 ms roundtrip should recover ≈500, got {}", v);
     }
@@ -641,7 +643,9 @@ mod display_mapping_contract {
     #[test]
     fn portamento_screen_y_to_physical_at_bottom_is_y_min() {
         let r = rect();
-        let v = screen_y_to_physical(r.bottom(), 10, -80.0, 0.0, r);
+        let cfg = curve_display_config(ModuleType::Freeze, 2, GainMode::Add);
+        let anchors = runtime_anchors(&cfg, 10, 0.0, -80.0, 0.0);
+        let v = screen_y_to_physical(r.bottom(), &cfg, anchors, r);
         assert!((v - 40.0).abs() < 1.0,
             "y=rect.bottom() should map back to 40 ms, got {}", v);
     }

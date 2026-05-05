@@ -418,28 +418,21 @@ pub fn curve_offset_max(display_idx: usize) -> f32 {
     }
 }
 
-/// Inverse of `physical_to_y` — pixel y → physical value for tooltip display.
-pub fn screen_y_to_physical(y: f32, curve_idx: usize, db_min: f32, db_max: f32, rect: Rect) -> f32 {
+/// Inverse of `physical_to_y` — pixel y → physical value, for hover tooltips.
+/// Reads `cfg.y_log` and the runtime-substituted `(y_min, _, y_max)` anchors.
+pub fn screen_y_to_physical(
+    y: f32,
+    cfg: &CurveDisplayConfig,
+    anchors: (f32, f32, f32),
+    rect: Rect,
+) -> f32 {
+    let (y_min, _, y_max) = anchors;
     let t = ((rect.bottom() - y) / rect.height()).clamp(0.0, 1.0);
-    match curve_idx {
-        0 => db_min + t * (db_max - db_min),
-        1 => 1.0 * 20.0_f32.powf(t),
-        2 | 3 => 1024.0_f32.powf(t),
-        4 => 1.5 * (48.0_f32 / 1.5).powf(t),
-        5 => -18.0 + t * 36.0,
-        6 => t * 100.0,
-        7 => t * 200.0,
-        8 => 62.5 * (4000.0_f32 / 62.5).powf(t),   // Freeze Length: 62.5ms–4000ms log (matches config y_min)
-        9 => -80.0 + t * 80.0,
-        10 => 40.0 * (1000.0_f32 / 40.0).powf(t),  // Portamento: 40ms–1000ms log (matches config y_min)
-        11 => t * 2.0,                    // Resistance 0–2
-        12 => {
-            // Dry-mix %: screen y → dB (-18..+18) → clamped wet/dry percentage.
-            // Matches the grid labels: 0 dB=100 %, -6 dB=50 %, -12 dB=25 %, -18 dB≈12 %.
-            let db = -18.0 + t * 36.0;
-            (100.0 * 10f32.powf(db / 20.0)).clamp(0.0, 100.0)
-        }
-        _ => 0.0,
+    if cfg.y_log {
+        let lo = y_min.max(1e-6);
+        lo * (y_max / lo).powf(t)
+    } else {
+        y_min + t * (y_max - y_min)
     }
 }
 
@@ -465,12 +458,14 @@ pub fn paint_hover_text(
     cfg: &CurveDisplayConfig,
     db_min: f32,
     db_max: f32,
+    total_history_seconds: f32,
     sample_rate: f32,
 ) {
     use nih_plug_egui::egui::{FontId, vec2};
     let nyquist = (sample_rate / 2.0).max(20_001.0);
     let freq_hz = screen_to_freq(cursor_pos.x, rect, nyquist);
-    let phys    = screen_y_to_physical(cursor_pos.y, display_idx, db_min, db_max, rect);
+    let anchors = runtime_anchors(cfg, display_idx, total_history_seconds, db_min, db_max);
+    let phys    = screen_y_to_physical(cursor_pos.y, cfg, anchors, rect);
     let text = if cfg.y_label.is_empty() {
         format!("{}  /  {:.2}", format_freq_hz(freq_hz), phys)
     } else {
@@ -556,7 +551,7 @@ pub fn apply_curve_adjustments(
 ///     `total_history_seconds`.
 /// All other indices pass `cfg` anchors through unchanged.
 pub fn runtime_anchors(
-    cfg: &crate::editor::curve_config::CurveDisplayConfig,
+    cfg: &CurveDisplayConfig,
     display_idx: usize,
     total_history_seconds: f32,
     db_min: f32,
@@ -625,7 +620,7 @@ pub fn gain_to_display(
 /// already applied. The linear/log axis choice comes from `cfg.y_log`.
 pub fn physical_to_y(
     v: f32,
-    cfg: &crate::editor::curve_config::CurveDisplayConfig,
+    cfg: &CurveDisplayConfig,
     anchors: (f32, f32, f32),
     rect: Rect,
 ) -> f32 {
@@ -790,7 +785,7 @@ pub fn paint_response_curve(
     tilt: f32,
     offset: f32,
     curvature: f32,
-    cfg: &crate::editor::curve_config::CurveDisplayConfig,
+    cfg: &CurveDisplayConfig,
     total_history_seconds: f32,
 ) {
     if gains.len() < 2 { return; }
