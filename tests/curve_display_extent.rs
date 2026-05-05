@@ -38,3 +38,30 @@ fn gain_to_display_idx9_eq_node_range_spans_full_dbfs_window() {
     // Top EQ node must reach the 0 dBFS ceiling.
     assert!(dbfs_max >= -1.0, "expected ≥ -1 (close to ceiling), got {dbfs_max}");
 }
+
+#[test]
+fn runtime_anchors_substitutes_db_range_for_threshold_idx_0() {
+    use spectral_forge::editor::curve::runtime_anchors;
+    use spectral_forge::editor::curve_config::{curve_display_config};
+    use spectral_forge::dsp::modules::{GainMode, ModuleType};
+
+    let cfg = curve_display_config(ModuleType::Dynamics, 0, GainMode::Add);
+
+    // db_min=-72, db_max=-3 should override cfg.y_min/y_max for display idx 0.
+    let (y_min, y_natural, y_max) = runtime_anchors(&cfg, 0, 0.0, -72.0, -3.0);
+    assert!((y_min - -72.0).abs() < 1e-3, "expected -72, got {y_min}");
+    assert!((y_max - -3.0).abs() < 1e-3, "expected -3, got {y_max}");
+    // y_natural is the config's neutral (-20 dBFS) — not substituted.
+    assert!((y_natural - -20.0).abs() < 1e-3, "expected -20, got {y_natural}");
+
+    // Display index 13 still substitutes total_history_seconds, unaffected.
+    let past_cfg = curve_display_config(ModuleType::Past, 1, GainMode::Add);
+    let (a, b, c) = runtime_anchors(&past_cfg, 13, 4.0, -60.0, 0.0);
+    assert!((c - 4.0).abs() < 1e-3, "history substitution still works, got {c}");
+    let _ = (a, b);
+
+    // Other display indices pass through unchanged.
+    let phase_cfg = curve_display_config(ModuleType::PhaseSmear, 0, GainMode::Add);
+    let (lo, _, hi) = runtime_anchors(&phase_cfg, 7, 0.0, -60.0, 0.0);
+    assert!((lo - 0.0).abs() < 1e-3 && (hi - 200.0).abs() < 1e-3);
+}

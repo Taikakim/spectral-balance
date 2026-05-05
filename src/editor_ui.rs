@@ -1224,7 +1224,7 @@ pub fn create_editor(
                                                     return format!("{:+.2}", v as f32);
                                                 }
                                                 let (y_min, y_nat, y_max) = crv::runtime_anchors(
-                                                    &off_cfg, off_disp_idx, off_total_history_seconds,
+                                                    &off_cfg, off_disp_idx, off_total_history_seconds, off_db_min, off_db_max,
                                                 );
                                                 let v = v as f32;
                                                 let phys = if v >= 0.0 {
@@ -1232,7 +1232,7 @@ pub fn create_editor(
                                                 } else {
                                                     y_nat + v * (y_nat - y_min)
                                                 };
-                                                let _ = (off_atk_ms, off_rel_ms, off_db_min, off_db_max);
+                                                let _ = (off_atk_ms, off_rel_ms);
                                                 format!("{:.1} {}", phys, off_cfg.y_label)
                                             })
                                     );

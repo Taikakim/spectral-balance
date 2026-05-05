@@ -560,17 +560,27 @@ pub fn apply_curve_adjustments(
 /// piecewise-linear interpolation between these three anchors keyed on the
 /// normalised offset `[-1, 1]`. The slider formatter calls this helper so it
 /// receives the runtime-correct anchors regardless of curve type.
+/// Resolve a `CurveDisplayConfig`'s declared anchors `(y_min, y_natural, y_max)`
+/// into runtime physical units. Two display indices need runtime substitution:
+///   - idx 0 (Dynamics threshold dBFS): `(y_min, y_max)` are taken from the
+///     active `db_min`/`db_max` parameters; `y_natural` (-20 dBFS) is preserved.
+///   - idx 13 (Past Age/Delay): all three anchors are scaled by
+///     `total_history_seconds`.
+/// All other indices pass `cfg` anchors through unchanged.
 pub fn runtime_anchors(
     cfg: &crate::editor::curve_config::CurveDisplayConfig,
     display_idx: usize,
     total_history_seconds: f32,
+    db_min: f32,
+    db_max: f32,
 ) -> (f32, f32, f32) {
-    if display_idx == 13 {
-        // Past Age/Delay: cfg anchors are fractions of total_history_seconds.
-        let scale = total_history_seconds;
-        (cfg.y_min * scale, cfg.y_natural * scale, cfg.y_max * scale)
-    } else {
-        (cfg.y_min, cfg.y_natural, cfg.y_max)
+    match display_idx {
+        13 => {
+            let s = total_history_seconds;
+            (cfg.y_min * s, cfg.y_natural * s, cfg.y_max * s)
+        }
+        0 => (db_min, cfg.y_natural, db_max),
+        _ => (cfg.y_min, cfg.y_natural, cfg.y_max),
     }
 }
 
