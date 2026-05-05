@@ -16,3 +16,26 @@ fn curve_response_spans_full_num_bins_at_44_1_khz() {
     assert!(gains.iter().all(|g| g.is_finite()),
         "all gains must be finite");
 }
+
+#[test]
+fn freeze_threshold_dbfs_reaches_floor_with_eq_node_minimum() {
+    // gain ≈ 0.126 corresponds to a -18 dB EQ bell (10^(-18/20)).
+    // The display range is -80..0 dBFS; the formula must reach the floor.
+    // db_min and db_max are unused by display_idx == 9 (it owns its own range).
+    use spectral_forge::editor::curve::gain_to_display;
+
+    let g_min = 10f32.powf(-18.0 / 20.0); // 0.1259
+    let g_neutral = 1.0f32;
+    let g_max = 10f32.powf(18.0 / 20.0);  // 7.943
+
+    let dbfs_min     = gain_to_display(9, g_min,     0.0, 0.0, -60.0, 0.0, 0.0);
+    let dbfs_neutral = gain_to_display(9, g_neutral, 0.0, 0.0, -60.0, 0.0, 0.0);
+    let dbfs_max     = gain_to_display(9, g_max,     0.0, 0.0, -60.0, 0.0, 0.0);
+
+    // Neutral curve (gain 1.0) → -20 dBFS (the y_natural anchor in freeze_config).
+    assert!((dbfs_neutral - (-20.0)).abs() < 1e-3, "expected -20, got {dbfs_neutral}");
+    // Bottom EQ node must reach the -80 dBFS floor.
+    assert!(dbfs_min <= -79.0, "expected ≤ -79 (close to floor), got {dbfs_min}");
+    // Top EQ node must reach the 0 dBFS ceiling.
+    assert!(dbfs_max >= -1.0, "expected ≥ -1 (close to ceiling), got {dbfs_max}");
+}
