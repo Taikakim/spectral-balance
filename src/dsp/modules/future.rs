@@ -233,3 +233,51 @@ impl SpectralModule for FutureModule {
     fn module_type(&self) -> ModuleType { ModuleType::Future }
     fn num_curves(&self) -> usize { 5 }
 }
+
+/// Per-mode `CurveLayout` for Future.
+///
+/// Curves: 0=AMOUNT, 1=TIME, 2=THRESHOLD, 3=SPREAD, 4=MIX.
+///
+/// - PrintThrough: does not read THRESHOLD (curve 2); exposes [0, 1, 3, 4].
+/// - PreEcho: reads all 5 curves including THRESHOLD; exposes [0, 1, 2, 3, 4].
+///
+/// Wired via `active_layout: Some(crate::dsp::modules::future::active_layout)` on the
+/// FUT `ModuleSpec`.
+pub fn active_layout(mode_byte: u8) -> super::CurveLayout {
+    let mode = if mode_byte == 0 { FutureMode::PrintThrough } else { FutureMode::PreEcho };
+    match mode {
+        FutureMode::PrintThrough => super::CurveLayout {
+            active:          &[0, 1, 3, 4],
+            label_overrides: &[],
+            help_for:        print_through_help_for,
+            mode_overview:   Some("Print-Through: writes a delayed copy of the input through the FFT history."),
+        },
+        FutureMode::PreEcho => super::CurveLayout {
+            active:          &[0, 1, 2, 3, 4],
+            label_overrides: &[],
+            help_for:        pre_echo_help_for,
+            mode_overview:   Some("Pre-Echo: feedback-driven pre-echo with HF damping and threshold gating."),
+        },
+    }
+}
+
+fn print_through_help_for(curve_idx: u8) -> &'static str {
+    match curve_idx {
+        0 => "AMOUNT: per-bin leak fraction written into the delay ring. 0 = silence, 1 = 5% leak (nominal).",
+        1 => "TIME: delay length in hops (read at Nyquist/2). 1.0 = 8 hops.",
+        3 => "SPREAD: per-bin frequency spread of the leaked signal into neighbouring bins. 0 = no spread.",
+        4 => "MIX: per-bin wet/dry crossfade between current bin and delayed ring read.",
+        _ => "",
+    }
+}
+
+fn pre_echo_help_for(curve_idx: u8) -> &'static str {
+    match curve_idx {
+        0 => "AMOUNT: per-bin echo amplitude applied to the ring read (1.0 = nominal).",
+        1 => "TIME: delay length in hops (read at Nyquist/2). 1.0 = 8 hops.",
+        2 => "THRESHOLD: per-bin feedback level. 1.0 = 40% feedback (max safe). Controls echo density.",
+        3 => "SPREAD: per-bin high-frequency damping. 0 = no damping, 1 = full HF roll-off at Nyquist.",
+        4 => "MIX: per-bin wet/dry crossfade between dry bin and echo output.",
+        _ => "",
+    }
+}

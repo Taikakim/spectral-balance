@@ -39,7 +39,7 @@ fn past_module_spec_has_active_layout_some() {
 #[test]
 fn default_module_specs_have_active_layout_none() {
     let mode_bearing = [
-        ModuleType::Past, ModuleType::Geometry, ModuleType::Circuit,
+        ModuleType::Past, ModuleType::Future, ModuleType::Geometry, ModuleType::Circuit,
         ModuleType::Life, ModuleType::Kinetics, ModuleType::Harmony,
         ModuleType::Modulate, ModuleType::Rhythm,
     ];
@@ -57,4 +57,23 @@ fn default_module_specs_have_active_layout_none() {
             ty,
         );
     }
+}
+
+/// Future has 2 modes: PrintThrough and PreEcho.
+/// PrintThrough reads AMOUNT(0), TIME(1), SPREAD(3), MIX(4) — no THRESHOLD.
+/// PreEcho reads all 5: AMOUNT(0), TIME(1), THRESHOLD(2), SPREAD(3), MIX(4).
+#[test]
+fn future_active_layout_matches_kernel_signatures() {
+    use spectral_forge::dsp::modules::future::FutureMode;
+
+    let layout_fn = module_spec(ModuleType::Future).active_layout
+        .expect("Future should declare an active_layout");
+
+    let layout_pt = layout_fn(FutureMode::PrintThrough as u8);
+    assert_eq!(layout_pt.active, &[0u8, 1, 3, 4],
+        "PrintThrough should expose AMOUNT, TIME, SPREAD, MIX (no THRESHOLD)");
+
+    let layout_pe = layout_fn(FutureMode::PreEcho as u8);
+    assert_eq!(layout_pe.active, &[0u8, 1, 2, 3, 4],
+        "PreEcho should expose all 5 curves including THRESHOLD");
 }
