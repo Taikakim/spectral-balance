@@ -299,3 +299,10 @@ fn past_spread_y_natural_matches_idx_6_neutral() {
         "Past/3 cfg.y_natural={} should match gain_to_display(6, 1.0)={}",
         cfg.y_natural, neutral_display);
 }
+
+#[test]
+fn knee_idx_4_reaches_zero_db_at_gain_zero() {
+    use spectral_forge::editor::curve::gain_to_display;
+    let v = gain_to_display(4, 0.0, 10.0, 100.0, -60.0, 0.0, 0.0);
+    assert!(v <= 0.01, "expected ≈0 dB knee at gain=0, got {v}");
+}
