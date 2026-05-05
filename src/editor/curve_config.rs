@@ -497,10 +497,10 @@ pub fn past_config(curve_idx: usize, _mode: u8) -> CurveDisplayConfig {
         2 => CurveDisplayConfig {
             y_label: "dBFS", y_min: -80.0, y_max: 0.0, y_log: false,
             grid_lines: &[(-60.0, "-60"), (-40.0, "-40"), (-20.0, "-20"), (-6.0, "-6")],
-            y_natural: -60.0,
-            // Use the Freeze-style asymmetric scaling (4× on negative) so the
-            // offset slider can reach the full visible y range -80..0 dBFS.
-            // off_thresh (Dynamics) only spans -60..0 — too narrow here.
+            y_natural: -20.0,
+            // Asymmetric reach to -80 dBFS is delivered by off_freeze_thresh's
+            // multiplicative calibration (factor 10^(0.9·v) for v<0, see
+            // 2026-05-05-graph-display-correctness.md §3.1).
             offset_fn: off_freeze_thresh,
         },
         3 => CurveDisplayConfig {

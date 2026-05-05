@@ -162,14 +162,13 @@ fn past_config_returns_calibrated_display_per_curve() {
     assert!((time.y_natural - 0.5).abs() < 1e-6, "TIME y_natural should be 0.5 (midpoint fraction)");
     assert!(is_amount_norm(time.offset_fn), "TIME should route to off_amount_norm");
 
-    // THRESHOLD (curve 2) — dBFS -80..0, neutral -60, off_freeze_thresh so the
-    // offset slider can reach the full visible y range (off_thresh would only
-    // span -60..0 which leaves the bottom 20 dB unreachable).
+    // THRESHOLD (curve 2) — dBFS -80..0, neutral -20 (matches gain_to_display(9, 1.0)),
+    // off_freeze_thresh so the offset slider can reach the full visible y range.
     let thresh = curve_display_config(ModuleType::Past, 2, GainMode::Add);
     assert_eq!(thresh.y_label, "dBFS");
     assert_eq!(thresh.y_min, -80.0);
     assert_eq!(thresh.y_max, 0.0);
-    assert!((thresh.y_natural - (-60.0)).abs() < 1e-6);
+    assert!((thresh.y_natural - (-20.0)).abs() < 1e-6);
     assert!(is_freeze_thresh(thresh.offset_fn), "THRESHOLD should route to off_freeze_thresh");
 
     // SPREAD / Smear (curve 3) — %, neutral at 50% (midpoint = on the toggle
@@ -239,10 +238,11 @@ fn runtime_anchors_substitutes_history_seconds_for_index_13() {
     use spectral_forge::dsp::modules::{ModuleType, GainMode};
 
     // Past THRESHOLD (display idx 9) — anchors are absolute dBFS, no scaling.
+    // y_natural is now -20 (matches gain_to_display(9, 1.0)).
     let cfg = curve_display_config(ModuleType::Past, 2, GainMode::Add);
     let (lo, nat, hi) = runtime_anchors(&cfg, 9, 4.0, -60.0, 0.0, 10.0, 100.0);
     assert_eq!(lo, -80.0);
-    assert!((nat - (-60.0)).abs() < 1e-6);
+    assert!((nat - (-20.0)).abs() < 1e-6);
     assert_eq!(hi, 0.0);
 
     // Past Age (display idx 13) — anchors are fractions, scaled by total.
