@@ -120,13 +120,13 @@ fn past_config_returns_calibrated_display_per_curve() {
     // matching all probes uniquely identifies which helper was wired.
     //
     // Probe table (see helper definitions in src/editor/curve_config.rs):
-    //   helper             (0.5,-0.3)  (0.5,+0.3)  (2.0,+0.5)
-    //   off_mix             0.2         0.5         2.0
-    //   off_amount_norm     0.2         0.8         1.0   (clamped)
-    //   off_thresh         -0.1         0.8         2.5    (-2× on neg, 1× on pos)
-    //   off_freeze_thresh  -0.7         0.8         2.5    (-4× on neg, 1× on pos)
-    //   off_identity        0.5         0.5         2.0
-    let approx = |a: f32, b: f32| (a - b).abs() < 1e-5;
+    //   helper             (0.5,-0.3)    (0.5,+0.3)    (2.0,+0.5)
+    //   off_mix             0.2           0.5           2.0
+    //   off_amount_norm     0.2           0.8           1.0   (clamped)
+    //   off_freeze_thresh   0.5*10^-0.27  0.5*10^0.09  2.0*10^0.15
+    //                      ≈0.26852       ≈0.61513      ≈2.82508  (multiplicative log-dBFS, post-Task-4)
+    //   off_identity        0.5           0.5           2.0
+    let approx = |a: f32, b: f32| (a - b).abs() < 1e-4;
     let sentinel = (0.0_f32, 0.0_f32, 0.0_f32);
     let is_mix = |f: fn(f32, f32, (f32, f32, f32)) -> f32| {
         approx(f(0.5, -0.3, sentinel), 0.2) && approx(f(0.5, 0.3, sentinel), 0.5) && approx(f(2.0, 0.5, sentinel), 2.0)
@@ -135,7 +135,10 @@ fn past_config_returns_calibrated_display_per_curve() {
         approx(f(0.5, -0.3, sentinel), 0.2) && approx(f(0.5, 0.3, sentinel), 0.8) && approx(f(2.0, 0.5, sentinel), 1.0)
     };
     let is_freeze_thresh = |f: fn(f32, f32, (f32, f32, f32)) -> f32| {
-        approx(f(0.5, -0.3, sentinel), -0.7) && approx(f(0.5, 0.3, sentinel), 0.8) && approx(f(2.0, 0.5, sentinel), 2.5)
+        // New multiplicative formula (Task 4): g * 10^(0.9*o) for o<0, g * 10^(0.3*o) for o≥0
+        approx(f(0.5, -0.3, sentinel), 0.5 * 10f32.powf(0.9 * -0.3))
+            && approx(f(0.5, 0.3, sentinel), 0.5 * 10f32.powf(0.3 * 0.3))
+            && approx(f(2.0, 0.5, sentinel), 2.0 * 10f32.powf(0.3 * 0.5))
     };
     let is_identity = |f: fn(f32, f32, (f32, f32, f32)) -> f32| {
         approx(f(0.5, -0.3, sentinel), 0.5) && approx(f(0.5, 0.3, sentinel), 0.5) && approx(f(2.0, 0.5, sentinel), 2.0)

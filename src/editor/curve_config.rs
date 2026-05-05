@@ -607,11 +607,13 @@ fn default_config() -> CurveDisplayConfig {
     g * 8.0_f32.powf(o)
 }
 
-/// Freeze THRESHOLD dBFS: same formula as dynamics threshold but range is -80–0 dBFS.
-/// gain=1.0 → -20 dBFS; off=+1 → g=2.0 → 0 dBFS; off=-1 → g=-3.0 → -80 dBFS (clamped).
-/// neg_span_abs = 4.0 so gain goes from 1.0 to -3.0 (very negative → clamped to -80 dBFS).
+/// Freeze THRESHOLD dBFS: WYSIWYG with log-gain dBFS axis (spec §3.1 of
+/// 2026-05-05-graph-display-correctness.md). Range -80..0, neutral -20.
+/// Inverse of `gain_to_display(9)` evaluated against the spec lerp:
+///   v ≥ 0:  display = -20 + 20·v  → factor 10^(0.3·v)
+///   v < 0:  display = -20 + 60·v  → factor 10^(0.9·v)
 #[inline] pub fn off_freeze_thresh(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
-    if o >= 0.0 { g + o } else { g + 4.0 * o }
+    if o >= 0.0 { g * 10f32.powf(0.3 * o) } else { g * 10f32.powf(0.9 * o) }
 }
 
 /// Portamento/SC-smooth ms: multiplicative, factor = 1000/200 = 5.0.
