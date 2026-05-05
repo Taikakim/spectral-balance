@@ -259,8 +259,9 @@ fn runtime_anchors_substitutes_history_seconds_for_index_13() {
 ///
 /// This is the formula the slider's custom_formatter implements directly —
 /// independent of `offset_fn`. The test pins down the math against Past's
-/// THRESHOLD (-80..-60..0 dBFS), which was the user-visible regression
-/// (Threshold display "couldn't go below -40 dBFS").
+/// THRESHOLD (-80..-20..0 dBFS) — the original regression was the threshold
+/// display being clamped at -40 dBFS; with the corrected `y_natural=-20`
+/// the slider lerp should reach -80 dBFS at v=-1.
 #[test]
 fn slider_lerp_covers_full_range_for_past_threshold() {
     let lerp = |y_min: f32, y_nat: f32, y_max: f32, v: f32| -> f32 {
@@ -270,12 +271,12 @@ fn slider_lerp_covers_full_range_for_past_threshold() {
             y_nat + v * (y_nat - y_min)
         }
     };
-    let (y_min, y_nat, y_max) = (-80.0_f32, -60.0_f32, 0.0_f32);
-    assert!((lerp(y_min, y_nat, y_max,  0.0) - (-60.0)).abs() < 1e-5);
+    let (y_min, y_nat, y_max) = (-80.0_f32, -20.0_f32, 0.0_f32);
+    assert!((lerp(y_min, y_nat, y_max,  0.0) - (-20.0)).abs() < 1e-5);
     assert!((lerp(y_min, y_nat, y_max,  1.0) -    0.0 ).abs() < 1e-5);
     assert!((lerp(y_min, y_nat, y_max, -1.0) - (-80.0)).abs() < 1e-5);
-    // -0.5 should land midway between -60 and -80 = -70 dBFS, NOT clamped at -40.
-    assert!((lerp(y_min, y_nat, y_max, -0.5) - (-70.0)).abs() < 1e-5);
-    // -0.25 → -65 dBFS.
-    assert!((lerp(y_min, y_nat, y_max, -0.25) - (-65.0)).abs() < 1e-5);
+    // -0.5 should land midway between -20 and -80 = -50 dBFS.
+    assert!((lerp(y_min, y_nat, y_max, -0.5) - (-50.0)).abs() < 1e-5);
+    // -0.25 → -35 dBFS.
+    assert!((lerp(y_min, y_nat, y_max, -0.25) - (-35.0)).abs() < 1e-5);
 }

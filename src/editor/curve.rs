@@ -142,9 +142,10 @@ pub fn default_nodes_for_module_curve(
         // produces gain = 10^(-0.334 * 18 / 20) = 0.5. Centring the default
         // means the offset slider has equal headroom in both directions.
         (ModuleType::Past, 1) => flat_at_y(-0.334),
-        // Past Smear (curve 3): default sits exactly on the >0.5 toggle
-        // threshold so positive offset enables smear and negative offset
-        // disables it, with the slider lerp tracking the audible boundary.
+        // Past Smear (curve 3): default starts at the audible toggle threshold
+        // (gain = 0.5 → 50% display). cfg.y_natural = 100% with off_mix
+        // (additive only on negative offset), so the offset ring reduces smear
+        // toward 0% and positive offset is clamped at 100%.
         // y = -0.334 → gain = 10^(-0.334 * 18 / 20) = 0.5.
         (ModuleType::Past, 3) => flat_at_y(-0.334),
         _ => default_nodes_for_curve(curve_idx),
