@@ -174,3 +174,32 @@ fn axis_aware_lerp_linear_arithmetic_midpoint() {
     let expected = cfg.y_natural + 0.5 * (cfg.y_max - cfg.y_natural);
     assert!((mid - expected).abs() < 0.01);
 }
+
+#[test]
+fn axis_aware_lerp_log_negative_half_reaches_y_min() {
+    use spectral_forge::editor::curve::axis_aware_lerp;
+    use spectral_forge::editor::curve_config::curve_display_config;
+    use spectral_forge::dsp::modules::{ModuleType, GainMode};
+
+    // Use Dynamics ATTACK (idx 2, y_log=true). Test with non-trivial y_min/y_nat
+    // (not the static cfg defaults where y_min == y_natural).
+    let cfg = curve_display_config(ModuleType::Dynamics, 2, GainMode::Add);
+    let anchors = (1.0_f32, 50.0, 1024.0); // y_min=1, y_nat=50, y_max=1024
+
+    // v = -1 must reach y_min exactly.
+    let at_minus_one = axis_aware_lerp(&cfg, anchors, -1.0);
+    assert!((at_minus_one - 1.0).abs() < 1e-3,
+        "v=-1 should reach y_min=1.0, got {at_minus_one}");
+
+    // v = 0 must equal y_natural.
+    let at_zero = axis_aware_lerp(&cfg, anchors, 0.0);
+    assert!((at_zero - 50.0).abs() < 1e-3,
+        "v=0 should equal y_nat=50.0, got {at_zero}");
+
+    // v = -0.5 should be the geometric midpoint between y_min and y_nat.
+    // sqrt(1 * 50) = 7.071
+    let at_minus_half = axis_aware_lerp(&cfg, anchors, -0.5);
+    let expected = (1.0_f32 * 50.0).sqrt();
+    assert!((at_minus_half - expected).abs() < 0.01,
+        "v=-0.5 should be geometric mid {expected}, got {at_minus_half}");
+}

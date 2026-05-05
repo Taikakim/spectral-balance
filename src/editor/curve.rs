@@ -583,6 +583,8 @@ pub fn axis_aware_lerp(
 ) -> f32 {
     let (y_min, y_nat, y_max) = anchors;
     if cfg.y_log {
+        debug_assert!(y_min > 0.0 && y_nat > 0.0 && y_max > 0.0,
+            "y_log=true requires strictly positive anchors; got ({y_min}, {y_nat}, {y_max})");
         if v >= 0.0 { y_nat * (y_max / y_nat).powf(v) }
         else        { y_nat * (y_nat / y_min).powf(v) }
     } else {
