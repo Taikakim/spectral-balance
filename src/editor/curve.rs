@@ -426,7 +426,7 @@ pub fn screen_y_to_physical(
     anchors: (f32, f32, f32),
     rect: Rect,
 ) -> f32 {
-    let (y_min, _, y_max) = anchors;
+    let (y_min, _y_natural, y_max) = anchors;
     let t = ((rect.bottom() - y) / rect.height()).clamp(0.0, 1.0);
     if cfg.y_log {
         let lo = y_min.max(1e-6);
