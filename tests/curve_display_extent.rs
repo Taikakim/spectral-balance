@@ -48,7 +48,7 @@ fn runtime_anchors_substitutes_db_range_for_threshold_idx_0() {
     let cfg = curve_display_config(ModuleType::Dynamics, 0, GainMode::Add);
 
     // db_min=-72, db_max=-3 should override cfg.y_min/y_max for display idx 0.
-    let (y_min, y_natural, y_max) = runtime_anchors(&cfg, 0, 0.0, -72.0, -3.0);
+    let (y_min, y_natural, y_max) = runtime_anchors(&cfg, 0, 0.0, -72.0, -3.0, 10.0, 100.0);
     assert!((y_min - -72.0).abs() < 1e-3, "expected -72, got {y_min}");
     assert!((y_max - -3.0).abs() < 1e-3, "expected -3, got {y_max}");
     // y_natural is the config's neutral (-20 dBFS) — not substituted.
@@ -56,13 +56,13 @@ fn runtime_anchors_substitutes_db_range_for_threshold_idx_0() {
 
     // Display index 13 still substitutes total_history_seconds, unaffected.
     let past_cfg = curve_display_config(ModuleType::Past, 1, GainMode::Add);
-    let (a, b, c) = runtime_anchors(&past_cfg, 13, 4.0, -60.0, 0.0);
+    let (a, b, c) = runtime_anchors(&past_cfg, 13, 4.0, -60.0, 0.0, 10.0, 100.0);
     assert!((c - 4.0).abs() < 1e-3, "history substitution still works, got {c}");
     let _ = (a, b);
 
     // Other display indices pass through unchanged.
     let phase_cfg = curve_display_config(ModuleType::PhaseSmear, 0, GainMode::Add);
-    let (lo, _, hi) = runtime_anchors(&phase_cfg, 7, 0.0, -60.0, 0.0);
+    let (lo, _, hi) = runtime_anchors(&phase_cfg, 7, 0.0, -60.0, 0.0, 10.0, 100.0);
     assert!((lo - 0.0).abs() < 1e-3, "expected lo=0, got {lo}");
     assert!((hi - 200.0).abs() < 1e-3, "expected hi=200, got {hi}");
 }
@@ -122,4 +122,55 @@ fn screen_y_to_physical_inverts_physical_to_y_for_log_and_linear() {
         let back = screen_y_to_physical(y, &mix_cfg, anchors_mix, rect);
         assert!((back - v).abs() < 0.5, "round-trip {v} → {y} → {back}");
     }
+}
+
+#[test]
+fn runtime_anchors_substitutes_attack_ms_for_idx_2() {
+    use spectral_forge::editor::curve::runtime_anchors;
+    use spectral_forge::editor::curve_config::curve_display_config;
+    use spectral_forge::dsp::modules::{ModuleType, GainMode};
+
+    let cfg = curve_display_config(ModuleType::Dynamics, 2, GainMode::Add);
+    // attack_ms = 10 should substitute y_natural; release_ms ignored for idx 2.
+    let (lo, nat, hi) = runtime_anchors(&cfg, 2, 0.0, -60.0, 0.0, 10.0, 100.0);
+    assert!((nat - 10.0).abs() < 1e-3, "y_natural should be attack_ms=10, got {nat}");
+    assert!((lo  -  1.0).abs() < 1e-3);
+    assert!((hi  - 1024.0).abs() < 1e-3);
+}
+
+#[test]
+fn runtime_anchors_substitutes_release_ms_for_idx_3() {
+    use spectral_forge::editor::curve::runtime_anchors;
+    use spectral_forge::editor::curve_config::curve_display_config;
+    use spectral_forge::dsp::modules::{ModuleType, GainMode};
+
+    let cfg = curve_display_config(ModuleType::Dynamics, 3, GainMode::Add);
+    let (_, nat, _) = runtime_anchors(&cfg, 3, 0.0, -60.0, 0.0, 10.0, 250.0);
+    assert!((nat - 250.0).abs() < 1e-3, "y_natural should be release_ms=250, got {nat}");
+}
+
+#[test]
+fn axis_aware_lerp_log_geometric_midpoint() {
+    use spectral_forge::editor::curve::axis_aware_lerp;
+    use spectral_forge::editor::curve_config::curve_display_config;
+    use spectral_forge::dsp::modules::{ModuleType, GainMode};
+
+    let cfg = curve_display_config(ModuleType::Dynamics, 1, GainMode::Add); // y_log=true, ratio
+    let anchors = (1.0_f32, 1.0, 20.0);
+    let mid = axis_aware_lerp(&cfg, anchors, 0.5);
+    let expected = 20f32.powf(0.5); // ≈ 4.472
+    assert!((mid - expected).abs() < 0.01, "geometric mid expected {expected}, got {mid}");
+}
+
+#[test]
+fn axis_aware_lerp_linear_arithmetic_midpoint() {
+    use spectral_forge::editor::curve::axis_aware_lerp;
+    use spectral_forge::editor::curve_config::curve_display_config;
+    use spectral_forge::dsp::modules::{ModuleType, GainMode};
+
+    let cfg = curve_display_config(ModuleType::Dynamics, 5, GainMode::Add); // y_log=false, mix
+    let anchors = (cfg.y_min, cfg.y_natural, cfg.y_max);
+    let mid = axis_aware_lerp(&cfg, anchors, 0.5);
+    let expected = cfg.y_natural + 0.5 * (cfg.y_max - cfg.y_natural);
+    assert!((mid - expected).abs() < 0.01);
 }

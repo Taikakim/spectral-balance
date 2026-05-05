@@ -235,14 +235,14 @@ fn runtime_anchors_substitutes_history_seconds_for_index_13() {
 
     // Past THRESHOLD (display idx 9) — anchors are absolute dBFS, no scaling.
     let cfg = curve_display_config(ModuleType::Past, 2, GainMode::Add);
-    let (lo, nat, hi) = runtime_anchors(&cfg, 9, 4.0, -60.0, 0.0);
+    let (lo, nat, hi) = runtime_anchors(&cfg, 9, 4.0, -60.0, 0.0, 10.0, 100.0);
     assert_eq!(lo, -80.0);
     assert!((nat - (-60.0)).abs() < 1e-6);
     assert_eq!(hi, 0.0);
 
     // Past Age (display idx 13) — anchors are fractions, scaled by total.
     let cfg = curve_display_config(ModuleType::Past, 1, GainMode::Add);
-    let (lo, nat, hi) = runtime_anchors(&cfg, 13, 4.0, -60.0, 0.0);
+    let (lo, nat, hi) = runtime_anchors(&cfg, 13, 4.0, -60.0, 0.0, 10.0, 100.0);
     assert_eq!(lo, 0.0);
     assert!((nat - 2.0).abs() < 1e-6, "y_natural=0.5 × total=4.0 = 2.0 s, got {nat}");
     assert!((hi - 4.0).abs() < 1e-6);

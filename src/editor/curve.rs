@@ -459,12 +459,14 @@ pub fn paint_hover_text(
     db_min: f32,
     db_max: f32,
     total_history_seconds: f32,
+    attack_ms: f32,
+    release_ms: f32,
     sample_rate: f32,
 ) {
     use nih_plug_egui::egui::{FontId, vec2};
     let nyquist = (sample_rate / 2.0).max(20_001.0);
     let freq_hz = screen_to_freq(cursor_pos.x, rect, nyquist);
-    let anchors = runtime_anchors(cfg, display_idx, total_history_seconds, db_min, db_max);
+    let anchors = runtime_anchors(cfg, display_idx, total_history_seconds, db_min, db_max, attack_ms, release_ms);
     let phys    = screen_y_to_physical(cursor_pos.y, cfg, anchors, rect);
     let text = if cfg.y_label.is_empty() {
         format!("{}  /  {:.2}", format_freq_hz(freq_hz), phys)
@@ -544,18 +546,20 @@ pub fn apply_curve_adjustments(
 }
 
 /// Resolve a `CurveDisplayConfig`'s declared anchors `(y_min, y_natural, y_max)`
-/// into runtime physical units. Two display indices need runtime substitution:
-///   - idx 0 (Dynamics threshold dBFS): `(y_min, y_max)` are taken from the
-///     active `db_min`/`db_max` parameters; `y_natural` (-20 dBFS) is preserved.
-///   - idx 13 (Past Age/Delay): all three anchors are scaled by
-///     `total_history_seconds`.
-/// All other indices pass `cfg` anchors through unchanged.
+/// into runtime physical units. Substitutions:
+///   - idx 0  (Dynamics threshold dBFS): y_min, y_max ← (db_min, db_max).
+///   - idx 2  (Attack ms):                y_natural ← attack_ms.
+///   - idx 3  (Release ms):               y_natural ← release_ms.
+///   - idx 13 (Past Age/Delay):           all three scaled by total_history_seconds.
+/// Other indices pass cfg anchors through unchanged.
 pub fn runtime_anchors(
     cfg: &CurveDisplayConfig,
     display_idx: usize,
     total_history_seconds: f32,
     db_min: f32,
     db_max: f32,
+    attack_ms: f32,
+    release_ms: f32,
 ) -> (f32, f32, f32) {
     match display_idx {
         13 => {
@@ -563,7 +567,27 @@ pub fn runtime_anchors(
             (cfg.y_min * scale, cfg.y_natural * scale, cfg.y_max * scale)
         }
         0 => (db_min, cfg.y_natural, db_max),
+        2 => (cfg.y_min, attack_ms, cfg.y_max),
+        3 => (cfg.y_min, release_ms, cfg.y_max),
         _ => (cfg.y_min, cfg.y_natural, cfg.y_max),
+    }
+}
+
+/// Axis-aware lerp from UI parameter spec §2. Linear in physical units when
+/// y_log=false; geometric (log) in physical units when y_log=true.
+#[inline]
+pub fn axis_aware_lerp(
+    cfg: &CurveDisplayConfig,
+    anchors: (f32, f32, f32),
+    v: f32,
+) -> f32 {
+    let (y_min, y_nat, y_max) = anchors;
+    if cfg.y_log {
+        if v >= 0.0 { y_nat * (y_max / y_nat).powf(v) }
+        else        { y_nat * (y_nat / y_min).powf(v) }
+    } else {
+        if v >= 0.0 { y_nat + v * (y_max - y_nat) }
+        else        { y_nat + v * (y_nat - y_min) }
     }
 }
 
@@ -663,6 +687,8 @@ pub fn paint_grid(
     display_idx: usize,
     db_min: f32,
     db_max: f32,
+    attack_ms: f32,
+    release_ms: f32,
     sample_rate: f32,
 ) {
     // UI parameter contract: see docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §4
@@ -674,7 +700,7 @@ pub fn paint_grid(
     // Resolve runtime anchors once for grid-line y mapping.
     // Pass 0.0 for total_history_seconds — the only index that uses it (idx 13) is the Past
     // Age curve; Task 14 will plumb the real value end-to-end.
-    let anchors = runtime_anchors(cfg, display_idx, 0.0, db_min, db_max);
+    let anchors = runtime_anchors(cfg, display_idx, 0.0, db_min, db_max, attack_ms, release_ms);
 
     // Vertical lines at Hz intervals
     for &f in HZ_VERTICALS {
@@ -794,7 +820,7 @@ pub fn paint_response_curve(
 
     // Coloured response line — dashed for attack/release, solid for all others.
     // Tilt, offset, and curvature are applied to the raw gain before display mapping.
-    let anchors = runtime_anchors(cfg, curve_idx, total_history_seconds, db_min, db_max);
+    let anchors = runtime_anchors(cfg, curve_idx, total_history_seconds, db_min, db_max, global_attack_ms, global_release_ms);
     let pts: Vec<Pos2> = (0..n).map(|k| {
         let f_hz = (k as f32 * sample_rate / fft_size as f32).max(20.0);
         let x    = freq_to_x_max(f_hz, max_hz, rect);

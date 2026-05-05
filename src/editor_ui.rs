@@ -414,7 +414,7 @@ pub fn create_editor(
                     );
                     crv::paint_grid(
                         ui.painter(), curve_rect, &grid_cfg, grid_display_idx,
-                        db_min, db_max, sr,
+                        db_min, db_max, atk_ms, rel_ms, sr,
                     );
 
                     // 2. Spectrum + suppression gradient (always shown)
@@ -637,7 +637,7 @@ pub fn create_editor(
                                     );
                                     crv::paint_hover_text(
                                         ui.painter(), hover, curve_rect, disp_curve, &hover_cfg,
-                                        db_min, db_max, total_history_seconds, sr,
+                                        db_min, db_max, total_history_seconds, atk_ms, rel_ms, sr,
                                     );
                                 }
                             }
@@ -1224,7 +1224,9 @@ pub fn create_editor(
                                                     return format!("{:+.2}", v as f32);
                                                 }
                                                 let (y_min, y_nat, y_max) = crv::runtime_anchors(
-                                                    &off_cfg, off_disp_idx, off_total_history_seconds, off_db_min, off_db_max,
+                                                    &off_cfg, off_disp_idx, off_total_history_seconds,
+                                                    off_db_min, off_db_max,
+                                                    off_atk_ms, off_rel_ms,
                                                 );
                                                 let v = v as f32;
                                                 let phys = if v >= 0.0 {
@@ -1232,7 +1234,6 @@ pub fn create_editor(
                                                 } else {
                                                     y_nat + v * (y_nat - y_min)
                                                 };
-                                                let _ = (off_atk_ms, off_rel_ms);
                                                 format!("{:.1} {}", phys, off_cfg.y_label)
                                             })
                                     );
