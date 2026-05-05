@@ -555,10 +555,17 @@ fn default_config() -> CurveDisplayConfig {
     (g + o).clamp(0.0, 1.0)
 }
 
-/// Threshold dBFS: gain=1.0 → -20 dBFS.
-/// off=+1 → g=2.0 → 0 dBFS;  off=-1 → g=-1.0 → -60 dBFS (clamped by audio path).
+/// Dynamics THRESHOLD dBFS: WYSIWYG with log-gain dBFS axis (spec §3.1 of
+/// 2026-05-05-graph-display-correctness.md). Calibrated for canonical
+/// db_min = -60, db_max = 0, neutral -20.
+///   v ≥ 0:  display = -20 + 20·v  → factor 10^(0.3·v)
+///   v < 0:  display = -20 + 40·v  → factor 10^(0.6·v)
+/// (constants = span / (20·60/18 ≈ 66.667): 20/66.667 = 0.3, 40/66.667 = 0.6)
+/// Users who customise db_min lower than -60 see slight drift in the
+/// negative half — see spec §7.4. A future plan adds anchors-aware
+/// wrappers to fix this for non-default db_min.
 #[inline] pub fn off_thresh(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
-    if o >= 0.0 { g + o } else { g + 2.0 * o }
+    if o >= 0.0 { g * 10f32.powf(0.3 * o) } else { g * 10f32.powf(0.6 * o) }
 }
 
 /// Ratio 1–20: gain=1.0 → ratio 1:1.

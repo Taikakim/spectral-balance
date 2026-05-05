@@ -205,6 +205,23 @@ fn axis_aware_lerp_log_negative_half_reaches_y_min() {
 }
 
 #[test]
+fn off_thresh_wysiwyg_at_canonical_db_min() {
+    use spectral_forge::editor::curve::{gain_to_display, runtime_anchors, axis_aware_lerp};
+    use spectral_forge::editor::curve_config::{curve_display_config, off_thresh};
+    use spectral_forge::dsp::modules::{ModuleType, GainMode};
+
+    let cfg = curve_display_config(ModuleType::Dynamics, 0, GainMode::Add);
+    let anchors = runtime_anchors(&cfg, 0, 0.0, -60.0, 0.0, 10.0, 100.0);
+    for &v in &[-1.0_f32, -0.5, 0.0, 0.5, 1.0] {
+        let g_off = off_thresh(1.0, v, anchors);
+        let display_actual = gain_to_display(0, g_off, 10.0, 100.0, -60.0, 0.0, 0.0);
+        let display_expected = axis_aware_lerp(&cfg, anchors, v);
+        assert!((display_actual - display_expected).abs() < 0.5,
+            "v={v}: expected {display_expected:.2}, got {display_actual:.2}");
+    }
+}
+
+#[test]
 fn off_freeze_thresh_wysiwyg_at_v_minus_half() {
     use spectral_forge::editor::curve::{gain_to_display, runtime_anchors, axis_aware_lerp};
     use spectral_forge::editor::curve_config::{curve_display_config, off_freeze_thresh};
