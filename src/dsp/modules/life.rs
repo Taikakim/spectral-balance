@@ -903,70 +903,70 @@ pub fn active_layout(mode_byte: u8) -> super::CurveLayout {
             active: &[0, 4],
             label_overrides: &[],
             help_for: |_| "",
-            mode_overview: None,
+            mode_overview: Some("Viscosity: FTCS power diffusion with reflective boundaries — amplitude-dependent spectral smoothing modelling fluid resistance."),
         },
         1 => super::CurveLayout {
             // SurfaceTension — peak coalescence: amount, threshold gate, reach, mix
             active: &[0, 1, 3, 4],
             label_overrides: &[],
             help_for: |_| "",
-            mode_overview: None,
+            mode_overview: Some("Surface tension: bins above threshold steal magnitude from weaker neighbours within reach, conserving total spectral energy."),
         },
         2 => super::CurveLayout {
             // Crystallization — phase-lock: amount, threshold, speed (LP rate), mix
             active: &[0, 1, 2, 4],
             label_overrides: &[],
             help_for: |_| "",
-            mode_overview: None,
+            mode_overview: Some("Crystallization: sustained tonal bins accumulate a crystallization envelope; AMOUNT scales growth rate, SPEED controls LP decay."),
         },
         3 => super::CurveLayout {
             // Archimedes — global ducking: amount, threshold, mix
             active: &[0, 1, 4],
             label_overrides: &[],
             help_for: |_| "",
-            mode_overview: None,
+            mode_overview: Some("Archimedes: volume-conserving ducking — when total spectral magnitude exceeds capacity, all bins are scaled down proportionally."),
         },
         4 => super::CurveLayout {
             // NonNewtonian — rate-limiting: amount, threshold, mix
             active: &[0, 1, 4],
             label_overrides: &[],
             help_for: |_| "",
-            mode_overview: None,
+            mode_overview: Some("Non-Newtonian: oobleck solidifier — large amplitude velocity suppresses bins; slow changes pass freely."),
         },
         5 => super::CurveLayout {
             // Stiction — static/kinetic friction: amount, threshold, speed, mix
             active: &[0, 1, 2, 4],
             label_overrides: &[],
             help_for: |_| "",
-            mode_overview: None,
+            mode_overview: Some("Stiction: static/kinetic friction — bins below velocity threshold decay to silence; moving bins pass through until re-locked."),
         },
         6 => super::CurveLayout {
             // Yield — fabric tearing + phase scramble: amount, threshold, speed, mix
             active: &[0, 1, 2, 4],
             label_overrides: &[],
             help_for: |_| "",
-            mode_overview: None,
+            mode_overview: Some("Yield: fabric tearing — bins exceeding threshold have phase scrambled and magnitude clamped; tear state heals gradually over time."),
         },
         7 => super::CurveLayout {
             // Capillary — harmonic wicking: amount, threshold, speed, reach, mix
             active: &[0, 1, 2, 3, 4],
             label_overrides: &[],
             help_for: |_| "",
-            mode_overview: None,
+            mode_overview: Some("Capillary: upward harmonic wicking — energy drains from source bins and deposits at harmonics above via three-pass transport."),
         },
         8 => super::CurveLayout {
             // Sandpaper — granular phase friction: amount, threshold, reach, mix
             active: &[0, 1, 3, 4],
             label_overrides: &[],
             help_for: |_| "",
-            mode_overview: None,
+            mode_overview: Some("Sandpaper: granular phase sparks — energy deposits at log-spaced upper bins from each source bin, modelling surface roughness."),
         },
         _ => super::CurveLayout {
             // Brownian (9) and any future modes — amount, mix only
             active: &[0, 4],
             label_overrides: &[],
             help_for: |_| "",
-            mode_overview: None,
+            mode_overview: Some("Brownian: temperature-driven random walk — hot bins receive xorshift32 complex drift; cold bins are skipped."),
         },
     }
 }
