@@ -20,6 +20,7 @@ use crate::dsp::modules::{
 };
 use crate::dsp::phase::PhaseRotator;
 use crate::params::{FxChannelTarget, StereoLink};
+use super::freeze::curve_gain_to_threshold_lin;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PastMode {
@@ -426,8 +427,9 @@ impl PastModule {
             let cryst_bias = cryst.and_then(|c| c.get(k).copied()).unwrap_or(0.0);
             let effective_amount = (bin_amount + cryst_bias).clamp(0.0, 1.0);
             let mag_sq = bins[k].norm_sqr();
-            let thr = threshold.get(k).copied().unwrap_or(0.0);
-            if mag_sq < thr * thr { continue; }
+            let thr_gain = threshold.get(k).copied().unwrap_or(1.0);
+            let thr_lin  = curve_gain_to_threshold_lin(thr_gain);
+            if mag_sq < thr_lin * thr_lin { continue; }
             let age = (time.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0) * max_age).round() as usize;
             let frame = match hist.read_frame(ch, age) { Some(f) => f, None => continue };
             if k >= frame.len() { continue; }
@@ -456,8 +458,9 @@ impl PastModule {
         let mut candidates: SmallVec<[(u32, f32); MAX_SORT_BINS]> = SmallVec::new();
         for k in 0..n {
             let mag_sq = bins[k].norm_sqr();
-            let thr = threshold.get(k).copied().unwrap_or(0.0);
-            if mag_sq < thr * thr { continue; }
+            let thr_gain = threshold.get(k).copied().unwrap_or(1.0);
+            let thr_lin  = curve_gain_to_threshold_lin(thr_gain);
+            if mag_sq < thr_lin * thr_lin { continue; }
             if candidates.len() < MAX_SORT_BINS {
                 candidates.push((k as u32, mag_sq));
             } else if let Some((min_idx, _)) = candidates.iter().enumerate()
@@ -521,8 +524,9 @@ impl PastModule {
         let flux = ctx.bin_physics.map(|p| &p.flux[..]);
         for k in 0..n {
             let mag_sq = bins[k].norm_sqr();
-            let thr = threshold.get(k).copied().unwrap_or(0.0);
-            if mag_sq < thr * thr { continue; }
+            let thr_gain = threshold.get(k).copied().unwrap_or(1.0);
+            let thr_lin  = curve_gain_to_threshold_lin(thr_gain);
+            if mag_sq < thr_lin * thr_lin { continue; }
             let flux_gate = flux.and_then(|f| f.get(k).copied()).unwrap_or(1.0).clamp(0.0, 1.0);
             let bin_amount = amount.get(k).copied().unwrap_or(0.0) * flux_gate;
             if bin_amount < 1e-6 { continue; }
@@ -552,8 +556,9 @@ impl PastModule {
         st.reverse_read_offset = (st.reverse_read_offset + 1) % window;
         for k in 0..n {
             let mag_sq = bins[k].norm_sqr();
-            let thr = threshold.get(k).copied().unwrap_or(0.0);
-            if mag_sq < thr * thr { continue; }
+            let thr_gain = threshold.get(k).copied().unwrap_or(1.0);
+            let thr_lin  = curve_gain_to_threshold_lin(thr_gain);
+            if mag_sq < thr_lin * thr_lin { continue; }
             if k >= frame.len() { continue; }
             let bin_amount = amount.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0);
             let value = frame[k] * bin_amount;

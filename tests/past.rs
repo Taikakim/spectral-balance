@@ -227,6 +227,10 @@ fn reverse_reads_backward_through_history() {
     let mut readings: Vec<f32> = Vec::new();
     for _ in 0..3 {
         let mut bins = vec![Complex::new(0.0, 0.0); 256];
+        // Non-zero input at bin 30 so the new dBFS-aligned gate (mag_sq ≥ 1e-8 at
+        // curve floor) lets the kernel run. With mix=1.0 the kernel still overwrites
+        // bins[30] with the history value, so the assertions below remain valid.
+        bins[30] = Complex::new(0.5, 0.0);
         let mut supp = vec![0.0_f32; 256];
         let mut ctx = ModuleContext::new(48000.0, 2048, 256, 10.0, 100.0, 1.0, 0.5, false, false);
         ctx.history = Some(&h);
@@ -341,4 +345,55 @@ fn set_past_mode_changes_dispatch() {
     m.set_past_sort_key(SortKey::Stability);
     m.set_past_sort_key(SortKey::Area);
     m.set_past_sort_key(SortKey::Decay);
+}
+
+#[test]
+fn past_threshold_at_neutral_gain_gates_by_dbfs_not_raw_magnitude() {
+    // At curve gain=1.0 (neutral), the new gate threshold is -20 dBFS = 0.1 linear.
+    // Under the OLD raw-magnitude gate, bins below mag 1.0 were all gated.
+    // Under the NEW gate, only bins below 0.1 (≈ -20 dBFS) are gated.
+    //
+    // Probe bin: mag ≈ 0.583 — passes the new gate, but would be gated under the old.
+    // We detect "gate ran" by checking that the granular kernel overwrites bins[50]
+    // with the history value (which has zero imaginary part).
+    use spectral_forge::dsp::history_buffer::HistoryBuffer;
+    use spectral_forge::dsp::modules::past::{PastModule, PastMode};
+    use spectral_forge::dsp::modules::{ModuleContext, SpectralModule};
+    use spectral_forge::params::{FxChannelTarget, StereoLink};
+    use num_complex::Complex;
+
+    let n = 256;
+    let mut h = HistoryBuffer::new(1, 64, n);
+    for _ in 0..16 {
+        let mut frame = vec![Complex::new(0.0, 0.0); n];
+        frame[50] = Complex::new(0.5, 0.0); // pure real — distinguishable from input
+        h.write_hop(0, &frame);
+        h.advance_after_all_channels_written();
+    }
+
+    let mut m = PastModule::new(48_000.0, 2048);
+    m.set_mode(PastMode::Granular);
+
+    let mut bins = vec![Complex::new(0.0, 0.0); n];
+    bins[50] = Complex::new(0.5, 0.3); // mag ≈ 0.583, has im=0.3 distinguishing input
+
+    let amount    = vec![1.0_f32; n];
+    let time      = vec![0.0_f32; n]; // sample latest history frame
+    let threshold = vec![1.0_f32; n]; // curve neutral → -20 dBFS gate
+    let spread    = vec![0.0_f32; n];
+    let mix       = vec![1.0_f32; n];
+    let curves: Vec<&[f32]> = vec![&amount, &time, &threshold, &spread, &mix];
+
+    let mut supp = vec![0.0_f32; n];
+    let mut ctx  = ModuleContext::new(48_000.0, 2048, n, 10.0, 100.0, 1.0, 0.5, false, false);
+    ctx.history  = Some(&h);
+
+    m.process(0, StereoLink::Linked, FxChannelTarget::All,
+              &mut bins, None, &curves, &mut supp, None, &ctx);
+
+    // Under NEW dBFS gate: kernel ran and overwrote with history[50] = (0.5, 0.0).
+    // Under OLD raw-mag gate: kernel skipped (mag 0.583 < threshold 1.0), bin stays (0.5, 0.3).
+    // The im component changes from 0.3 to ≈ 0 only if the kernel ran.
+    assert!(bins[50].im.abs() < 1e-3,
+        "bin above -20 dBFS should be granular-replaced (im ≈ 0), got {:?}", bins[50]);
 }
