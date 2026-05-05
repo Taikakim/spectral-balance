@@ -106,9 +106,16 @@ pub fn create_editor(
                         let active_layout_opt: Option<crate::dsp::modules::CurveLayout> =
                             spec.active_layout.map(|f| {
                                 let mode_byte: u8 = match editing_type {
-                                    crate::dsp::modules::ModuleType::Past => {
-                                        params.slot_past_mode.lock()[editing_slot] as u8
-                                    }
+                                    crate::dsp::modules::ModuleType::Past     => params.slot_past_mode.lock()[editing_slot]     as u8,
+                                    crate::dsp::modules::ModuleType::Future   => params.slot_future_mode.lock()[editing_slot]   as u8,
+                                    crate::dsp::modules::ModuleType::Circuit  => params.slot_circuit_mode.lock()[editing_slot]  as u8,
+                                    crate::dsp::modules::ModuleType::Life     => params.slot_life_mode.lock()[editing_slot]     as u8,
+                                    crate::dsp::modules::ModuleType::Modulate => params.slot_modulate_mode.lock()[editing_slot] as u8,
+                                    crate::dsp::modules::ModuleType::Rhythm   => params.slot_rhythm_mode.lock()[editing_slot]   as u8,
+                                    crate::dsp::modules::ModuleType::Punch    => params.slot_punch_mode.lock()[editing_slot]    as u8,
+                                    crate::dsp::modules::ModuleType::Harmony  => params.slot_harmony_mode.lock()[editing_slot]  as u8,
+                                    crate::dsp::modules::ModuleType::Geometry => params.slot_geometry_mode.lock()[editing_slot] as u8,
+                                    crate::dsp::modules::ModuleType::Kinetics => params.slot_kinetics_mode.lock()[editing_slot] as u8,
                                     _ => 0u8,
                                 };
                                 f(mode_byte)
@@ -488,9 +495,16 @@ pub fn create_editor(
                         let active_layout_opt: Option<crate::dsp::modules::CurveLayout> =
                             spec.active_layout.map(|f| {
                                 let mode_byte: u8 = match editing_type {
-                                    crate::dsp::modules::ModuleType::Past => {
-                                        params.slot_past_mode.lock()[editing_slot] as u8
-                                    }
+                                    crate::dsp::modules::ModuleType::Past     => params.slot_past_mode.lock()[editing_slot]     as u8,
+                                    crate::dsp::modules::ModuleType::Future   => params.slot_future_mode.lock()[editing_slot]   as u8,
+                                    crate::dsp::modules::ModuleType::Circuit  => params.slot_circuit_mode.lock()[editing_slot]  as u8,
+                                    crate::dsp::modules::ModuleType::Life     => params.slot_life_mode.lock()[editing_slot]     as u8,
+                                    crate::dsp::modules::ModuleType::Modulate => params.slot_modulate_mode.lock()[editing_slot] as u8,
+                                    crate::dsp::modules::ModuleType::Rhythm   => params.slot_rhythm_mode.lock()[editing_slot]   as u8,
+                                    crate::dsp::modules::ModuleType::Punch    => params.slot_punch_mode.lock()[editing_slot]    as u8,
+                                    crate::dsp::modules::ModuleType::Harmony  => params.slot_harmony_mode.lock()[editing_slot]  as u8,
+                                    crate::dsp::modules::ModuleType::Geometry => params.slot_geometry_mode.lock()[editing_slot] as u8,
+                                    crate::dsp::modules::ModuleType::Kinetics => params.slot_kinetics_mode.lock()[editing_slot] as u8,
                                     _ => 0u8,
                                 };
                                 f(mode_byte)
@@ -1166,9 +1180,16 @@ pub fn create_editor(
                         let active_layout_opt: Option<crate::dsp::modules::CurveLayout> =
                             spec.active_layout.map(|f| {
                                 let mode_byte: u8 = match editing_type {
-                                    crate::dsp::modules::ModuleType::Past => {
-                                        params.slot_past_mode.lock()[editing_slot] as u8
-                                    }
+                                    crate::dsp::modules::ModuleType::Past     => params.slot_past_mode.lock()[editing_slot]     as u8,
+                                    crate::dsp::modules::ModuleType::Future   => params.slot_future_mode.lock()[editing_slot]   as u8,
+                                    crate::dsp::modules::ModuleType::Circuit  => params.slot_circuit_mode.lock()[editing_slot]  as u8,
+                                    crate::dsp::modules::ModuleType::Life     => params.slot_life_mode.lock()[editing_slot]     as u8,
+                                    crate::dsp::modules::ModuleType::Modulate => params.slot_modulate_mode.lock()[editing_slot] as u8,
+                                    crate::dsp::modules::ModuleType::Rhythm   => params.slot_rhythm_mode.lock()[editing_slot]   as u8,
+                                    crate::dsp::modules::ModuleType::Punch    => params.slot_punch_mode.lock()[editing_slot]    as u8,
+                                    crate::dsp::modules::ModuleType::Harmony  => params.slot_harmony_mode.lock()[editing_slot]  as u8,
+                                    crate::dsp::modules::ModuleType::Geometry => params.slot_geometry_mode.lock()[editing_slot] as u8,
+                                    crate::dsp::modules::ModuleType::Kinetics => params.slot_kinetics_mode.lock()[editing_slot] as u8,
                                     _ => 0u8,
                                 };
                                 f(mode_byte)
