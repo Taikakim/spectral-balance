@@ -13,9 +13,9 @@ pub fn curve_to_threshold_db(curve_gain: f32) -> f32 {
 }
 
 /// Map a per-bin threshold curve gain to a linear magnitude floor, matching
-/// the dBFS shown by the UI for display index 9. Compare a bin's magnitude
-/// (not magnitude-squared) directly against the return value, or compare
-/// squared magnitude against `lin * lin`.
+/// the dBFS shown by the UI for threshold curves (display indices 0 and 9).
+/// Compare a bin's magnitude (not magnitude-squared) directly against the
+/// return value, or compare squared magnitude against `lin * lin`.
 #[inline]
 pub fn curve_gain_to_threshold_lin(curve_gain: f32) -> f32 {
     10.0_f32.powf(curve_to_threshold_db(curve_gain) / 20.0)

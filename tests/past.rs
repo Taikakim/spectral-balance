@@ -375,7 +375,8 @@ fn past_threshold_at_neutral_gain_gates_by_dbfs_not_raw_magnitude() {
     m.set_mode(PastMode::Granular);
 
     let mut bins = vec![Complex::new(0.0, 0.0); n];
-    bins[50] = Complex::new(0.5, 0.3); // mag ≈ 0.583, has im=0.3 distinguishing input
+    bins[50]  = Complex::new(0.5, 0.3); // mag ≈ 0.583 → above -20 dBFS gate
+    bins[200] = Complex::new(0.01, 0.0); // mag 0.01 → -40 dBFS, below the gate
 
     let amount    = vec![1.0_f32; n];
     let time      = vec![0.0_f32; n]; // sample latest history frame
@@ -396,4 +397,9 @@ fn past_threshold_at_neutral_gain_gates_by_dbfs_not_raw_magnitude() {
     // The im component changes from 0.3 to ≈ 0 only if the kernel ran.
     assert!(bins[50].im.abs() < 1e-3,
         "bin above -20 dBFS should be granular-replaced (im ≈ 0), got {:?}", bins[50]);
+
+    // Bin 200 was below the -20 dBFS gate; the kernel should hit `continue` before
+    // any write, so the bin must equal its input value exactly.
+    assert!((bins[200].re - 0.01).abs() < 1e-4 && bins[200].im.abs() < 1e-6,
+        "bin below gate should pass through unchanged, got {:?}", bins[200]);
 }
