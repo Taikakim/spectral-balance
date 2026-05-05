@@ -522,7 +522,8 @@ pub fn apply_curve_adjustments(
     tilt: f32,
     offset: f32,
     curvature: f32,
-    offset_fn: fn(f32, f32) -> f32,
+    offset_fn: fn(f32, f32, (f32, f32, f32)) -> f32,
+    anchors: (f32, f32, f32),
     nyquist: f32,
 ) -> f32 {
     // curvature only shapes the tilt; if tilt=0, curvature has no effect.
@@ -541,7 +542,7 @@ pub fn apply_curve_adjustments(
     let sigmoid_shape = s - s_pivot;
     let shape = linear_shape + curvature * (sigmoid_shape - linear_shape);
     let t = tilt * shape;
-    let g_off = offset_fn(gain, offset);
+    let g_off = offset_fn(gain, offset, anchors);
     (g_off * (1.0 + t)).max(0.0)
 }
 
@@ -826,7 +827,7 @@ pub fn paint_response_curve(
     let pts: Vec<Pos2> = (0..n).map(|k| {
         let f_hz = (k as f32 * sample_rate / fft_size as f32).max(20.0);
         let x    = freq_to_x_max(f_hz, max_hz, rect);
-        let adj  = apply_curve_adjustments(gains[k], f_hz, tilt, offset, curvature, cfg.offset_fn, max_hz);
+        let adj  = apply_curve_adjustments(gains[k], f_hz, tilt, offset, curvature, cfg.offset_fn, anchors, max_hz);
         let v    = gain_to_display(curve_idx, adj, global_attack_ms, global_release_ms, db_min, db_max, total_history_seconds);
         let y    = physical_to_y(v, cfg, anchors, rect);
         Pos2::new(x, y)

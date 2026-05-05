@@ -26,7 +26,7 @@ fn module_trait_types_exist() {
     let _ = GainMode::Add;
     let _ = VirtualRowKind::Transient;
     let mut gains = vec![1.0f32; 8];
-    apply_curve_transform(&mut gains, 0.5, 0.1, 0.0, |g, _| g, 44100.0, 2048);
+    apply_curve_transform(&mut gains, 0.5, 0.1, 0.0, |g, _, _| g, (0.0, 0.0, 0.0), 44100.0, 2048);
     assert!(gains.iter().all(|&g| g >= 0.0));
     let m = create_module(ModuleType::Master, 44100.0, 2048);
     assert_eq!(m.module_type(), ModuleType::Master);
@@ -308,13 +308,13 @@ fn offset_calibration_thresh_reaches_endpoints() {
     let cfg = curve_display_config(ModuleType::Dynamics, 0, GainMode::Add);
     let g_neutral = 1.0_f32;
     // off=+1 → g=2.0 (neutral 1.0 + pos_span 1.0)
-    assert!(((cfg.offset_fn)(g_neutral, 1.0) - 2.0).abs() < 1e-5,
-        "thresh off=+1 should give g=2.0, got {}", (cfg.offset_fn)(g_neutral, 1.0));
+    assert!(((cfg.offset_fn)(g_neutral, 1.0, (cfg.y_min, cfg.y_natural, cfg.y_max)) - 2.0).abs() < 1e-5,
+        "thresh off=+1 should give g=2.0, got {}", (cfg.offset_fn)(g_neutral, 1.0, (cfg.y_min, cfg.y_natural, cfg.y_max)));
     // off=-1 → g=-1.0 (neutral 1.0 + 2.0×(-1.0))
-    assert!(((cfg.offset_fn)(g_neutral, -1.0) + 1.0).abs() < 1e-5,
-        "thresh off=-1 should give g=-1.0, got {}", (cfg.offset_fn)(g_neutral, -1.0));
+    assert!(((cfg.offset_fn)(g_neutral, -1.0, (cfg.y_min, cfg.y_natural, cfg.y_max)) + 1.0).abs() < 1e-5,
+        "thresh off=-1 should give g=-1.0, got {}", (cfg.offset_fn)(g_neutral, -1.0, (cfg.y_min, cfg.y_natural, cfg.y_max)));
     // off=0 → identity
-    assert!(((cfg.offset_fn)(g_neutral, 0.0) - g_neutral).abs() < 1e-7,
+    assert!(((cfg.offset_fn)(g_neutral, 0.0, (cfg.y_min, cfg.y_natural, cfg.y_max)) - g_neutral).abs() < 1e-7,
         "thresh off=0 must be identity");
 }
 
@@ -325,15 +325,15 @@ fn offset_calibration_attack_multiplicative() {
     let cfg = curve_display_config(ModuleType::Dynamics, 2, GainMode::Add);
     let g_neutral = 1.0_f32;
     // off=+1 → g×1024
-    let hi = (cfg.offset_fn)(g_neutral, 1.0);
+    let hi = (cfg.offset_fn)(g_neutral, 1.0, (cfg.y_min, cfg.y_natural, cfg.y_max));
     assert!((hi - 1024.0).abs() < 0.1,
         "atk off=+1 should give g=1024.0, got {}", hi);
     // off=-1 → g/1024
-    let lo = (cfg.offset_fn)(g_neutral, -1.0);
+    let lo = (cfg.offset_fn)(g_neutral, -1.0, (cfg.y_min, cfg.y_natural, cfg.y_max));
     assert!((lo - 1.0 / 1024.0).abs() < 1e-5,
         "atk off=-1 should give g=1/1024, got {}", lo);
     // off=0 → identity
-    assert!(((cfg.offset_fn)(g_neutral, 0.0) - g_neutral).abs() < 1e-7,
+    assert!(((cfg.offset_fn)(g_neutral, 0.0, (cfg.y_min, cfg.y_natural, cfg.y_max)) - g_neutral).abs() < 1e-7,
         "atk off=0 must be identity");
 }
 
@@ -344,15 +344,15 @@ fn offset_calibration_ratio_additive() {
     let cfg = curve_display_config(ModuleType::Dynamics, 1, GainMode::Add);
     let g_neutral = 1.0_f32;
     // off=+1 → g=1.0+19.0=20.0 (ratio 20:1 at y_max)
-    let hi = (cfg.offset_fn)(g_neutral, 1.0);
+    let hi = (cfg.offset_fn)(g_neutral, 1.0, (cfg.y_min, cfg.y_natural, cfg.y_max));
     assert!((hi - 20.0).abs() < 1e-4,
         "ratio off=+1 should give g=20.0, got {}", hi);
     // off=-1 → clamped: g stays at 1.0 (ratio can't go below 1:1)
-    let lo = (cfg.offset_fn)(g_neutral, -1.0);
+    let lo = (cfg.offset_fn)(g_neutral, -1.0, (cfg.y_min, cfg.y_natural, cfg.y_max));
     assert!((lo - 1.0).abs() < 1e-5,
         "ratio off=-1 should give g=1.0 (clamped at y_min), got {}", lo);
     // off=0 → identity
-    assert!(((cfg.offset_fn)(g_neutral, 0.0) - g_neutral).abs() < 1e-7,
+    assert!(((cfg.offset_fn)(g_neutral, 0.0, (cfg.y_min, cfg.y_natural, cfg.y_max)) - g_neutral).abs() < 1e-7,
         "ratio off=0 must be identity");
 }
 
@@ -364,15 +364,15 @@ fn offset_calibration_gain_db_multiplicative() {
     let g_neutral = 1.0_f32;
     let factor = 7.943_282_f32;
     // off=+1 → g×factor → +18 dB
-    let hi = (cfg.offset_fn)(g_neutral, 1.0);
+    let hi = (cfg.offset_fn)(g_neutral, 1.0, (cfg.y_min, cfg.y_natural, cfg.y_max));
     assert!((hi - factor).abs() < 1e-4,
         "gain_db off=+1 should give g={}, got {}", factor, hi);
     // off=-1 → g/factor → -18 dB
-    let lo = (cfg.offset_fn)(g_neutral, -1.0);
+    let lo = (cfg.offset_fn)(g_neutral, -1.0, (cfg.y_min, cfg.y_natural, cfg.y_max));
     assert!((lo - 1.0 / factor).abs() < 1e-5,
         "gain_db off=-1 should give g=1/{}, got {}", factor, lo);
     // off=0 → identity
-    assert!(((cfg.offset_fn)(g_neutral, 0.0) - g_neutral).abs() < 1e-7,
+    assert!(((cfg.offset_fn)(g_neutral, 0.0, (cfg.y_min, cfg.y_natural, cfg.y_max)) - g_neutral).abs() < 1e-7,
         "gain_db off=0 must be identity");
 }
 
@@ -387,7 +387,8 @@ fn apply_curve_transform_tilt_scales_with_sample_rate() {
         /* tilt */      1.0,
         /* offset */    0.0,
         /* curvature */ 0.0,
-        |g, _| g,        // identity offset_fn
+        |g, _, _| g,     // identity offset_fn
+        (0.0, 0.0, 0.0),
         /* sample_rate */ 96_000.0,
         /* fft_size */    1024,
     );
@@ -396,9 +397,9 @@ fn apply_curve_transform_tilt_scales_with_sample_rate() {
     // Also verify 44.1 kHz SR produces a different result from 96 kHz SR,
     // confirming the tilt shape varies with Nyquist.
     let mut gains_44 = vec![1.0_f32; 513];
-    apply_curve_transform(&mut gains_44, 1.0, 0.0, 0.0, |g, _| g, 44_100.0, 1024);
+    apply_curve_transform(&mut gains_44, 1.0, 0.0, 0.0, |g, _, _| g, (0.0, 0.0, 0.0), 44_100.0, 1024);
     let mut gains_96 = vec![1.0_f32; 513];
-    apply_curve_transform(&mut gains_96, 1.0, 0.0, 0.0, |g, _| g, 96_000.0, 1024);
+    apply_curve_transform(&mut gains_96, 1.0, 0.0, 0.0, |g, _, _| g, (0.0, 0.0, 0.0), 96_000.0, 1024);
     let differ = gains_44.iter().zip(gains_96.iter()).any(|(a, b)| (a - b).abs() > 1e-4);
     assert!(differ, "tilt shape must differ between 44.1 kHz and 96 kHz sample rates");
 }
@@ -411,7 +412,7 @@ fn offset_identity_at_zero_all_dynamics_curves() {
     for c in 0..6 {
         let cfg = curve_display_config(ModuleType::Dynamics, c, GainMode::Add);
         for &g in &[0.0f32, 0.5, 1.0, 2.0] {
-            let result = (cfg.offset_fn)(g, 0.0);
+            let result = (cfg.offset_fn)(g, 0.0, (cfg.y_min, cfg.y_natural, cfg.y_max));
             assert!((result - g).abs() < 1e-7,
                 "Dynamics curve {} offset_fn(g={}, 0) should be {}, got {}", c, g, g, result);
         }

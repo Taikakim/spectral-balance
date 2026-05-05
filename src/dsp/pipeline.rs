@@ -446,6 +446,11 @@ impl Pipeline {
         let output_gain_db    = params.output_gain.smoothed.next_step(block_size);
         let global_mix        = params.mix.smoothed.next_step(block_size).clamp(0.0, 1.0);
 
+        // Snapshot graph dBFS range — needed for runtime_anchors (display_idx 0 = Dynamics
+        // threshold substitutes db_min/db_max). try_lock with fallback never blocks audio thread.
+        let db_min = params.graph_db_min.try_lock().map(|g| *g).unwrap_or(-100.0);
+        let db_max = params.graph_db_max.try_lock().map(|g| *g).unwrap_or(0.0);
+
         // Snapshot slot module types and gain modes early — needed for offset_fn lookup below.
         // Uses try_lock with fallback so we never block on the audio thread.
         let slot_types_snap: [crate::dsp::modules::ModuleType; 9] = params.slot_module_types.try_lock()
@@ -470,18 +475,27 @@ impl Pipeline {
                 let curvature = params.curvature_param(s, c)
                     .map(|p| p.smoothed.next_step(block_size))
                     .unwrap_or(0.0);
-                // Look up per-curve calibrated offset function (no allocation).
-                let offset_fn = curve_display_config(
-                    slot_types_snap[s],
-                    c,
-                    slot_gain_mode_snap[s],
-                ).offset_fn;
+                // Look up per-curve calibrated offset function and runtime anchors (no allocation).
+                let display_idx = crate::editor::curve::display_curve_idx(
+                    slot_types_snap[s], c, slot_gain_mode_snap[s],
+                );
+                let cfg = curve_display_config(
+                    slot_types_snap[s], c, slot_gain_mode_snap[s],
+                );
+                let anchors = crate::editor::curve::runtime_anchors(
+                    &cfg, display_idx,
+                    /* total_history_seconds */ 0.0,
+                    db_min, db_max,
+                    attack_ms_base, release_ms_base,
+                );
+                let offset_fn = cfg.offset_fn;
                 apply_curve_transform(
                     &mut self.slot_curve_cache[s][c],
                     tilt_norm * TILT_MAX,
                     offset,
                     curvature,
                     offset_fn,
+                    anchors,
                     self.sample_rate,
                     self.fft_size,
                 );

@@ -61,18 +61,19 @@ fn off_amount_norm_clamps_and_passes_zero() {
     use spectral_forge::editor::curve_config::off_amount_norm;
     let approx = |a: f32, b: f32| (a - b).abs() < 1e-6;
     // Identity at o=0
-    assert_eq!(off_amount_norm(0.5, 0.0),  0.5);
-    assert_eq!(off_amount_norm(0.0, 0.0),  0.0);
-    assert_eq!(off_amount_norm(1.0, 0.0),  1.0);
+    let a = (0.0, 0.0, 0.0);
+    assert_eq!(off_amount_norm(0.5, 0.0,  a),  0.5);
+    assert_eq!(off_amount_norm(0.0, 0.0,  a),  0.0);
+    assert_eq!(off_amount_norm(1.0, 0.0,  a),  1.0);
     // Linear add (use approx — f32 addition isn't exact)
-    assert!(approx(off_amount_norm(0.3, 0.4),  0.7));
-    assert!(approx(off_amount_norm(0.5, -0.3), 0.2));
+    assert!(approx(off_amount_norm(0.3,  0.4, a),  0.7));
+    assert!(approx(off_amount_norm(0.5, -0.3, a),  0.2));
     // Clamps at 0 and 1
-    assert_eq!(off_amount_norm(0.5,  0.7), 1.0);
-    assert_eq!(off_amount_norm(0.5, -0.7), 0.0);
+    assert_eq!(off_amount_norm(0.5,  0.7, a), 1.0);
+    assert_eq!(off_amount_norm(0.5, -0.7, a), 0.0);
     // Beyond range still clamps
-    assert_eq!(off_amount_norm(2.0,  0.5), 1.0);
-    assert_eq!(off_amount_norm(-1.0, 0.0), 0.0);
+    assert_eq!(off_amount_norm(2.0,  0.5, a), 1.0);
+    assert_eq!(off_amount_norm(-1.0, 0.0, a), 0.0);
 }
 
 #[test]
@@ -126,17 +127,18 @@ fn past_config_returns_calibrated_display_per_curve() {
     //   off_freeze_thresh  -0.7         0.8         2.5    (-4× on neg, 1× on pos)
     //   off_identity        0.5         0.5         2.0
     let approx = |a: f32, b: f32| (a - b).abs() < 1e-5;
-    let is_mix = |f: fn(f32, f32) -> f32| {
-        approx(f(0.5, -0.3), 0.2) && approx(f(0.5, 0.3), 0.5) && approx(f(2.0, 0.5), 2.0)
+    let sentinel = (0.0_f32, 0.0_f32, 0.0_f32);
+    let is_mix = |f: fn(f32, f32, (f32, f32, f32)) -> f32| {
+        approx(f(0.5, -0.3, sentinel), 0.2) && approx(f(0.5, 0.3, sentinel), 0.5) && approx(f(2.0, 0.5, sentinel), 2.0)
     };
-    let is_amount_norm = |f: fn(f32, f32) -> f32| {
-        approx(f(0.5, -0.3), 0.2) && approx(f(0.5, 0.3), 0.8) && approx(f(2.0, 0.5), 1.0)
+    let is_amount_norm = |f: fn(f32, f32, (f32, f32, f32)) -> f32| {
+        approx(f(0.5, -0.3, sentinel), 0.2) && approx(f(0.5, 0.3, sentinel), 0.8) && approx(f(2.0, 0.5, sentinel), 1.0)
     };
-    let is_freeze_thresh = |f: fn(f32, f32) -> f32| {
-        approx(f(0.5, -0.3), -0.7) && approx(f(0.5, 0.3), 0.8) && approx(f(2.0, 0.5), 2.5)
+    let is_freeze_thresh = |f: fn(f32, f32, (f32, f32, f32)) -> f32| {
+        approx(f(0.5, -0.3, sentinel), -0.7) && approx(f(0.5, 0.3, sentinel), 0.8) && approx(f(2.0, 0.5, sentinel), 2.5)
     };
-    let is_identity = |f: fn(f32, f32) -> f32| {
-        approx(f(0.5, -0.3), 0.5) && approx(f(0.5, 0.3), 0.5) && approx(f(2.0, 0.5), 2.0)
+    let is_identity = |f: fn(f32, f32, (f32, f32, f32)) -> f32| {
+        approx(f(0.5, -0.3, sentinel), 0.5) && approx(f(0.5, 0.3, sentinel), 0.5) && approx(f(2.0, 0.5, sentinel), 2.0)
     };
 
     // AMOUNT (curve 0) — % units, neutral at 100, off_mix

@@ -891,7 +891,8 @@ pub fn apply_curve_transform(
     tilt: f32,
     offset: f32,
     curvature: f32,
-    offset_fn: fn(f32, f32) -> f32,
+    offset_fn: fn(f32, f32, (f32, f32, f32)) -> f32,
+    anchors: (f32, f32, f32),
     sample_rate: f32,
     fft_size: usize,
 ) {
@@ -915,7 +916,7 @@ pub fn apply_curve_transform(
         let sigmoid_shape = s - s_pivot;
         let shape = linear_shape + curvature * (sigmoid_shape - linear_shape);
         let t = tilt * shape;
-        let g_off = offset_fn(*g, offset);
+        let g_off = offset_fn(*g, offset, anchors);
         *g = (g_off * (1.0 + t)).max(0.0);
     }
 }

@@ -24,7 +24,7 @@ pub struct CurveDisplayConfig {
     /// returns the transformed gain.  Must be a plain fn pointer (no closure captures) so it
     /// is zero-cost and safe to call on the audio thread.
     /// Contract: offset_fn(g, 0.0) == g for all g.
-    pub offset_fn:  fn(f32, f32) -> f32,
+    pub offset_fn:  fn(f32, f32, (f32, f32, f32)) -> f32,
     // NOTE: gain_to_phys is intentionally absent — unit conversion requires context
     // (db_min/db_max, global_attack_ms etc.) that a bare fn(f32)->f32 cannot carry.
     // Conversion logic lives in gain_to_display() / screen_y_to_physical() in curve.rs.
@@ -551,82 +551,82 @@ fn default_config() -> CurveDisplayConfig {
 /// history buffer's `capacity_frames`).
 /// See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §7 and
 /// docs/superpowers/specs/2026-05-04-past-module-ux-design.md §5.
-#[inline] pub fn off_amount_norm(g: f32, o: f32) -> f32 {
+#[inline] pub fn off_amount_norm(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     (g + o).clamp(0.0, 1.0)
 }
 
 /// Threshold dBFS: gain=1.0 → -20 dBFS.
 /// off=+1 → g=2.0 → 0 dBFS;  off=-1 → g=-1.0 → -60 dBFS (clamped by audio path).
-#[inline] pub fn off_thresh(g: f32, o: f32) -> f32 {
+#[inline] pub fn off_thresh(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     if o >= 0.0 { g + o } else { g + 2.0 * o }
 }
 
 /// Ratio 1–20: gain=1.0 → ratio 1:1.
 /// off=+1 → g=20.0 → ratio 20:1; off=-1 → clamped at y_min (ratio can't go below 1).
-#[inline] pub fn off_ratio(g: f32, o: f32) -> f32 {
+#[inline] pub fn off_ratio(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     if o >= 0.0 { g + 19.0 * o } else { g }
 }
 
 /// Attack/Release multiplier: multiplicative with factor 1024.
 /// off=+1 → g×1024; off=-1 → g/1024.
-#[inline] pub fn off_atk_rel(g: f32, o: f32) -> f32 {
+#[inline] pub fn off_atk_rel(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     g * 1024.0_f32.powf(o)
 }
 
 /// Knee dB: gain=1.0 → 6 dB knee (neutral).
 /// off=+1 → g=8.0 → 48 dB; off=-1 → g=0.0 → 0 dB.
-#[inline] pub fn off_knee(g: f32, o: f32) -> f32 {
+#[inline] pub fn off_knee(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     if o >= 0.0 { g + 7.0 * o } else { g + o }
 }
 
 /// Mix %: gain=1.0 → 100% (at y_max); off=-1 → g=0.0 → 0%.
-#[inline] pub fn off_mix(g: f32, o: f32) -> f32 {
+#[inline] pub fn off_mix(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     if o >= 0.0 { g } else { g + o }
 }
 
 /// Gain dB (Add/Subtract): multiplicative with factor 10^(18/20) ≈ 7.9433.
 /// off=+1 → g×7.9433 → +18 dB; off=-1 → g/7.9433 → -18 dB.
-#[inline] pub fn off_gain_db(g: f32, o: f32) -> f32 {
+#[inline] pub fn off_gain_db(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     g * 7.943_282_f32.powf(o)
 }
 
 /// Gain Pull/Match (%): gain=1.0 → 100% dry (at y_max); off=-1 → 0%.
-#[inline] pub fn off_gain_pct(g: f32, o: f32) -> f32 {
+#[inline] pub fn off_gain_pct(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     if o >= 0.0 { g } else { g + o }
 }
 
 /// Amount 0–200%: gain=1.0 → 100% (neutral); pos_span=1.0, neg_span=1.0.
 /// off=+1 → g=2.0 → 200%; off=-1 → g=0.0 → 0%.
-#[inline] pub fn off_amount_200(g: f32, o: f32) -> f32 {
+#[inline] pub fn off_amount_200(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     g + o
 }
 
 /// Freeze LENGTH: multiplicative, factor = 4000/500 = 8.0.
 /// off=+1 → g×8 → 4000 ms; off=-1 → g/8 → ~62 ms.
-#[inline] pub fn off_freeze_length(g: f32, o: f32) -> f32 {
+#[inline] pub fn off_freeze_length(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     g * 8.0_f32.powf(o)
 }
 
 /// Freeze THRESHOLD dBFS: same formula as dynamics threshold but range is -80–0 dBFS.
 /// gain=1.0 → -20 dBFS; off=+1 → g=2.0 → 0 dBFS; off=-1 → g=-3.0 → -80 dBFS (clamped).
 /// neg_span_abs = 4.0 so gain goes from 1.0 to -3.0 (very negative → clamped to -80 dBFS).
-#[inline] pub fn off_freeze_thresh(g: f32, o: f32) -> f32 {
+#[inline] pub fn off_freeze_thresh(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     if o >= 0.0 { g + o } else { g + 4.0 * o }
 }
 
 /// Portamento/SC-smooth ms: multiplicative, factor = 1000/200 = 5.0.
 /// gain=1.0 → 200 ms; off=+1 → g×5 → 1000 ms; off=-1 → g/5 → ~40 ms.
-#[inline] pub fn off_portamento(g: f32, o: f32) -> f32 {
+#[inline] pub fn off_portamento(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     g * 5.0_f32.powf(o)
 }
 
 /// Resistance 0–2: gain=1.0 → 1.0 (neutral); additive, pos_span=1.0, neg_span=1.0.
 /// off=+1 → g=2.0 → 2.0; off=-1 → g=0.0 → 0.0.
-#[inline] pub fn off_resistance(g: f32, o: f32) -> f32 {
+#[inline] pub fn off_resistance(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     g + o
 }
 
 /// Identity: no offset effect. Used for curves with unclear calibration and default_config.
-#[inline] pub fn off_identity(g: f32, _o: f32) -> f32 {
+#[inline] pub fn off_identity(g: f32, _o: f32, _anchors: (f32, f32, f32)) -> f32 {
     g
 }
