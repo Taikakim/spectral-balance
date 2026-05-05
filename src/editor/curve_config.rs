@@ -86,7 +86,8 @@ fn dynamics_config(i: usize) -> CurveDisplayConfig {
         2 | 3 => CurveDisplayConfig {
             y_label: "ms", y_min: 1.0, y_max: 1024.0, y_log: true,
             grid_lines: &[(4.0, "4ms"), (16.0, "16ms"), (64.0, "64ms"), (256.0, "256ms")],
-            // gain=1.0 → global_ms × 1; multiplicative: off=+1 → g×1024, off=-1 → g/1024
+            // gain=1.0 → attack_ms / release_ms (substituted at runtime via runtime_anchors).
+            // Geometric lerp (off_atk_rel uses runtime y_natural, see curve_config.rs).
             y_natural: 1.0,
             offset_fn: off_atk_rel,
         },
