@@ -1102,3 +1102,87 @@ impl SpectralModule for ModulateModule {
     #[cfg(any(test, feature = "probe"))]
     fn last_probe(&self) -> crate::dsp::modules::ProbeSnapshot { self.last_probe }
 }
+
+/// Per-mode `CurveLayout` for Modulate.
+///
+/// Curves: 0=AMOUNT, 1=REACH, 2=RATE, 3=THRESH, 4=AMPGATE, 5=MIX.
+///
+/// Each mode is inspected against its kernel:
+/// - PhasePhaser:   reads 0, 2, 3, 4, 5 — no REACH(1).
+/// - BinSwapper:    reads 0, 1, 3, 5     — no RATE(2), no AMPGATE(4).
+/// - RmFmMatrix:    reads 0, 1, 3, 5     — no RATE(2), no AMPGATE(4).
+/// - DiodeRm:       reads 0, 1, 3, 5     — no RATE(2), no AMPGATE(4).
+/// - GroundLoop:    reads 0, 1, 2, 3, 5  — no AMPGATE(4).
+/// - GravityPhaser: reads 0, 1, 3, 4, 5  — RATE(2) marked `_rate_c` (unused).
+/// - PllTear:       reads 0, 1, 2, 3, 5  — smoothed[4]=AMPGATE unused in kernel.
+/// - FmNetwork:     reads 0, 1, 4, 5     — RATE(2) and THRESH(3) not used.
+///
+/// Wired via `active_layout: Some(crate::dsp::modules::modulate::active_layout)` on MODULATE.
+pub fn active_layout(mode_byte: u8) -> super::CurveLayout {
+    match mode_byte {
+        0 => super::CurveLayout {
+            // PhasePhaser: animated phase rotation. RATE drives LFO speed; THRESH and
+            // AMPGATE gate the rotation; REACH not read.
+            active:          &[0, 2, 3, 4, 5],
+            label_overrides: &[],
+            help_for:        |_| "",
+            mode_overview:   Some("Phase Phaser: per-bin animated phase rotation driven by RATE; AMPGATE and THRESH gate the rotation."),
+        },
+        1 => super::CurveLayout {
+            // BinSwapper: displaces bin energy by a REACH offset with threshold gate.
+            // RATE(2) and AMPGATE(4) not read.
+            active:          &[0, 1, 3, 5],
+            label_overrides: &[],
+            help_for:        |_| "",
+            mode_overview:   Some("Bin Swapper: swaps bin energy with a neighbour offset by REACH; THRESH gates the swap."),
+        },
+        2 => super::CurveLayout {
+            // RmFmMatrix: ring-mod + frequency-mod from sidechain magnitude.
+            // RATE(2) and AMPGATE(4) not read.
+            active:          &[0, 1, 3, 5],
+            label_overrides: &[],
+            help_for:        |_| "",
+            mode_overview:   Some("RM/FM Matrix: AMOUNT blends ring-mod vs FM; REACH scales RM/FM depth; THRESH gates on sidechain level."),
+        },
+        3 => super::CurveLayout {
+            // DiodeRm: amplitude-gated leaky ring mod. RATE(2) and AMPGATE(4) not read.
+            active:          &[0, 1, 3, 5],
+            label_overrides: &[],
+            help_for:        |_| "",
+            mode_overview:   Some("Diode RM: leaky ring-mod with mismatch-driven carrier bleed; THRESH is the diode closure level."),
+        },
+        4 => super::CurveLayout {
+            // GroundLoop: mains-hum injection + sag-gated harmonic spray.
+            // AMPGATE(4) not read.
+            active:          &[0, 1, 2, 3, 5],
+            label_overrides: &[],
+            help_for:        |_| "",
+            mode_overview:   Some("Ground Loop: injects mains-hum harmonics; RATE selects 50/60 Hz; REACH sets harmonic count; THRESH is sag gate."),
+        },
+        5 => super::CurveLayout {
+            // GravityPhaser: RATE marked `_rate_c` (unused; reserved for SC-positioned
+            // animation). Reads AMOUNT, REACH, THRESH (amplitude gate threshold),
+            // AMPGATE (magnitude gate strength), MIX.
+            active:          &[0, 1, 3, 4, 5],
+            label_overrides: &[],
+            help_for:        |_| "",
+            mode_overview:   Some("Gravity Phaser: per-bin phase momentum pulled toward gravity wells; REACH sets well width; AMPGATE gates by amplitude."),
+        },
+        6 => super::CurveLayout {
+            // PllTear: 2nd-order PI PLL bank; lock-loss emits chaotic phase noise.
+            // smoothed[4]=AMPGATE not consumed inside apply_pll_tear.
+            active:          &[0, 1, 2, 3, 5],
+            label_overrides: &[],
+            help_for:        |_| "",
+            mode_overview:   Some("PLL Tear: per-bin 2nd-order PI PLL; bins that lose lock emit chaotic phase rotations; RATE sets loop bandwidth."),
+        },
+        _ => super::CurveLayout {
+            // FmNetwork: partial detection uses REACH as magnitude threshold; partial-pair
+            // AM modulation uses COEFFICIENT(4) for depth; RATE(2) and THRESH(3) not read.
+            active:          &[0, 1, 4, 5],
+            label_overrides: &[],
+            help_for:        |_| "",
+            mode_overview:   Some("FM Network: detects top-16 spectral partials and applies partial-pair AM modulation with sideband emission."),
+        },
+    }
+}

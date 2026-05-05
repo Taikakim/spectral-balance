@@ -80,6 +80,32 @@ fn future_active_layout_matches_kernel_signatures() {
         "PreEcho should expose all 5 curves including THRESHOLD");
 }
 
+/// Modulate has 8 modes. Curves: 0=AMOUNT, 1=REACH, 2=RATE, 3=THRESH, 4=AMPGATE, 5=MIX.
+/// Each mode reads a distinct subset of curves.
+#[test]
+fn modulate_active_layout_matches_kernel_signatures() {
+    use spectral_forge::dsp::modules::modulate::ModulateMode;
+
+    let layout_fn = module_spec(ModuleType::Modulate).active_layout
+        .expect("Modulate should declare an active_layout");
+
+    let modes_and_active: &[(ModulateMode, &[u8])] = &[
+        (ModulateMode::PhasePhaser,  &[0, 2, 3, 4, 5]),
+        (ModulateMode::BinSwapper,   &[0, 1, 3, 5]),
+        (ModulateMode::RmFmMatrix,   &[0, 1, 3, 5]),
+        (ModulateMode::DiodeRm,      &[0, 1, 3, 5]),
+        (ModulateMode::GroundLoop,   &[0, 1, 2, 3, 5]),
+        (ModulateMode::GravityPhaser,&[0, 1, 3, 4, 5]),
+        (ModulateMode::PllTear,      &[0, 1, 2, 3, 5]),
+        (ModulateMode::FmNetwork,    &[0, 1, 4, 5]),
+    ];
+    for (mode, expected) in modes_and_active {
+        let layout = layout_fn(*mode as u8);
+        assert_eq!(layout.active, *expected,
+            "Modulate {:?}: expected active {:?}, got {:?}", mode, expected, layout.active);
+    }
+}
+
 /// Rhythm has 3 modes. Curves: 0=AMOUNT, 1=DIVISION, 2=ATTACK_FADE, 3=TARGET_PHASE, 4=MIX.
 /// Euclidean and Arpeggiator do not read TARGET_PHASE(3); PhaseReset reads all 5.
 #[test]
