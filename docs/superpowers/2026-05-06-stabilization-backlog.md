@@ -81,7 +81,22 @@ Six sub-projects with critical-path ordering:
 - 2026-05-06: Empty-slot bypass = "wet path transparent enough you can't tell wet from dry" (does NOT skip STFT — Bitwig's bypass button is the host-level escape).
 - 2026-05-06: this tracker doc serves as the single source of truth across sessions and context resets.
 
+## Phase 1 findings (committed in 41946be)
+
+### Routing matrix break
+- **Site:** `src/editor/fx_matrix_grid.rs:217` — DragValue mutates `&mut route_matrix.send[row][col]` directly. Second site at `fx_matrix_grid.rs:307` for virtual rows.
+- **Why audio doesn't see edits:** pipeline reads `params.matrix_cell(r, col).smoothed.next()` (FloatParam), not the Arc<Mutex<RouteMatrix>> field. The two stores never sync.
+- **Fix shape:** rewire both DragValue sites to call `setter.set_parameter(matrix_cell(col, row), value)`. Caller passes ParamSetter into `paint_fx_matrix_grid`.
+
+### Smearing-over-time
+- **Site:** `prev_unwrapped_phase[ch]` and `total_hops_per_ch` in `src/dsp/pipeline.rs:1084-1116`. The Phase-Locked Phase Vocoder (PLPV) accumulator.
+- **Why it accumulates:** PLPV is enabled by default. Every hop adds `two_pi_hop_over_n × k × N` to `prev_unwrapped_phase[ch]`. At bin k=1024, FFT=2048, OVERLAP=4, this reaches ~2.78×10^8 radians after ~30 minutes — beyond f32 fractional precision (16 radians/ULP). `damp_low_energy_bins` blends low-energy bins toward the now-quantization-corrupted expected phase. Result: progressive smear at high bins. The code comment at pipeline.rs:1099 acknowledges "Acceptable f32-precision loss after ~30 h" — but in practice it shows up much sooner on certain content.
+- **Hint match:** matches the user's "look at the code that carries silently over the physics etc bin data first" direction — the `prev_unwrapped_phase` IS bin-data state that carries silently.
+- **Power-cycle clears it:** `Pipeline::new()` resets both counters to zero. Matches user observation.
+- **Fix shape (chosen for Task 11):** Option A — periodic reset of `prev_unwrapped_phase[ch].fill(0.0)` and `total_hops_per_ch[ch] = 0` every M=4096 hops. Bounded values, no drift. One-hop phase discontinuity at reset is inaudible at the blend weights PLPV uses.
+
 ## Update log
 
 - 2026-05-06: doc created with full backlog, sub-project decomposition, Sub-project A Phase plan, dev-install workflow facts.
 - 2026-05-06: spec `2026-05-06-stabilization-sweep.md` written and approved by user with two refinements: (a) master clipper gets a UI toggle button (default on), not always-on; (b) smearing-over-time is a recent regression — user directs Phase 1 to start with BinPhysics carryover audit. Spec §5.1 marks BinPhysics as the PRIMARY HYPOTHESIS and flags `prev_mags` at fx_matrix.rs:562 as a specific suspect (unconditional update, should be gated on `bin_physics_in_use`).
+- 2026-05-06: Phase 1 diagnostics committed (`41946be`). Routing break confirmed at `fx_matrix_grid.rs:217` AND `:307`. Smearing accumulator identified as PLPV `prev_unwrapped_phase` + `total_hops_per_ch` in pipeline.rs:1084-1116 (NOT BinPhysics — my earlier hypothesis was wrong; user's hint about "carries silently over... bin data" still matches since prev_unwrapped_phase IS per-bin state). Fix shape locked: periodic reset every 4096 hops.
