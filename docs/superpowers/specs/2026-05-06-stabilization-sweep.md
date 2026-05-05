@@ -47,12 +47,17 @@ Phase 1 deliverable for routing: 1-paragraph report saying "the break is at <sit
 
 Symptom: wet path with no modules loaded smears progressively over minutes; clears on plugin power-cycle.
 
+**User-supplied directive:** the smearing is a recent regression — the plugin worked perfectly previously. The user's strong hint: "look at the code that carries silently over the physics etc bin data first." Phase 1 prioritizes the BinPhysics audit (§5.1 candidate) before any other.
+
 Diagnostic recipe:
 
-1. Audio source: continuous spectrally-rich content (pink noise or a music loop). FFT size 2048. All slots Empty. Mix=100% wet. Record 60s; spectrogram reveals the smear character (low-pass drift, phase-coherence loss, additive ringing, amplitude growth).
-2. State-cleanup probes (under `#[cfg(feature = "probe")]`): per-block log of magnitudes for each candidate state container — `BinPhysics` buffers; history buffer offsets; STFT helper OLA accumulator; modulation ring states; `slot_curve_cache`; `prev_mags` in FxMatrix; any `Vec<f32>`/`Vec<Complex<f32>>` member in pipeline.rs reused across blocks.
-3. Sub-binary search: zero out each candidate at block start and re-run the recipe. The container that, when neutralized, makes the smear stop is the culprit.
-4. Phase 1 deliverable: (a) reproduction recipe, (b) identified accumulator, (c) why it accumulates (math + control flow), (d) proposed fix shape (e.g., reset on every block, gate on `is_module_loaded`, bound the IIR).
+1. **Step 1 — BinPhysics audit (start here).** Read every `if self.bin_physics_in_use` branch in `fx_matrix.rs` and `pipeline.rs`. Read every site that writes to `slot_phys`, `mix_phys`, or `prev_mags`. Identify any unconditional update — particularly `prev_mags` at line 562, `slot_phys` snapshots, and `mix_phys` reset sites. Hypothesis to verify: a state container that's *meant* to be gated by `bin_physics_in_use` is being updated unconditionally, leaking energy across blocks.
+2. **Step 2 — Reproduction recipe.** Audio source: continuous pink noise or music loop. FFT 2048. All slots Empty. Mix=100% wet. Record 60s. Compare spectrogram start-vs-end to characterize the smear (low-pass drift, phase-coherence loss, additive ringing, amplitude growth).
+3. **Step 3 — State-cleanup probes** (under `#[cfg(feature = "probe")]`) — only if step 1 doesn't pin it: per-block log of magnitudes for each candidate state container — history buffer offsets; STFT helper OLA accumulator; modulation ring states; `slot_curve_cache`; any `Vec<f32>`/`Vec<Complex<f32>>` member in pipeline.rs reused across blocks.
+4. **Step 4 — Sub-binary search:** zero out each candidate at block start and re-run the recipe. The container that, when neutralized, makes the smear stop is the culprit.
+5. **Step 5 — Phase 1 deliverable:** (a) reproduction recipe, (b) identified accumulator, (c) why it accumulates (math + control flow), (d) proposed fix shape (e.g., reset on every block, gate on `is_module_loaded`, bound the IIR).
+
+**Bisect helper.** Recent commits since the user reported the plugin worked perfectly: `git log --oneline --since='2026-05-04'` lists candidates. If Phase 1 step 1 doesn't pin the cause via static audit, an audio-rendered bisect against a known-good audio output (using the `audio_render` test infrastructure) can identify the introducing commit. This is a fallback if static audit fails.
 
 ### 2.3 What Phase 1 does NOT do
 
@@ -144,9 +149,11 @@ If the existing algorithm fails this test (Phase 3 verifies), find why and fix �
 
 ### 4.4 Clipper toggle and threshold
 
-**Decision: always on, fixed threshold, no UI toggle.** The clipper is a safety mechanism, not a creative effect. Threshold = 4.0 magnitude (12 dB above unity), almost always inactive — only catches runaway buffers (NaN, huge magnitudes from feedback bug).
+**Toggle:** a `master_clip_enabled: BoolParam` (default `true`) added to `params.rs`. UI: a button in the master output row (alongside the existing MIX/IN/OUT/AUTO_MK/DELTA controls in `editor_ui.rs`). When the toggle is off, the clipper code is skipped entirely — bit-perfect passthrough.
 
-A future task can add a UI toggle if the user requests one. Out of scope here.
+**Threshold:** fixed at 4.0 magnitude (12 dB above unity). Almost always inactive at sane levels — only catches runaway buffers (NaN, feedback-bug huge magnitudes). A user-controllable threshold knob is out of scope here.
+
+**Default:** clipper enabled (the safety net is on by default). The user can switch it off if they need to verify a feedback bug is happening upstream rather than being absorbed by the clipper.
 
 ### 4.5 Empty-slot bypass interaction
 
@@ -165,9 +172,17 @@ With threshold 4.0 and STFT-roundtrip artifacts staying under unity magnitude, t
 
 Shape determined by Phase 1's report. Candidate fix shapes per the state container Phase 1 names:
 
-### 5.1 If the accumulator is `BinPhysics`
+### 5.1 If the accumulator is `BinPhysics` (PRIMARY HYPOTHESIS per user)
 
-`bin_physics_in_use` flag exists in `FxMatrix`. Verify it's `false` when no slot has `writes_bin_physics: true` AND no slot has any `needs_*` flag. When `false`, every BinPhysics block-level update should skip — including the per-slot `mix_phys.mix_from(...)` and the master accumulator at line 691. Phase 4 audits each `if self.bin_physics_in_use` branch and confirms the false-branch is truly inert. If state still leaks (containers keep last values across blocks even when conditional skips updates), add a `clear_when_unused()` call at the top of `process_hop` when `bin_physics_in_use` is false.
+User flagged this as the most likely cause: "look at the code that carries silently over the physics etc bin data first." Phase 1 starts here.
+
+`bin_physics_in_use` flag exists in `FxMatrix`. Verify it's `false` when no slot has `writes_bin_physics: true` AND no slot has any `needs_*` flag. When `false`, every BinPhysics block-level update should skip — including the per-slot `mix_phys.mix_from(...)` and the master accumulator at line 691.
+
+Phase 4 audits each `if self.bin_physics_in_use` branch and confirms the false-branch is truly inert.
+
+If state still leaks (containers keep last values across blocks even when conditional skips updates), add a `clear_when_unused()` call at the top of `process_hop` when `bin_physics_in_use` is false.
+
+**Specific suspect already identified by the spec author:** `prev_mags` updates UNCONDITIONALLY at `fx_matrix.rs:562`, regardless of `bin_physics_in_use`. With no modules using physics, prev_mags shouldn't accumulate. Wrapping the update in `if self.bin_physics_in_use` is a 1-line fix candidate worth verifying first. Likewise audit the `for u in 0..s { ... mix_phys.mix_from(&self.slot_phys[u], send, num_bins); }` blocks — if `slot_phys[u]` carries stale values from a prior session/preset, those leak into mix_phys via the active-physics path.
 
 ### 5.2 If the accumulator is the STFT helper's OLA buffer
 
@@ -271,9 +286,9 @@ If Phase 1 lands on STFT-intrinsic smear, the α-vs-β decision returns to the u
 
 §4.3 keeps existing tanh/cubic. Replacing with a different soft-clip family is out of scope. Algorithm bug fixes (zero-in-zero-out) ARE in scope per §4.3.
 
-### 7.7 Master clipper UI controls
+### 7.7 Master clipper threshold knob
 
-Always on, fixed threshold per §4.4. Toggle/threshold knob is a future task.
+Per §4.4 the toggle button IS in scope. A user-controllable threshold value (variable instead of fixed at 4.0) is out of scope here.
 
 ---
 

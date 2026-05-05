@@ -84,3 +84,4 @@ Six sub-projects with critical-path ordering:
 ## Update log
 
 - 2026-05-06: doc created with full backlog, sub-project decomposition, Sub-project A Phase plan, dev-install workflow facts.
+- 2026-05-06: spec `2026-05-06-stabilization-sweep.md` written and approved by user with two refinements: (a) master clipper gets a UI toggle button (default on), not always-on; (b) smearing-over-time is a recent regression — user directs Phase 1 to start with BinPhysics carryover audit. Spec §5.1 marks BinPhysics as the PRIMARY HYPOTHESIS and flags `prev_mags` at fx_matrix.rs:562 as a specific suspect (unconditional update, should be gated on `bin_physics_in_use`).
