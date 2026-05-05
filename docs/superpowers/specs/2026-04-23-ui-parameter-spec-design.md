@@ -55,6 +55,19 @@ Other module types (Freeze, PhaseSmear, Contrast, Gain, MidSide, TsSplit, Harmon
 their own match arms in `curve_display_config()`. Any new module MUST add its arm there before
 any display code is written.
 
+### §1.4 Threshold dBFS curves
+
+Curves whose physical unit is dBFS and whose neutral is `−20 dBFS` (display
+indices 0 and 9) use a logarithmic gain→dBFS mapping:
+
+    threshold_db = clamp(-20 + 20·log10(gain) · (60/18), y_min, y_max)
+
+This guarantees that a full ±18 dB EQ-node excursion sweeps the entire display
+range, so node moves alone reach `y_min` (the lower clamp). DSP modules that
+gate by the displayed threshold MUST share this mapping —
+`freeze::curve_to_threshold_db` is the canonical implementation; both Freeze
+and PAST consume it (PAST via `curve_gain_to_threshold_lin`).
+
 ---
 
 ## 2. Per-curve transforms: offset, tilt, curvature
@@ -134,11 +147,20 @@ introduced.
 
 ### Y-axis
 
-- The **active curve's** `y_label` is always rendered on the Y-axis.
-- Grid lines use the 4 values from `CurveDisplayConfig::grid_lines`.
-- Spacing follows `y_log`: logarithmic if true, linear if false.
-- Grid lines reposition automatically when the display range changes (e.g. threshold follows
-  `db_min`/`db_max`). This is already implemented; the spec makes it a hard requirement.
+- The active curve's `y_label` is always rendered on the Y-axis.
+- The vertical mapping `physical → pixel` is driven by `CurveDisplayConfig`:
+  - `cfg.y_log == true` → logarithmic spacing.
+  - `cfg.y_log == false` → linear spacing.
+  - The `[y_min, y_max]` range comes from `runtime_anchors(cfg, display_idx, …)`,
+    which substitutes `db_min`/`db_max` for display index 0 and
+    `total_history_seconds` for display index 13. All other indices pass
+    `cfg.y_min`/`cfg.y_max` through unchanged.
+- Grid lines use the four entries in `cfg.grid_lines`. Each is mapped by the
+  same `physical_to_y(v, cfg, anchors, rect)` call as the response curve, so
+  grid and curve cannot drift.
+- `paint_grid`, `paint_response_curve`, and `paint_hover_text` MUST go through
+  `physical_to_y` / `screen_y_to_physical`. No painter is allowed to encode the
+  axis choice inline.
 
 ### Hover text
 
