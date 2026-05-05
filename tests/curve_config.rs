@@ -171,14 +171,14 @@ fn past_config_returns_calibrated_display_per_curve() {
     assert!((thresh.y_natural - (-20.0)).abs() < 1e-6);
     assert!(is_freeze_thresh(thresh.offset_fn), "THRESHOLD should route to off_freeze_thresh");
 
-    // SPREAD / Smear (curve 3) — %, neutral at 50% (midpoint = on the toggle
-    // boundary), off_amount_norm so positive offset enables smear.
+    // SPREAD / Smear (curve 3) — %, neutral at 100% (matches gain_to_display(6, 1.0)),
+    // off_mix so the slider has only negative reach (no "more than 100%" semantically).
     let spread = curve_display_config(ModuleType::Past, 3, GainMode::Add);
     assert_eq!(spread.y_label, "%");
     assert_eq!(spread.y_min, 0.0);
     assert_eq!(spread.y_max, 100.0);
-    assert!((spread.y_natural - 50.0).abs() < 1e-6, "Smear y_natural should be 50%");
-    assert!(is_amount_norm(spread.offset_fn), "Smear should route to off_amount_norm");
+    assert!((spread.y_natural - 100.0).abs() < 1e-6, "Smear y_natural should be 100%");
+    assert!(is_mix(spread.offset_fn), "Smear should route to off_mix");
 
     // MIX
     let mix = curve_display_config(ModuleType::Past, 4, GainMode::Add);

@@ -286,3 +286,16 @@ fn past_threshold_y_natural_matches_idx_9_neutral() {
         "Past/2 cfg.y_natural={} should match gain_to_display(9, 1.0)={}",
         cfg.y_natural, neutral_display);
 }
+
+#[test]
+fn past_spread_y_natural_matches_idx_6_neutral() {
+    use spectral_forge::editor::curve::gain_to_display;
+    use spectral_forge::editor::curve_config::curve_display_config;
+    use spectral_forge::dsp::modules::{ModuleType, GainMode};
+
+    let cfg = curve_display_config(ModuleType::Past, 3, GainMode::Add);
+    let neutral_display = gain_to_display(6, 1.0, 10.0, 100.0, -60.0, 0.0, 0.0);
+    assert!((cfg.y_natural - neutral_display).abs() < 0.1,
+        "Past/3 cfg.y_natural={} should match gain_to_display(6, 1.0)={}",
+        cfg.y_natural, neutral_display);
+}

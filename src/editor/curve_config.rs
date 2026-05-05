@@ -504,14 +504,10 @@ pub fn past_config(curve_idx: usize, _mode: u8) -> CurveDisplayConfig {
             offset_fn: off_freeze_thresh,
         },
         3 => CurveDisplayConfig {
-            // Smear is a >0.5 toggle. Centre y_natural at 50% so the slider
-            // lerp gives the user visible movement on both sides — and use
-            // `off_amount_norm` (symmetric add+clamp) so positive offset
-            // pushes the gain over the toggle threshold.
             y_label: "%", y_min: 0.0, y_max: 100.0, y_log: false,
             grid_lines: &[(25.0, "25%"), (50.0, "50%"), (75.0, "75%"), (100.0, "100%")],
-            y_natural: 50.0,
-            offset_fn: off_amount_norm,
+            y_natural: 100.0,
+            offset_fn: off_mix,
         },
         4 => CurveDisplayConfig {
             y_label: "%", y_min: 0.0, y_max: 100.0, y_log: false,
