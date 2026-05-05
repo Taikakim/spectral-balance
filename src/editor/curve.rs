@@ -606,10 +606,10 @@ pub fn gain_to_display(
         7 => gain.clamp(0.0, 2.0) * 100.0,                  // Phase Amount: 0-200%
         8 => (gain * 500.0).clamp(0.0, 4000.0),             // Freeze Length: 0-4000ms (neutral=500ms)
         9 => {                                               // Freeze Threshold: dBFS
-            // UI parameter spec §1: log gain→dBFS mapping. The display range
-            // is -80..0 dBFS centred at gain=1.0 → -20 dBFS. Multiplier 60/18
-            // maps a ±18 dB EQ excursion to a ±60 dB display swing, so node
-            // moves alone can reach the -80 dBFS floor.
+            // Log gain→dBFS: gain=1.0 → -20 dBFS; ±18 dB EQ excursion maps to
+            // a ±60 dB display swing (multiplier 60/18), so node moves alone
+            // can reach the -80 dBFS floor. Range: -80..0 dBFS. Mirrors idx=0
+            // formula; clamped to Freeze's wider range instead of Dynamics' -60..0.
             let t_db = if gain > 1e-10 { 20.0 * gain.log10() } else { -120.0 };
             (-20.0 + t_db * (60.0 / 18.0)).clamp(-80.0, 0.0)
         }
