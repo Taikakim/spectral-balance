@@ -107,13 +107,14 @@ fn past_scalars_safe_default_is_musically_inert() {
     assert!((s.rate - 1.0).abs() < 1e-6, "rate=1.0 means no stretch");
     assert_eq!(s.dither, 0.0, "dither=0 means no smoothing-noise");
     assert_eq!(s.window_frames, 1, "window=1 frame is the smallest legal value");
-    assert!(s.soft_clip, "soft_clip ON by default");
+    // soft_clip moved to master output stage 2026-05-06; not a PastScalars
+    // field anymore. Coverage now in tests/master_soft_clip.rs.
 }
 
 #[test]
 fn soft_clip_clamps_high_magnitude_when_on() {
     use num_complex::Complex;
-    use spectral_forge::dsp::modules::past::apply_soft_clip;
+    use spectral_forge::dsp::soft_clip::apply_soft_clip;
     let mut bins = [Complex::new(10.0_f32, 0.0); 32];
     apply_soft_clip(&mut bins, 32);
     for k in 0..32 {
@@ -144,7 +145,6 @@ fn fx_matrix_set_past_scalars_dispatches_to_past_slots() {
         window_frames: 7,
         rate: 1.5,
         dither: 0.25,
-        soft_clip: false,
     };
     fxm.set_past_scalars(&want);
 
@@ -154,7 +154,6 @@ fn fx_matrix_set_past_scalars_dispatches_to_past_slots() {
     assert_eq!(s.window_frames, 7);
     assert!((s.rate - 1.5).abs() < 1e-6);
     assert!((s.dither - 0.25).abs() < 1e-6);
-    assert!(!s.soft_clip);
 
     // Empty slot returns None.
     assert!(fxm.test_past_scalars(1).is_none(), "Empty slot must yield None");
@@ -163,7 +162,7 @@ fn fx_matrix_set_past_scalars_dispatches_to_past_slots() {
 #[test]
 fn soft_clip_passes_low_magnitude_almost_unchanged() {
     use num_complex::Complex;
-    use spectral_forge::dsp::modules::past::apply_soft_clip;
+    use spectral_forge::dsp::soft_clip::apply_soft_clip;
     let mut bins = [Complex::new(0.1_f32, 0.0); 16];
     let original = bins[0].norm();
     apply_soft_clip(&mut bins, 16);

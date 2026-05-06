@@ -881,17 +881,14 @@ impl Pipeline {
                     .map(|p| p.smoothed.next())
                     .unwrap_or(0.0);
                 let dither = dither_pct / 100.0;
-                let soft_clip = params
-                    .past_soft_clip_param(s)
-                    .map(|p| p.value())
-                    .unwrap_or(true);
+                // soft_clip moved to master output stage 2026-05-06; no
+                // longer a per-PAST scalar.
 
                 past_scalars[s] = PastScalars {
                     floor_bin:     floor_bin_clamped,
                     window_frames: window_frames_clamped,
                     rate,
                     dither,
-                    soft_clip,
                 };
             }
             self.fx_matrix.set_past_scalars(&past_scalars);

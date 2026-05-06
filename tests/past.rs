@@ -81,7 +81,7 @@ fn granular_replaces_bin_with_history_at_offset_when_amount_high() {
     // Disable post-mode soft-clip (Task 11) so the assertion below sees raw
     // kernel output rather than the soft-clipped magnitude.
     m.set_scalars(spectral_forge::dsp::modules::past::PastScalars {
-        soft_clip: false,
+
         ..spectral_forge::dsp::modules::past::PastScalars::safe_default()
     });
 
@@ -169,7 +169,7 @@ fn convolution_amplifies_when_history_aligns() {
     // Disable post-mode soft-clip (Task 11) so the assertion below sees raw
     // multiplicative kernel output rather than the soft-clipped magnitude.
     m.set_scalars(spectral_forge::dsp::modules::past::PastScalars {
-        soft_clip: false,
+
         ..spectral_forge::dsp::modules::past::PastScalars::safe_default()
     });
 
@@ -215,7 +215,7 @@ fn reverse_reads_backward_through_history() {
     // Scalar window drives the reverse read length now (Task 9). Half of
     // capacity_frames (32) = 16, matching the TIME=0.5 average from the
     // pre-Task-9 curve-averaging behaviour.
-    m.set_scalars(PastScalars { window_frames: 16, soft_clip: false, ..PastScalars::safe_default() });
+    m.set_scalars(PastScalars { window_frames: 16, ..PastScalars::safe_default() });
 
     let amount    = vec![1.0_f32; 256];
     let time      = vec![0.5_f32; 256];
@@ -265,7 +265,7 @@ fn stretch_at_unity_rate_returns_recent_history() {
     m.set_mode(PastMode::Stretch);
     // Scalar rate drives stretch now (Task 10). rate=1.0 is unity, matching the
     // pre-Task-10 TIME=0.5 curve-averaging behaviour.
-    m.set_scalars(PastScalars { rate: 1.0, soft_clip: false, ..PastScalars::safe_default() });
+    m.set_scalars(PastScalars { rate: 1.0, ..PastScalars::safe_default() });
 
     let mut bins = vec![Complex::new(0.0, 0.0); 256];
     let amount    = vec![1.0_f32; 256];

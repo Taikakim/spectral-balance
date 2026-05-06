@@ -179,20 +179,17 @@ pub struct PastScalars {
     pub rate:          f32,
     /// Stretch dither amount (0..1, normalised — Pipeline divides %-param by 100).
     pub dither:        f32,
-    /// Module-wide soft-clip toggle (default ON).
-    pub soft_clip:     bool,
 }
 
 impl PastScalars {
     /// Conservative default that's musically inert (rate=1.0 means stretch is no-op,
-    /// window=1 frame is the smallest legal value, soft_clip ON).
+    /// window=1 frame is the smallest legal value).
     pub fn safe_default() -> Self {
         Self {
             floor_bin:     10,
             window_frames: 1,
             rate:          1.0,
             dither:        0.0,
-            soft_clip:     true,
         }
     }
 }
@@ -264,7 +261,7 @@ impl PastModule {
     }
 
     /// Per-block setter for mode-specific scalars (window_frames, rate, dither,
-    /// floor_bin, soft_clip). Replaces the curve-averaging hacks documented in
+    /// floor_bin). Replaces the curve-averaging hacks documented in
     /// docs/superpowers/specs/2026-05-04-past-module-ux-design.md §1.4.
     pub fn set_scalars(&mut self, scalars: PastScalars) { self.scalars = scalars; }
 
@@ -366,10 +363,6 @@ impl SpectralModule for PastModule {
             PastMode::Convolution=> self.apply_convolution(ch, bins, history, amount, time, threshold, mix, ctx),
             PastMode::Reverse    => self.apply_reverse(ch, bins, history, amount, threshold, mix, ctx),
             PastMode::Stretch    => self.apply_stretch(ch, bins, history, amount, mix, ctx),
-        }
-
-        if self.scalars.soft_clip {
-            apply_soft_clip(bins, ctx.num_bins);
         }
     }
 
@@ -633,20 +626,7 @@ impl PastModule {
     }
 }
 
-/// Per-bin radial soft-clip toward magnitude `K = 4.0` (≈ +12 dBFS).
-/// `bins[k] *= K / (K + |bins[k]|)` shrinks magnitudes asymptotically toward
-/// `K` while leaving small magnitudes nearly unchanged.
-///
-/// Module-wide safety net for Past, primarily protecting Convolution's
-/// multiplicative output from exploding when fed loud audio × loud history.
-/// See spec §3 + §7.1.
-pub fn apply_soft_clip(bins: &mut [Complex<f32>], num_bins: usize) {
-    const K: f32 = 4.0;
-    for k in 0..num_bins.min(bins.len()) {
-        let mag = bins[k].norm();
-        if mag > 1e-9 {
-            let scale = K / (K + mag);
-            bins[k] *= scale;
-        }
-    }
-}
+// `apply_soft_clip` was moved to `crate::dsp::soft_clip` as part of the
+// 2026-05-06 stabilization sweep. It now runs as a master output stage
+// gated by the `master_clip_enabled` BoolParam, no longer per-PAST.
+// See docs/superpowers/specs/2026-05-06-stabilization-sweep.md §4.
