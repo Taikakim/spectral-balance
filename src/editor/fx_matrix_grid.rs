@@ -29,6 +29,8 @@ pub fn slot_name_str(bytes: &[u8; 32]) -> String {
 /// strokes flow through `th::scaled` / `th::scaled_stroke`.
 pub fn paint_fx_matrix_grid(
     ui:           &mut Ui,
+    setter:       &nih_plug::prelude::ParamSetter,
+    params:       &crate::params::SpectralForgeParams,
     module_types: &[ModuleType; 9],
     slot_names:   &[[u8; 32]; 9],
     route_matrix: &mut RouteMatrix,
@@ -209,12 +211,16 @@ pub fn paint_fx_matrix_grid(
                         let both_empty = src_ty == ModuleType::Empty && dst_ty == ModuleType::Empty;
 
                         if !both_empty {
-                            let send_val = &mut route_matrix.send[row][col];
+                            // Read current value from the FloatParam (the canonical store the
+                            // audio thread reads). Falls back to 0.0 if out of range (shouldn't
+                            // happen for valid in-range cells).
+                            let p = params.matrix_cell(col, row);
+                            let mut send_val: f32 = p.map(|fp| fp.value()).unwrap_or(0.0);
                             let inner = ui.allocate_new_ui(
                                 UiBuilder::new().max_rect(cell_rect.shrink(3.0)),
                                 |ui| {
-                                    ui.add(
-                                        egui::DragValue::new(send_val)
+                                    let resp = ui.add(
+                                        egui::DragValue::new(&mut send_val)
                                             .range(0.0..=2.0)
                                             .speed(0.005)
                                             .fixed_decimals(2)
@@ -223,7 +229,22 @@ pub fn paint_fx_matrix_grid(
                                                 else { format!("{v:.2}") }
                                             })
                                             .custom_parser(|s| s.parse::<f64>().ok()),
-                                    )
+                                    );
+                                    // Write back to the FloatParam via the setter so the audio
+                                    // thread sees the change. Also mirror into
+                                    // route_matrix.send[row][col] for within-frame visual
+                                    // consistency (the next frame will re-read via fp.value()).
+                                    if resp.drag_started() {
+                                        if let Some(fp) = p { setter.begin_set_parameter(fp); }
+                                    }
+                                    if resp.changed() {
+                                        if let Some(fp) = p { setter.set_parameter(fp, send_val); }
+                                        route_matrix.send[row][col] = send_val;
+                                    }
+                                    if resp.drag_stopped() {
+                                        if let Some(fp) = p { setter.end_set_parameter(fp); }
+                                    }
+                                    resp
                                 },
                             );
                             crate::editor::delayed_tooltip(ui, &inner.inner,
@@ -304,7 +325,15 @@ pub fn paint_fx_matrix_grid(
                             "\u{2298}", egui::FontId::proportional(th::scaled(th::FONT_SIZE_MATRIX_VROW, scale)), th::GRID_LINE,
                         );
                     } else {
-                        let send_val = &mut route_matrix.send[*vrow_src][col];
+                        // TODO: matrix_cell doesn't support virtual rows yet — virtual row
+                        // indices (*vrow_src >= MAX_SLOTS) are outside param_ids::NUM_MATRIX_ROWS,
+                        // so params.matrix_cell(*vrow_src, col) returns None and the setter path
+                        // is a no-op. Virtual row sends are therefore non-functional until
+                        // NUM_MATRIX_ROWS is extended to cover virtual rows. See Phase 1 diagnosis
+                        // and route_matrix_propagation.rs for context.
+                        let p = params.matrix_cell(col, *vrow_src); // will be None for vrow_src >= 9
+                        let mut send_val: f32 = p.map(|fp| fp.value())
+                            .unwrap_or(route_matrix.send[*vrow_src][col]);
                         let vrow_label = match kind {
                             VirtualRowKind::Transient => format!("Slot {}T", parent_slot + 1),
                             VirtualRowKind::Sustained => format!("Slot {}S", parent_slot + 1),
@@ -312,15 +341,26 @@ pub fn paint_fx_matrix_grid(
                         let vinner = ui.allocate_new_ui(
                             UiBuilder::new().max_rect(cell_rect.shrink(2.0)),
                             |ui| {
-                                ui.add(
-                                    egui::DragValue::new(send_val)
+                                let resp = ui.add(
+                                    egui::DragValue::new(&mut send_val)
                                         .range(0.0..=2.0).speed(0.005).fixed_decimals(2)
                                         .custom_formatter(|v, _| {
                                             if v < 0.005 { "\u{2014}".to_string() }
                                             else { format!("{v:.2}") }
                                         })
                                         .custom_parser(|s| s.parse::<f64>().ok()),
-                                )
+                                );
+                                if resp.drag_started() {
+                                    if let Some(fp) = p { setter.begin_set_parameter(fp); }
+                                }
+                                if resp.changed() {
+                                    if let Some(fp) = p { setter.set_parameter(fp, send_val); }
+                                    route_matrix.send[*vrow_src][col] = send_val;
+                                }
+                                if resp.drag_stopped() {
+                                    if let Some(fp) = p { setter.end_set_parameter(fp); }
+                                }
+                                resp
                             },
                         );
                         crate::editor::delayed_tooltip(ui, &vinner.inner,

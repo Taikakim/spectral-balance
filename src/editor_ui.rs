@@ -1336,6 +1336,8 @@ pub fn create_editor(
                                 .show(ui, |ui| {
                                     crate::editor::fx_matrix_grid::paint_fx_matrix_grid(
                                         ui,
+                                        setter,
+                                        params.as_ref(),
                                         &types_snap,
                                         &names_snap,
                                         route_matrix_ref,
