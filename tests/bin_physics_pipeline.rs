@@ -201,6 +201,11 @@ fn writer_at_nonzero_slot_preserves_upstream_audio() {
     fm.slots[5] = Some(Box::new(MockReader2));
     fm.test_force_writer(3);
 
+    // Disable the master soft clipper for this upstream-audio-survival probe;
+    // input_mag=2.0 would otherwise be clamped to 1.33 by the K=4 clipper.
+    // (See 2026-05-06-stabilization-sweep.md §4.)
+    fm.set_master_clip_enabled(false);
+
     // Route: input → slot 0 (Empty passthrough) → slot 3 → slot 5 → Master.
     let mut rm = RouteMatrix::default();
     rm.send = [[0.0f32; MAX_SLOTS]; MAX_MATRIX_ROWS];
