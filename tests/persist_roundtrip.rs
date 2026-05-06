@@ -55,7 +55,7 @@ fn persist_roundtrip_all_keys_present() {
         "slot_harmony_mode", "slot_harmony_inharmonic_submode",
         "slot_arp_grid", "slot_arp_trigger_source", "slot_curve_nodes",
         "editing_curve", "route_matrix", "fx_module_names",
-        "fx_module_targets", "fx_route_matrix", "graph_db_min", "graph_db_max",
+        "fx_module_targets", "fx_route_matrix", "graph_db_max",
         "peak_falloff_ms", "ui_scale", "migrated_v1",
     ];
     for key in &expected_keys {

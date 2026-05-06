@@ -69,10 +69,8 @@ fn dynamics_config(i: usize) -> CurveDisplayConfig {
     // (Dynamics has 6 curves; MAKEUP is handled by the standalone Gain module)
     match i {
         0 => CurveDisplayConfig {
-            y_label: "dBFS", y_min: -60.0, y_max: 0.0, y_log: false,
-            grid_lines: &[(-12.0, "-12"), (-24.0, "-24"), (-36.0, "-36"), (-48.0, "-48")],
-            // gain=1.0 → -20 dBFS (neutral threshold)
-            // off=+1 → g=2.0 → display ≈ 0 dBFS; off=-1 → g=-1.0 → display ≈ -60 dBFS
+            y_label: "dBFS", y_min: -160.0, y_max: 0.0, y_log: false,
+            grid_lines: &[(-20.0, "-20"), (-60.0, "-60"), (-100.0, "-100"), (-140.0, "-140")],
             y_natural: -20.0,
             offset_fn: off_thresh,
         },
@@ -120,12 +118,10 @@ fn freeze_config(i: usize) -> CurveDisplayConfig {
             y_natural: 500.0,
             offset_fn: off_freeze_length,
         },
-        // THRESHOLD: same formula as dynamics threshold
-        // gain=1.0 → -20 dBFS; off=+1 → g=2.0 → 0 dBFS; off=-1 → g=-1.0 → -80 dBFS
-        // pos_span=+1.0 (from 1.0 up to 2.0), neg_span_abs=4.0 (from 1.0 down to -3.0 → maps to -80 dBFS)
+        // THRESHOLD: same formula as dynamics threshold (off_thresh/off_freeze_thresh are identical)
         1 => CurveDisplayConfig {
-            y_label: "dBFS", y_min: -80.0, y_max: 0.0, y_log: false,
-            grid_lines: &[(-12.0, "-12"), (-40.0, "-40"), (-60.0, "-60"), (-80.0, "-80")],
+            y_label: "dBFS", y_min: -160.0, y_max: 0.0, y_log: false,
+            grid_lines: &[(-20.0, "-20"), (-60.0, "-60"), (-100.0, "-100"), (-140.0, "-140")],
             y_natural: -20.0,
             offset_fn: off_freeze_thresh,
         },
@@ -495,12 +491,9 @@ pub fn past_config(curve_idx: usize, _mode: u8) -> CurveDisplayConfig {
             offset_fn: off_amount_norm,
         },
         2 => CurveDisplayConfig {
-            y_label: "dBFS", y_min: -80.0, y_max: 0.0, y_log: false,
-            grid_lines: &[(-60.0, "-60"), (-40.0, "-40"), (-20.0, "-20"), (-6.0, "-6")],
+            y_label: "dBFS", y_min: -160.0, y_max: 0.0, y_log: false,
+            grid_lines: &[(-20.0, "-20"), (-60.0, "-60"), (-100.0, "-100"), (-140.0, "-140")],
             y_natural: -20.0,
-            // Asymmetric reach to -80 dBFS is delivered by off_freeze_thresh's
-            // multiplicative calibration (factor 10^(0.9·v) for v<0, see
-            // 2026-05-05-graph-display-correctness.md §3.1).
             offset_fn: off_freeze_thresh,
         },
         3 => CurveDisplayConfig {
@@ -552,17 +545,11 @@ fn default_config() -> CurveDisplayConfig {
     (g + o).clamp(0.0, 1.0)
 }
 
-/// Dynamics THRESHOLD dBFS: WYSIWYG with log-gain dBFS axis (spec §3.1 of
-/// 2026-05-05-graph-display-correctness.md). Calibrated for canonical
-/// db_min = -60, db_max = 0, neutral -20.
-///   v ≥ 0:  display = -20 + 20·v  → factor 10^(0.3·v)
-///   v < 0:  display = -20 + 40·v  → factor 10^(0.6·v)
-/// (constants = span / (20·60/18 ≈ 66.667): 20/66.667 = 0.3, 40/66.667 = 0.6)
-/// Users who customise db_min lower than -60 see slight drift in the
-/// negative half — see spec §7.4. A future plan adds anchors-aware
-/// wrappers to fix this for non-default db_min.
+/// Dynamics/Freeze THRESHOLD dBFS: WYSIWYG for anchors (db_min, -20, db_max).
+/// With db_min=-160, db_max=0: v=+1 → 0 dBFS, v=0 → -20 dBFS, v=-1 → -160 dBFS.
+/// Exponent 0.9 = 18 dB / 20 (symmetric: each unit of v shifts t_db by ±18 dB).
 #[inline] pub fn off_thresh(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
-    if o >= 0.0 { g * 10f32.powf(0.3 * o) } else { g * 10f32.powf(0.6 * o) }
+    g * 10f32.powf(0.9 * o)
 }
 
 /// Ratio 1–20: WYSIWYG with log axis (spec §2 axis-aware lerp).
@@ -632,7 +619,7 @@ fn default_config() -> CurveDisplayConfig {
 ///   v ≥ 0:  display = -20 + 20·v  → factor 10^(0.3·v)
 ///   v < 0:  display = -20 + 60·v  → factor 10^(0.9·v)
 #[inline] pub fn off_freeze_thresh(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
-    if o >= 0.0 { g * 10f32.powf(0.3 * o) } else { g * 10f32.powf(0.9 * o) }
+    g * 10f32.powf(0.9 * o)
 }
 
 /// Portamento/SC-smooth ms: multiplicative, factor = 1000/200 = 5.0.

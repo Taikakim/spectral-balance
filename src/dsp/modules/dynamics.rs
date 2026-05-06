@@ -117,7 +117,13 @@ impl SpectralModule for DynamicsModule {
             // (-120, 24) covers "compress everything" through "true
             // bypass for any sane signal" while bounding pathological
             // values.
-            self.bp_threshold[k] = (-20.0 + t_db * (60.0 / 18.0)).clamp(-120.0, 24.0);
+            // Piecewise anchors: y=-1 (t_db=-18) → -160 dBFS, y=0 → -20 dBFS, y=+1 → 0 dBFS.
+            // Matches gain_to_display idx=0 so curve display is WYSIWYG.
+            self.bp_threshold[k] = if t_db <= 0.0 {
+                -20.0 + (140.0 / 18.0) * t_db
+            } else {
+                -20.0 + (20.0 / 18.0) * t_db
+            }.clamp(-160.0, 24.0);
 
             let r = curves.get(1).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
             self.bp_ratio[k] = r.clamp(1.0, 20.0);

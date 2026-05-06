@@ -3,13 +3,12 @@ use crate::params::{FxChannelTarget, StereoLink};
 use super::{ModuleContext, ModuleType, SpectralModule};
 
 /// Map a per-bin threshold curve gain (linear, 1.0 = neutral) to dBFS threshold.
-/// Log mapping mirroring the idx=9 arm of `gain_to_display` in `editor::curve`:
-/// gain=1.0 → -20 dBFS; ±18 dB EQ excursion maps to ±60 dB display swing
-/// (multiplier 60/18). Clamped to -80..0 dBFS, so EQ peaks above +6 dB
-/// saturate at 0 dBFS.
+/// Piecewise anchors: y=-1 (t_db=-18) → -160 dBFS, y=0 → -20 dBFS, y=+1 → 0 dBFS.
+/// Mirrors the idx=9 arm of `gain_to_display` in `editor::curve` for WYSIWYG display.
 pub fn curve_to_threshold_db(curve_gain: f32) -> f32 {
     let t_db = if curve_gain > 1e-10 { 20.0 * curve_gain.log10() } else { -120.0 };
-    (-20.0 + t_db * (60.0 / 18.0)).clamp(-80.0, 0.0)
+    let v = if t_db <= 0.0 { -20.0 + (140.0 / 18.0) * t_db } else { -20.0 + (20.0 / 18.0) * t_db };
+    v.clamp(-160.0, 0.0)
 }
 
 /// Map a per-bin threshold curve gain to a linear magnitude floor, matching

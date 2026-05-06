@@ -275,7 +275,6 @@ pub struct SpectralForgeParams {
     pub fx_route_matrix: Arc<Mutex<[[f32; 8]; 8]>>,
 
     // GUI display state — not audio parameters, not sent to audio thread
-    pub graph_db_min: Arc<Mutex<f32>>,      // dBFS floor of spectrum display, default -100
     pub graph_db_max: Arc<Mutex<f32>>,      // dBFS ceiling of spectrum display, default 0
     pub peak_falloff_ms: Arc<Mutex<f32>>,   // spectrum peak hold decay time 0–5000 ms
     pub ui_scale: Arc<Mutex<f32>>,          // GUI scale factor: 1.0 / 1.25 / 1.5 / 1.75 / 2.0
@@ -482,7 +481,6 @@ impl Default for SpectralForgeParams {
 
             fx_route_matrix: Arc::new(Mutex::new([[0.0f32; 8]; 8])),
 
-            graph_db_min:    Arc::new(Mutex::new(-100.0)),
             graph_db_max:    Arc::new(Mutex::new(0.0)),
             peak_falloff_ms: Arc::new(Mutex::new(300.0)),
             ui_scale:        Arc::new(Mutex::new(1.0)),
@@ -1011,7 +1009,6 @@ unsafe impl Params for SpectralForgeParams {
         persist_out!("fx_module_names",    fx_module_names);
         persist_out!("fx_module_targets",  fx_module_targets);
         persist_out!("fx_route_matrix",    fx_route_matrix);
-        persist_out!("graph_db_min",       graph_db_min);
         persist_out!("graph_db_max",       graph_db_max);
         persist_out!("peak_falloff_ms",    peak_falloff_ms);
         persist_out!("ui_scale",           ui_scale);
@@ -1077,7 +1074,7 @@ unsafe impl Params for SpectralForgeParams {
                 "fx_module_names"     => persist_in!("fx_module_names",    fx_module_names,    data),
                 "fx_module_targets"   => persist_in!("fx_module_targets", fx_module_targets, data),
                 "fx_route_matrix"     => persist_in!("fx_route_matrix",    fx_route_matrix,    data),
-                "graph_db_min"        => persist_in!("graph_db_min",       graph_db_min,       data),
+                "graph_db_min"        => { /* removed — ignore legacy data */ }
                 "graph_db_max"        => persist_in!("graph_db_max",       graph_db_max,       data),
                 "peak_falloff_ms"     => persist_in!("peak_falloff_ms",    peak_falloff_ms,    data),
                 "ui_scale"            => persist_in!("ui_scale",           ui_scale,           data),

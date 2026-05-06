@@ -73,7 +73,7 @@ pub fn create_editor(
                     let fft_size     = fft_size_arc.load(Ordering::Relaxed).max(512);
                     let num_bins     = fft_size / 2 + 1;
                     let sr           = sample_rate.as_ref().map(|a| a.load()).unwrap_or(44100.0);
-                    let db_min       = *params.graph_db_min.lock();
+                    let db_min       = -160.0_f32;
                     let db_max       = *params.graph_db_max.lock();
                     let falloff      = *params.peak_falloff_ms.lock();
                     let atk_ms       = params.attack_ms.value();
@@ -187,18 +187,6 @@ pub fn create_editor(
                             ui.add_space(4.0);
                         }
 
-                        ui.label(egui::RichText::new("Floor").color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale)));
-                        {
-                            let mut v = *params.graph_db_min.lock();
-                            if ui.add(
-                                egui::DragValue::new(&mut v)
-                                    .range(-160.0..=-20.0)
-                                    .suffix(" dB").speed(0.5).max_decimals(1),
-                            ).changed() {
-                                *params.graph_db_min.lock() = v.min(db_max - 6.0);
-                            }
-                        }
-                        ui.add_space(4.0);
                         ui.label(egui::RichText::new("Ceil").color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale)));
                         {
                             let mut v = *params.graph_db_max.lock();

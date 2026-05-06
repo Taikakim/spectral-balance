@@ -568,7 +568,7 @@ pub fn runtime_anchors(
             let scale = total_history_seconds;
             (cfg.y_min * scale, cfg.y_natural * scale, cfg.y_max * scale)
         }
-        0 => (db_min, cfg.y_natural, db_max),
+        0 | 9 => (db_min, cfg.y_natural, db_max),
         2 => (cfg.y_min, attack_ms, cfg.y_max),
         3 => (cfg.y_min, release_ms, cfg.y_max),
         _ => (cfg.y_min, cfg.y_natural, cfg.y_max),
@@ -613,9 +613,13 @@ pub fn gain_to_display(
     // UI parameter contract: see docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md
     match curve_idx {
         0 => {
-            // Matches the pipeline formula: log-based ±60 dBFS range centred at −20 dBFS.
-            let t_db = if gain > 1e-10 { 20.0 * gain.log10() } else { -120.0 };
-            (-20.0 + t_db * (60.0 / 18.0)).clamp(db_min, db_max)
+            // Piecewise slopes anchored to (db_min, -20, db_max): WYSIWYG for any db range.
+            // In production db_min=-160 → slopes match dynamics.rs bp_threshold formula.
+            let t_db = if gain > 1e-10 { 20.0 * gain.log10() } else { -200.0 };
+            let slope_neg = (-20.0 - db_min) / 18.0;
+            let slope_pos = (db_max - (-20.0)) / 18.0;
+            let v = if t_db <= 0.0 { -20.0 + slope_neg * t_db } else { -20.0 + slope_pos * t_db };
+            v.clamp(db_min, db_max)
         }
         1 => gain.clamp(1.0, 20.0),
         2 => (global_attack_ms  * gain.max(0.0)).clamp(1.0, 1024.0),
@@ -626,13 +630,14 @@ pub fn gain_to_display(
         // Effects curves — tilt/offset not used (passed as 0.0/0.0 from UI)
         7 => gain.clamp(0.0, 2.0) * 100.0,                  // Phase Amount: 0-200%
         8 => (gain * 500.0).clamp(0.0, 4000.0),             // Freeze Length: 0-4000ms (neutral=500ms)
-        9 => {                                               // Freeze Threshold: dBFS
-            // Log gain→dBFS: gain=1.0 → -20 dBFS; ±18 dB EQ excursion maps to
-            // a ±60 dB display swing (multiplier 60/18), so node moves alone
-            // can reach the -80 dBFS floor. Range: -80..0 dBFS. Mirrors idx=0
-            // formula; clamped to Freeze's wider range instead of Dynamics' -60..0.
-            let t_db = if gain > 1e-10 { 20.0 * gain.log10() } else { -120.0 };
-            (-20.0 + t_db * (60.0 / 18.0)).clamp(-80.0, 0.0)
+        9 => {                                               // Freeze/Past Threshold: dBFS
+            // Same piecewise-anchored formula as idx=0; anchors (db_min, -20, db_max).
+            // In production db_min=-160 → matches freeze.rs curve_to_threshold_db.
+            let t_db = if gain > 1e-10 { 20.0 * gain.log10() } else { -200.0 };
+            let slope_neg = (-20.0 - db_min) / 18.0;
+            let slope_pos = (db_max - (-20.0)) / 18.0;
+            let v = if t_db <= 0.0 { -20.0 + slope_neg * t_db } else { -20.0 + slope_pos * t_db };
+            v.clamp(db_min, db_max)
         }
         10 => (gain * 200.0).clamp(0.0, 1000.0),            // Portamento/SC Smooth: 0-1000ms (neutral=200ms)
         11 => gain.clamp(0.0, 2.0),                          // Resistance: 0-2 (normalised excess)

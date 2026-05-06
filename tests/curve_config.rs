@@ -31,7 +31,7 @@ fn all_module_curves_return_valid_config() {
 fn dynamics_threshold_is_linear_dBFS() {
     let cfg = curve_display_config(ModuleType::Dynamics, 0, GainMode::Add);
     assert_eq!(cfg.y_label, "dBFS");
-    assert_eq!(cfg.y_min, -60.0);
+    assert_eq!(cfg.y_min, -160.0);
     assert_eq!(cfg.y_max, 0.0);
     assert!(!cfg.y_log);
 }
@@ -135,10 +135,10 @@ fn past_config_returns_calibrated_display_per_curve() {
         approx(f(0.5, -0.3, sentinel), 0.2) && approx(f(0.5, 0.3, sentinel), 0.8) && approx(f(2.0, 0.5, sentinel), 1.0)
     };
     let is_freeze_thresh = |f: fn(f32, f32, (f32, f32, f32)) -> f32| {
-        // New multiplicative formula (Task 4): g * 10^(0.9*o) for o<0, g * 10^(0.3*o) for o≥0
+        // Symmetric formula: g * 10^(0.9*o) for both sides
         approx(f(0.5, -0.3, sentinel), 0.5 * 10f32.powf(0.9 * -0.3))
-            && approx(f(0.5, 0.3, sentinel), 0.5 * 10f32.powf(0.3 * 0.3))
-            && approx(f(2.0, 0.5, sentinel), 2.0 * 10f32.powf(0.3 * 0.5))
+            && approx(f(0.5, 0.3, sentinel), 0.5 * 10f32.powf(0.9 * 0.3))
+            && approx(f(2.0, 0.5, sentinel), 2.0 * 10f32.powf(0.9 * 0.5))
     };
     let is_identity = |f: fn(f32, f32, (f32, f32, f32)) -> f32| {
         approx(f(0.5, -0.3, sentinel), 0.5) && approx(f(0.5, 0.3, sentinel), 0.5) && approx(f(2.0, 0.5, sentinel), 2.0)
@@ -162,11 +162,11 @@ fn past_config_returns_calibrated_display_per_curve() {
     assert!((time.y_natural - 0.5).abs() < 1e-6, "TIME y_natural should be 0.5 (midpoint fraction)");
     assert!(is_amount_norm(time.offset_fn), "TIME should route to off_amount_norm");
 
-    // THRESHOLD (curve 2) — dBFS -80..0, neutral -20 (matches gain_to_display(9, 1.0)),
+    // THRESHOLD (curve 2) — dBFS -160..0, neutral -20 (matches gain_to_display(9, 1.0)),
     // off_freeze_thresh so the offset slider can reach the full visible y range.
     let thresh = curve_display_config(ModuleType::Past, 2, GainMode::Add);
     assert_eq!(thresh.y_label, "dBFS");
-    assert_eq!(thresh.y_min, -80.0);
+    assert_eq!(thresh.y_min, -160.0);
     assert_eq!(thresh.y_max, 0.0);
     assert!((thresh.y_natural - (-20.0)).abs() < 1e-6);
     assert!(is_freeze_thresh(thresh.offset_fn), "THRESHOLD should route to off_freeze_thresh");
@@ -237,11 +237,11 @@ fn runtime_anchors_substitutes_history_seconds_for_index_13() {
     use spectral_forge::editor::curve_config::{curve_display_config};
     use spectral_forge::dsp::modules::{ModuleType, GainMode};
 
-    // Past THRESHOLD (display idx 9) — anchors are absolute dBFS, no scaling.
-    // y_natural is now -20 (matches gain_to_display(9, 1.0)).
+    // Past THRESHOLD (display idx 9) — anchors use db_min/db_max like idx 0.
+    // y_natural is -20 (matches gain_to_display(9, 1.0)).
     let cfg = curve_display_config(ModuleType::Past, 2, GainMode::Add);
-    let (lo, nat, hi) = runtime_anchors(&cfg, 9, 4.0, -60.0, 0.0, 10.0, 100.0);
-    assert_eq!(lo, -80.0);
+    let (lo, nat, hi) = runtime_anchors(&cfg, 9, 4.0, -160.0, 0.0, 10.0, 100.0);
+    assert_eq!(lo, -160.0);
     assert!((nat - (-20.0)).abs() < 1e-6);
     assert_eq!(hi, 0.0);
 

@@ -449,8 +449,8 @@ impl Pipeline {
         let global_mix        = params.mix.smoothed.next_step(block_size).clamp(0.0, 1.0);
 
         // Snapshot graph dBFS range — needed for runtime_anchors (display_idx 0 = Dynamics
-        // threshold substitutes db_min/db_max). try_lock with fallback never blocks audio thread.
-        let db_min = params.graph_db_min.try_lock().map(|g| *g).unwrap_or(-100.0);
+        // threshold substitutes db_min/db_max). db_min is fixed at -160 dBFS.
+        let db_min = -160.0_f32;
         let db_max = params.graph_db_max.try_lock().map(|g| *g).unwrap_or(0.0);
 
         // Snapshot slot module types and gain modes early — needed for offset_fn lookup below.

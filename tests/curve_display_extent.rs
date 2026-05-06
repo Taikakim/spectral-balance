@@ -20,21 +20,21 @@ fn curve_response_spans_full_num_bins_at_44_1_khz() {
 #[test]
 fn gain_to_display_idx9_eq_node_range_spans_full_dbfs_window() {
     // gain ≈ 0.126 corresponds to a -18 dB EQ bell (10^(-18/20)).
-    // The display range is -80..0 dBFS; the formula must reach the floor.
-    // Pass sentinel values for db_min/db_max; idx=9 owns its own -80..0 dBFS range regardless.
+    // The display range is now -160..0 dBFS; formula must reach the floor.
+    // Use production db_min=-160, db_max=0.
 
     let g_min = 10f32.powf(-18.0 / 20.0); // 0.1259
     let g_neutral = 1.0f32;
     let g_max = 10f32.powf(18.0 / 20.0);  // 7.943
 
-    let dbfs_min     = gain_to_display(9, g_min,     0.0, 0.0, -60.0, 0.0, 0.0);
-    let dbfs_neutral = gain_to_display(9, g_neutral, 0.0, 0.0, -60.0, 0.0, 0.0);
-    let dbfs_max     = gain_to_display(9, g_max,     0.0, 0.0, -60.0, 0.0, 0.0);
+    let dbfs_min     = gain_to_display(9, g_min,     0.0, 0.0, -160.0, 0.0, 0.0);
+    let dbfs_neutral = gain_to_display(9, g_neutral, 0.0, 0.0, -160.0, 0.0, 0.0);
+    let dbfs_max     = gain_to_display(9, g_max,     0.0, 0.0, -160.0, 0.0, 0.0);
 
     // Neutral curve (gain 1.0) → -20 dBFS (the y_natural anchor in freeze_config).
     assert!((dbfs_neutral - (-20.0)).abs() < 1e-3, "expected -20, got {dbfs_neutral}");
-    // Bottom EQ node must reach the -80 dBFS floor.
-    assert!(dbfs_min <= -79.0, "expected ≤ -79 (close to floor), got {dbfs_min}");
+    // Bottom EQ node must reach the -160 dBFS floor.
+    assert!(dbfs_min <= -159.0, "expected ≤ -159 (close to floor), got {dbfs_min}");
     // Top EQ node must reach the 0 dBFS ceiling.
     assert!(dbfs_max >= -1.0, "expected ≥ -1 (close to ceiling), got {dbfs_max}");
 }
@@ -228,10 +228,10 @@ fn off_freeze_thresh_wysiwyg_at_v_minus_half() {
     use spectral_forge::dsp::modules::{ModuleType, GainMode};
 
     let cfg = curve_display_config(ModuleType::Freeze, 1, GainMode::Add);
-    let anchors = runtime_anchors(&cfg, 9, 0.0, -60.0, 0.0, 10.0, 100.0);
+    let anchors = runtime_anchors(&cfg, 9, 0.0, -160.0, 0.0, 10.0, 100.0);
     for &v in &[-1.0_f32, -0.5, 0.0, 0.5, 1.0] {
         let g_off = off_freeze_thresh(1.0, v, anchors);
-        let display_actual = gain_to_display(9, g_off, 10.0, 100.0, -80.0, 0.0, 0.0);
+        let display_actual = gain_to_display(9, g_off, 10.0, 100.0, -160.0, 0.0, 0.0);
         let display_expected = axis_aware_lerp(&cfg, anchors, v);
         assert!((display_actual - display_expected).abs() < 0.5,
             "v={v}: expected {display_expected:.2}, got {display_actual:.2}");
