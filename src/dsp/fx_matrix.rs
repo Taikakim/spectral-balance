@@ -465,6 +465,15 @@ impl FxMatrix {
         }
     }
 
+    /// Propagate the master clipper enable flag to slot 8 (MasterModule).
+    /// The trait's default `set_master_clip_enabled` is a no-op for all other
+    /// module types. Called once per audio block (before process_hop).
+    pub fn set_master_clip_enabled(&mut self, enabled: bool) {
+        if let Some(ref mut m) = self.slots[8] {
+            m.set_master_clip_enabled(enabled);
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn process_hop(
         &mut self,

@@ -47,3 +47,64 @@ fn soft_clip_above_threshold_no_nan_bounded() {
             "soft clip should bound magnitude near K=4, got {}", c.norm());
     }
 }
+
+#[test]
+fn master_module_applies_soft_clip_when_enabled() {
+    use spectral_forge::dsp::modules::master::MasterModule;
+    use spectral_forge::dsp::modules::{ModuleContext, SpectralModule};
+    use spectral_forge::params::{FxChannelTarget, StereoLink};
+
+    let mut master = MasterModule::new(true);
+    let mut bins = vec![Complex::new(8.0, 0.0); 1025];
+    let mut supp = vec![0.0_f32; 1025];
+    let ctx = ModuleContext::new(48_000.0, 2048, 1025, 10.0, 100.0, 1.0, 0.5, false, false);
+
+    master.process(0, StereoLink::Linked, FxChannelTarget::All,
+        &mut bins, None, &[], &mut supp, None, &ctx);
+
+    // K=4 → at mag=8, scale = 4/12. Output ≈ 2.667.
+    for c in &bins {
+        assert!(c.norm() < 4.5, "expected clamp near K=4, got {}", c.norm());
+    }
+}
+
+#[test]
+fn master_module_passthrough_when_disabled() {
+    use spectral_forge::dsp::modules::master::MasterModule;
+    use spectral_forge::dsp::modules::{ModuleContext, SpectralModule};
+    use spectral_forge::params::{FxChannelTarget, StereoLink};
+
+    let mut master = MasterModule::new(false);
+    let mut bins = vec![Complex::new(8.0, 0.0); 1025];
+    let mut supp = vec![0.0_f32; 1025];
+    let ctx = ModuleContext::new(48_000.0, 2048, 1025, 10.0, 100.0, 1.0, 0.5, false, false);
+
+    master.process(0, StereoLink::Linked, FxChannelTarget::All,
+        &mut bins, None, &[], &mut supp, None, &ctx);
+
+    for c in &bins {
+        assert!((c.re - 8.0).abs() < 1e-6 && c.im.abs() < 1e-6);
+    }
+}
+
+#[test]
+fn master_module_silent_in_silent_out_regardless_of_clip() {
+    use spectral_forge::dsp::modules::master::MasterModule;
+    use spectral_forge::dsp::modules::{ModuleContext, SpectralModule};
+    use spectral_forge::params::{FxChannelTarget, StereoLink};
+
+    for enabled in [true, false] {
+        let mut master = MasterModule::new(enabled);
+        let mut bins = vec![Complex::new(0.0, 0.0); 1025];
+        let mut supp = vec![0.0_f32; 1025];
+        let ctx = ModuleContext::new(48_000.0, 2048, 1025, 10.0, 100.0, 1.0, 0.5, false, false);
+
+        master.process(0, StereoLink::Linked, FxChannelTarget::All,
+            &mut bins, None, &[], &mut supp, None, &ctx);
+
+        for c in &bins {
+            assert!(c.re.abs() < 1e-9 && c.im.abs() < 1e-9,
+                "silent in→silent out (enabled={enabled}); got {:?}", c);
+        }
+    }
+}

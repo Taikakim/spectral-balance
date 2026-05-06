@@ -2,17 +2,34 @@ use num_complex::Complex;
 use crate::params::{FxChannelTarget, StereoLink};
 use super::{ModuleContext, ModuleType, SpectralModule};
 
-pub struct MasterModule;
+pub struct MasterModule {
+    clip_enabled: bool,
+}
+
+impl MasterModule {
+    pub fn new(clip_enabled: bool) -> Self {
+        Self { clip_enabled }
+    }
+}
+
 impl SpectralModule for MasterModule {
     fn reset(&mut self, _: f32, _: usize) {}
     fn process(
         &mut self, _: usize, _: StereoLink, _: FxChannelTarget,
-        _: &mut [Complex<f32>], _: Option<&[f32]>, _: &[&[f32]],
+        bins: &mut [Complex<f32>], _: Option<&[f32]>, _: &[&[f32]],
         suppression_out: &mut [f32], _physics: Option<&mut crate::dsp::bin_physics::BinPhysics>,
-        _: &ModuleContext<'_>,
-    ) { suppression_out.fill(0.0); }
+        ctx: &ModuleContext<'_>,
+    ) {
+        suppression_out.fill(0.0);
+        if self.clip_enabled {
+            crate::dsp::soft_clip::apply_soft_clip(bins, ctx.num_bins);
+        }
+    }
     fn module_type(&self) -> ModuleType { ModuleType::Master }
     fn num_curves(&self) -> usize { 0 }
+    fn set_master_clip_enabled(&mut self, enabled: bool) {
+        self.clip_enabled = enabled;
+    }
 }
 
 /// Zero-cost placeholder for an unoccupied slot. Returns `ModuleType::Empty`

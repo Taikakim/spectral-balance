@@ -361,6 +361,10 @@ pub trait SpectralModule: Send {
     /// Update the ArpTriggerSource for Rhythm modules (Bpm vs NoteIn). Default no-op for all other types.
     fn set_arp_trigger_source(&mut self, _: crate::dsp::modules::rhythm::ArpTriggerSource) {}
 
+    /// Update the master clipper enable flag. Only `MasterModule` overrides
+    /// this; all other modules use the no-op default.
+    fn set_master_clip_enabled(&mut self, _enabled: bool) {}
+
     /// Toggle the per-module PLPV peak-locked ducking path. Default no-op
     /// for everything except DynamicsModule. Mirrors the per-mode setter
     /// convention (`set_gain_mode`, `set_future_mode`, etc.) so each module
@@ -966,7 +970,7 @@ pub fn create_module(
         ModuleType::Past   => Box::new(past::PastModule::new(sample_rate, fft_size)),
         ModuleType::Kinetics => Box::new(kinetics::KineticsModule::new()),
         ModuleType::Harmony  => Box::new(harmony::HarmonyModule::new()),
-        ModuleType::Master => Box::new(master::MasterModule),
+        ModuleType::Master => Box::new(master::MasterModule::new(true)),
         ModuleType::Empty  => Box::new(master::EmptyModule),
     };
     m.reset(sample_rate, fft_size);
