@@ -1127,6 +1127,13 @@ pub fn create_editor(
                             setter.set_parameter(&params.delta_monitor, !delta);
                             setter.end_set_parameter(&params.delta_monitor);
                         }
+                        ui.add_space(4.0);
+                        let clip_enabled = params.master_clip_enabled.value();
+                        if toggle(ui, clip_enabled, "CLIP") {
+                            setter.begin_set_parameter(&params.master_clip_enabled);
+                            setter.set_parameter(&params.master_clip_enabled, !clip_enabled);
+                            setter.end_set_parameter(&params.master_clip_enabled);
+                        }
                     });
 
                     ui.add_space(2.0);
