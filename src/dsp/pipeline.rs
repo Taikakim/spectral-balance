@@ -1032,9 +1032,14 @@ impl Pipeline {
         let pending_hop_frames       = &mut self.pending_hop_frames;
         let mut pending_hops: usize  = 0;
         let stft_num_channels        = self.stft.num_channels();
-        // Reset peak-hold accumulators.
-        for v in spectrum_buf.iter_mut()   { *v = 0.0; }
-        for v in suppression_buf.iter_mut() { *v = 0.0; }
+        // NOTE: do NOT pre-zero spectrum_buf / suppression_buf at block start.
+        // At small host buffer sizes, blocks frequently contain zero hops
+        // (e.g. 128-sample buffer with hop=512 hops only every ~4 blocks).
+        // Zeroing here + unconditionally publishing below would push all-zero
+        // frames to the GUI on hop-less blocks, manifesting as a strobe
+        // when peak-hold falloff is short. Instead we accumulate across
+        // blocks until at least one hop has run, then publish + zero (see
+        // the gated publish below).
         // IFFT gives fft_size gain; Hann^2 OLA at 75% overlap gives 1.5 gain.
         // Combined normalization: 1 / (fft_size * 1.5) = 2 / (3 * fft_size)
         let norm = 2.0_f32 / (3.0 * fft_size as f32);
@@ -1335,10 +1340,19 @@ impl Pipeline {
 
         // Push latest spectra to GUI triple-buffers (allocation-free: mutate in-place then publish).
         // Bridge buffers are MAX_NUM_BINS; bins beyond num_bins are left as zero (silent).
-        shared.spectrum_tx.input_buffer_mut().copy_from_slice(&spectrum_buf[..MAX_NUM_BINS]);
-        shared.spectrum_tx.publish();
-        shared.suppression_tx.input_buffer_mut().copy_from_slice(&suppression_buf[..MAX_NUM_BINS]);
-        shared.suppression_tx.publish();
+        // Gated on `pending_hops > 0`: when a host block contains no hops we
+        // skip the publish (the GUI's triple_buffer keeps returning the last
+        // published frame — exactly what the user wants when "a new frame
+        // is not calculated"). After publishing, zero the per-block peak-
+        // hold accumulators so the next publish reflects fresh data.
+        if pending_hops > 0 {
+            shared.spectrum_tx.input_buffer_mut().copy_from_slice(&spectrum_buf[..MAX_NUM_BINS]);
+            shared.spectrum_tx.publish();
+            shared.suppression_tx.input_buffer_mut().copy_from_slice(&suppression_buf[..MAX_NUM_BINS]);
+            shared.suppression_tx.publish();
+            for v in spectrum_buf.iter_mut()    { *v = 0.0; }
+            for v in suppression_buf.iter_mut() { *v = 0.0; }
+        }
 
         // Publish SC envelope for the currently-edited slot, if it is an SC-aware Gain slot.
         let editing_slot = params.editing_slot.try_lock().map(|g| *g as usize).unwrap_or(0);
