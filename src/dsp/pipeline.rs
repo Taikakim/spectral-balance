@@ -95,17 +95,22 @@ pub struct Pipeline {
     rewrap_buf: Vec<Vec<f32>>,
     /// PLPV: mono scratch for the current hop's wrapped phase (filled per closure invocation).
     scratch_curr_phase: Vec<f32>,
-    /// PLPV: mono scratch for per-bin expected cumulative phase advance (per closure invocation).
-    scratch_expected: Vec<f32>,
     /// PLPV: mono scratch for per-bin magnitudes used by low-energy phase damping.
     scratch_mags: Vec<f32>,
     /// PLPV: per-channel pre-allocated peak buffer (Phase 4.2). Capacity MAX_PEAKS;
     /// `detect_peaks` writes only the first `n_peaks` entries each hop.
     peak_buf: Vec<Vec<PeakInfo>>,
-    /// PLPV: per-channel cumulative hop counter feeding `expected_phase = 2π·k·N·H/F`.
-    /// Each channel runs its own STFT closure call per hop, so they grow independently.
-    /// `u64` so this never overflows in any realistic session length.
-    total_hops_per_ch: [u64; 2],
+    /// PLPV: per-channel, per-bin expected-phase accumulator. Wrapped to
+    /// `(-π, π]` after every hop to keep f32 precision indefinitely. The
+    /// previous design recomputed this from a hop counter `2π·k·hop/N · n`
+    /// each frame, which lost f32 fractional precision after as little as
+    /// ~50 sec at fft=2048/sr=96k for the highest bins. A periodic reset to
+    /// zero used to compensate, but that introduced a phase discontinuity
+    /// on every reset → audible spectral spreading. Wrapping every hop
+    /// avoids both problems: phase is musically defined modulo 2π, so the
+    /// wrap is a no-op for downstream consumers (re-wrap before iFFT, or
+    /// modules that compare in modulo space).
+    expected_phase_acc: Vec<Vec<f32>>,
     /// Per-channel rolling complex-spectrum history. Sized at construction from the
     /// History Depth param (in seconds). Reallocated by `reset()` if the requested
     /// capacity changes (allocation OK there — reset is not on the audio thread).
@@ -195,9 +200,9 @@ impl Pipeline {
         let prev_phase:           Vec<Vec<f32>> = (0..2).map(|_| vec![0.0f32; MAX_NUM_BINS]).collect();
         let prev_unwrapped_phase: Vec<Vec<f32>> = (0..2).map(|_| vec![0.0f32; MAX_NUM_BINS]).collect();
         let unwrapped_phase:      Vec<Vec<f32>> = (0..2).map(|_| vec![0.0f32; MAX_NUM_BINS]).collect();
+        let expected_phase_acc:   Vec<Vec<f32>> = (0..2).map(|_| vec![0.0f32; MAX_NUM_BINS]).collect();
         let rewrap_buf:           Vec<Vec<f32>> = (0..2).map(|_| vec![0.0f32; MAX_NUM_BINS]).collect();
         let scratch_curr_phase:   Vec<f32>      = vec![0.0f32; MAX_NUM_BINS];
-        let scratch_expected:     Vec<f32>      = vec![0.0f32; MAX_NUM_BINS];
         let scratch_mags:         Vec<f32>      = vec![0.0f32; MAX_NUM_BINS];
         let peak_buf: Vec<Vec<PeakInfo>> = (0..2)
             .map(|_| vec![PeakInfo { k: 0, mag: 0.0, low_k: 0, high_k: 0 }; MAX_PEAKS])
@@ -258,10 +263,9 @@ impl Pipeline {
             unwrapped_phase,
             rewrap_buf,
             scratch_curr_phase,
-            scratch_expected,
             scratch_mags,
             peak_buf,
-            total_hops_per_ch: [0; 2],
+            expected_phase_acc,
             history,
             history_depth_seconds,
             pending_hop_frames,
@@ -316,12 +320,11 @@ impl Pipeline {
         for v in &mut self.unwrapped_phase      { v.fill(0.0); }
         for v in &mut self.rewrap_buf           { v.fill(0.0); }
         self.scratch_curr_phase.fill(0.0);
-        self.scratch_expected.fill(0.0);
         self.scratch_mags.fill(0.0);
         for ch in &mut self.peak_buf {
             ch.fill(PeakInfo { k: 0, mag: 0.0, low_k: 0, high_k: 0 });
         }
-        self.total_hops_per_ch = [0; 2];
+        for v in &mut self.expected_phase_acc { v.fill(0.0); }
         for v in &mut self.pending_hop_frames { for c in v { *c = Complex::new(0.0, 0.0); } }
         for v in &mut self.if_offset_buf { *v = 0.0; }
         for v in &mut self.if_buffer     { v.fill(0.0); }
@@ -367,12 +370,11 @@ impl Pipeline {
         for v in &mut self.unwrapped_phase      { v.fill(0.0); }
         for v in &mut self.rewrap_buf           { v.fill(0.0); }
         self.scratch_curr_phase.fill(0.0);
-        self.scratch_expected.fill(0.0);
         self.scratch_mags.fill(0.0);
         for ch in &mut self.peak_buf {
             ch.fill(PeakInfo { k: 0, mag: 0.0, low_k: 0, high_k: 0 });
         }
-        self.total_hops_per_ch = [0; 2];
+        for v in &mut self.expected_phase_acc { v.fill(0.0); }
         for v in &mut self.pending_hop_frames { for c in v { *c = Complex::new(0.0, 0.0); } }
         for v in &mut self.if_offset_buf { *v = 0.0; }
         for v in &mut self.if_buffer     { v.fill(0.0); }
@@ -1018,10 +1020,9 @@ impl Pipeline {
         let unwrapped_phase_ref      = &mut self.unwrapped_phase;
         let rewrap_buf_ref           = &mut self.rewrap_buf;
         let scratch_curr_phase_ref   = &mut self.scratch_curr_phase;
-        let scratch_expected_ref     = &mut self.scratch_expected;
         let scratch_mags_ref         = &mut self.scratch_mags;
         let peak_buf_ref             = &mut self.peak_buf;
-        let total_hops_ref           = &mut self.total_hops_per_ch;
+        let expected_phase_acc_ref   = &mut self.expected_phase_acc;
         let if_buffer_ref            = &mut self.if_buffer;
         let if_prev_phase_ref        = &mut self.if_prev_phase;
         let cepstrum_buf_ref         = &mut self.cepstrum_buf;
@@ -1098,14 +1099,31 @@ impl Pipeline {
                 prev_phase_ref[ch][..num_bins]
                     .copy_from_slice(&scratch_curr_phase_ref[..num_bins]);
 
+                // Wrap prev_unwrapped to (-π, π] so subsequent hops start
+                // from a bounded value. Phase is musically defined modulo
+                // 2π — the absolute accumulated value is irrelevant to the
+                // iFFT (which re-wraps anyway) and to downstream consumers
+                // that compare in modulo space. Without this, the high-bin
+                // accumulator grows by 2π·k·hop/N each hop and crosses the
+                // f32 precision floor in ~50 sec at fft=2048/sr=96k.
+                for k in 0..num_bins {
+                    prev_unwrapped_phase_ref[ch][k] =
+                        crate::dsp::plpv::principal_arg(prev_unwrapped_phase_ref[ch][k]);
+                    unwrapped_phase_ref[ch][k] =
+                        crate::dsp::plpv::principal_arg(unwrapped_phase_ref[ch][k]);
+                }
+
                 // Phase 4.1.5: damp low-energy bins toward expected cumulative advance.
-                // Per-channel hop counter so two channels grow independently at the
-                // correct per-channel rate. Acceptable f32-precision loss after ~30 h.
-                let hop_total = total_hops_ref[ch] as f32;
+                // The expected-phase accumulator is incremented by `2π·k·hop/N`
+                // each hop and wrapped to (-π, π] in the same modulo space as
+                // unwrapped_phase, so the linear blend in damp_low_energy_bins
+                // stays numerically stable indefinitely.
                 let two_pi_hop_over_n = 2.0 * std::f32::consts::PI
                     * (hop_size as f32) / (fft_size as f32);
                 for k in 0..num_bins {
-                    scratch_expected_ref[k] = two_pi_hop_over_n * (k as f32) * hop_total;
+                    expected_phase_acc_ref[ch][k] = crate::dsp::plpv::principal_arg(
+                        expected_phase_acc_ref[ch][k] + two_pi_hop_over_n * (k as f32)
+                    );
                 }
                 for k in 0..num_bins {
                     scratch_mags_ref[k] = complex_buf[k].norm();
@@ -1113,28 +1131,10 @@ impl Pipeline {
                 crate::dsp::plpv::damp_low_energy_bins(
                     &mut unwrapped_phase_ref[ch][..num_bins],
                     &scratch_mags_ref[..num_bins],
-                    &scratch_expected_ref[..num_bins],
+                    &expected_phase_acc_ref[ch][..num_bins],
                     plpv_phase_noise_floor_db,
                     num_bins,
                 );
-                total_hops_ref[ch] = total_hops_ref[ch].wrapping_add(1);
-
-                // Periodic reset to keep the cumulative phase counter
-                // bounded. Without this, prev_unwrapped_phase grows by
-                // ~2π·k·hop/N every hop; at high bins it exceeds f32
-                // fractional precision after ~30 minutes and damping
-                // begins to corrupt phases — audible as progressive
-                // smearing on the wet path. Resetting every 4096 hops
-                // (~22 sec at fft=2048/overlap=4/sr=48kHz) bounds the
-                // accumulated value. The single-hop discontinuity is
-                // inaudible because damp_low_energy_bins only blends
-                // low-energy bins toward the expected phase. See
-                // docs/superpowers/specs/2026-05-06-stabilization-sweep.md §5.
-                const PLPV_PHASE_RESET_PERIOD: u64 = 4096;
-                if total_hops_ref[ch] % PLPV_PHASE_RESET_PERIOD == 0 {
-                    prev_unwrapped_phase_ref[ch].fill(0.0);
-                    total_hops_ref[ch] = 0;
-                }
 
                 // Phase 4.2: detect spectral peaks + assign Voronoi skirts.
                 // Operates on the raw FFT magnitudes already in scratch_mags_ref

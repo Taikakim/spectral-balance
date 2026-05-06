@@ -22,6 +22,15 @@ curvature transforms, hover text, and UI scaling rules. Any work touching these 
 follow that spec exactly. If the spec is unclear or a situation arises where following it would
 cause a problem, STOP and ask rather than guessing or improvising.
 
+## Phase Handling — READ BEFORE TOUCHING PLPV / FREEZE / MODULATE / PHASE-SMEAR
+
+**`docs/superpowers/specs/2026-05-06-phase-handling.md` is the authoritative reference for
+all spectral-phase operations**: the wrapped/unwrapped domains, the per-hop wrap invariant
+(every accumulator stays in `(-π, π]` after each update), the complex-blend rule for
+geodesic phase mixing, the unwrap kernel contract, and a checklist for new phase code.
+The pvx Python reference at `repos/pvx/src/pvx/core/voc.py` is cross-linked. Do not
+periodic-reset accumulators (audible discontinuity). Do not linear-blend audible phases.
+
 ## What it is
 
 A **spectral dynamics and modular multi-fx** CLAP plugin for Linux/Windows, written in Rust.

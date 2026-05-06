@@ -245,11 +245,23 @@ impl SpectralModule for FreezeModule {
             if let Some(unwrapped) = plpv {
                 // Canonical phase-vocoder advance. Matches the Pipeline's
                 // own `two_pi_hop_over_n * k` constant used in the unwrap
-                // damping step (src/dsp/pipeline.rs).
-                self.frozen_unwrapped[k] += two_pi_hop_over_n * (k as f32);
+                // damping step (src/dsp/pipeline.rs). Wrap to (-π, π] so
+                // the accumulator stays in the same modulo space as the
+                // pipeline's unwrapped phase — required for indefinite
+                // numerical stability.
+                self.frozen_unwrapped[k] = crate::dsp::plpv::principal_arg(
+                    self.frozen_unwrapped[k] + two_pi_hop_over_n * (k as f32)
+                );
                 let dry_p    = unwrapped[k].get();
                 let frozen_p = self.frozen_unwrapped[k];
-                unwrapped[k].set(dry_p * (1.0 - mix) + frozen_p * mix);
+                // Geodesic phase blend on the unit circle, the same shape
+                // the pvx reference uses for ambient phase mixing
+                // (`xp.angle((1-mix)·e^{iφ₁} + mix·e^{iφ₂})`). This is
+                // wraparound-correct: equal-but-opposite wrapped phases
+                // average to π (the long way around), not 0.
+                let blend_c = num_complex::Complex::<f32>::from_polar(1.0, dry_p) * (1.0 - mix)
+                            + num_complex::Complex::<f32>::from_polar(1.0, frozen_p) * mix;
+                unwrapped[k].set(blend_c.arg());
             }
         }
 
