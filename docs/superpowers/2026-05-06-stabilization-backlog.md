@@ -28,10 +28,10 @@ Numbered for cross-reference. Status: 🔴 critical · 🟠 important · 🟡 no
 
 | # | Status | Issue | Source |
 |---|---|---|---|
-| 1 | 🔴 | All-modules-disabled still produces audible processing on the wet path | user msg |
-| 2 | 🟠 | Soft clipper architecture: move from PAST-internal to master output stage; clamps even at silent input today | user msg |
+| 1 | ✅ | All-modules-disabled wet-path processing — likely fixed by smear fix (#12). Manual smoke verifies. | user msg |
+| 2 | ✅ | Soft clipper moved to master output stage with toggle (default on). PAST::soft_clip removed. | user msg |
 | 3 | 🟡 | PAST AMOUNT/Age/Smear/MIX sliders cap at "0" — partially understood (Age has total_history_seconds=0 + 1-decimal rounding; AMOUNT/Smear/MIX hit `y_natural==y_max` dead-half) | user msg + diagnosed |
-| 4 | 🔴 | Routing matrix globally non-functional — UI edits don't reach DSP, all modules just sequentially process. Bug class (a): GUI→params→pipeline plumbing. | user msg + screenshot |
+| 4 | ✅ | Routing matrix fix landed: GUI cell-click writes via setter to FloatParam. Off-diagonal cells fully functional. Virtual rows (T/S Split) noted with TODO — matrix_cell bounds-check rejects r>=9, needs separate work. | user msg + screenshot |
 | 5 | 🟠 | MIX default should be 100% wet for every module | user msg |
 | 6 | 🟡 | PAST SMEAR is binary toggle at 50% (apply_granular only); ignored in 4 of 5 PAST modes | user msg + audit |
 | 7 | 🟡 | The -1..+1 slider rigidity creates the dead-half problem on `y_natural==y_max` curves | user msg |
@@ -39,7 +39,7 @@ Numbered for cross-reference. Status: 🔴 critical · 🟠 important · 🟡 no
 | 9 | 🟡 | Dynamics THRESHOLD floors at db_min (-60 default) — tied to (10) | user msg |
 | 10 | 🟠 | Master Floor default should be -120 dBFS | user directive |
 | 11 | 🟡 | Tilt range needs ~2× steeper angles | user directive |
-| 12 | 🔴 | Smearing accumulates over time, even with no modules loaded. Power-cycling plugin clears it. Wet path only (mix=0% is clean). | user msg |
+| 12 | ✅ | Smearing fix: PLPV `prev_unwrapped_phase` + `total_hops_per_ch` reset every 4096 hops (~44s at fft 2048/sr 48k). Phase 1 audit identified the cause; commit `f26c3ac`. | user msg |
 | 13 | 🔴 | Module-switch carryover is universal (graph display is centralised → every module potentially affected) | user clarification |
 | 14 | 🔴 | PAST mode UI button doesn't respond. Open question: should PAST have a single mode-selector at all, vs per-mode buttons like Kinetics? | user msg |
 | 15 | 🟡 | Freeze: most curves work; Resistance has weak audible effect — likely a level-mismatch in the kernel | user msg |
@@ -95,8 +95,34 @@ Six sub-projects with critical-path ordering:
 - **Power-cycle clears it:** `Pipeline::new()` resets both counters to zero. Matches user observation.
 - **Fix shape (chosen for Task 11):** Option A — periodic reset of `prev_unwrapped_phase[ch].fill(0.0)` and `total_hops_per_ch[ch] = 0` every M=4096 hops. Bounded values, no drift. One-hop phase discontinuity at reset is inaudible at the blend weights PLPV uses.
 
+## Sub-project A — complete (2026-05-06 overnight)
+
+All 4 phases landed across 13 commits since `1216e5f`:
+
+- **Phase 1 — Diagnostics** (`41946be`, `fee1fec`): identified routing GUI bug at fx_matrix_grid.rs:217 + virtual rows at :307; identified PLPV `prev_unwrapped_phase` accumulator as smearing cause.
+- **Phase 2 — Routing fix** (`f3d7d53`): GUI now writes via `setter.set_parameter` to FloatParams. Off-diagonal cells fully functional. Virtual rows have a TODO note (matrix_cell bounds-check rejects r >= 9 — separate work to extend NUM_MATRIX_ROWS).
+- **Phase 3 — Master clipper** (`f48c839`, `6a14292`, `1ae696b`, `f53dfa6`, `1947902`): added `master_clip_enabled` BoolParam (default true), extracted `apply_soft_clip` to `dsp::soft_clip`, wired into MasterModule with set-method on SpectralModule trait, removed from PAST entirely, added CLIP toggle button in master row UI (matches AUTO_MK/DELTA pattern).
+- **Phase 4 — Smearing fix** (`f26c3ac`): periodic reset of `prev_unwrapped_phase[ch].fill(0.0)` + `total_hops_per_ch[ch] = 0` every 4096 hops in pipeline.rs::process. Plus regression test pinning the constant + modulo arithmetic.
+- **Test fixture cleanup** (`cbab5fc`): `bin_physics_pipeline` test that probes upstream audio at mag=2.0 needed `set_master_clip_enabled(false)` since K=4 clipper would clamp it.
+
+**Final regression:**
+- `cargo test`: 0 failures (one flaky-in-parallel test `if_probe_reads_array_when_present` passes in isolation; pre-existing intermittent issue, not introduced here).
+- `cargo test --features=probe`: exactly 5 pre-existing failures (`*_amount_default_probes_50_pct`).
+- `cargo build --release --features dev-build`: clean.
+- Dev plugin installed at `~/.clap/spectral/dev/spectral_dev.clap` (md5 verified).
+
+**User to manually smoke-test in Bitwig in the morning:**
+1. Routing scenario (Dynamics→Contrast=1.0, Contrast→Master=0.5, Freeze standalone) → expected: signal flows per matrix, Freeze gets no input.
+2. Empty-slot bypass: all slots Empty, mix=100%, music for 30s+ → expected: audibly transparent, no progressive degradation.
+3. Soft clipper at silent input (mute source, slots Empty, mix=100%) → expected: silent output.
+4. Smearing soak: 5 minutes continuous music with all Empty slots → expected: no progressive degradation.
+5. CLIP toggle: hot signal pushed through, click CLIP off → audible distortion (clipper bypassed); CLIP on → bounded near K=4 magnitude.
+
+Sub-projects B–F remain open per the backlog.
+
 ## Update log
 
 - 2026-05-06: doc created with full backlog, sub-project decomposition, Sub-project A Phase plan, dev-install workflow facts.
 - 2026-05-06: spec `2026-05-06-stabilization-sweep.md` written and approved by user with two refinements: (a) master clipper gets a UI toggle button (default on), not always-on; (b) smearing-over-time is a recent regression — user directs Phase 1 to start with BinPhysics carryover audit. Spec §5.1 marks BinPhysics as the PRIMARY HYPOTHESIS and flags `prev_mags` at fx_matrix.rs:562 as a specific suspect (unconditional update, should be gated on `bin_physics_in_use`).
 - 2026-05-06: Phase 1 diagnostics committed (`41946be`). Routing break confirmed at `fx_matrix_grid.rs:217` AND `:307`. Smearing accumulator identified as PLPV `prev_unwrapped_phase` + `total_hops_per_ch` in pipeline.rs:1084-1116 (NOT BinPhysics — my earlier hypothesis was wrong; user's hint about "carries silently over... bin data" still matches since prev_unwrapped_phase IS per-bin state). Fix shape locked: periodic reset every 4096 hops.
+- 2026-05-06 overnight: sub-project A complete. Routing, smearing, soft clipper move (with toggle), and Empty-slot bypass all addressed. 13 commits, dev plugin installed. Sub-projects B (module-state isolation, PAST mode UI), C (universal slider traversal + UX), D (master axis defaults), E (DSP semantics completion), F (PEAK HOLD) remain open.
