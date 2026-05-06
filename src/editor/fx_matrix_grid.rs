@@ -82,6 +82,8 @@ pub fn paint_fx_matrix_grid(
         let ty = module_types[col];
         let name = if col == 8 {
             "OUT".to_string()
+        } else if ty == ModuleType::Empty {
+            String::new()
         } else {
             let s = slot_name_str(&slot_names[col]);
             if s.chars().count() > 4 { s.chars().take(4).collect::<String>() + "\u{2026}" } else { s }
@@ -111,11 +113,15 @@ pub fn paint_fx_matrix_grid(
                 let row_top = origin.y + y_offset;
 
                 // Row label
-                let name = slot_name_str(&slot_names[row]);
-                let display_name: String = if name.chars().count() > 7 {
-                    name.chars().take(6).collect::<String>() + "\u{2026}"
+                let display_name: String = if ty_row == ModuleType::Empty {
+                    String::new()
                 } else {
-                    name
+                    let name = slot_name_str(&slot_names[row]);
+                    if name.chars().count() > 7 {
+                        name.chars().take(6).collect::<String>() + "\u{2026}"
+                    } else {
+                        name
+                    }
                 };
                 let label_rect = Rect::from_min_size(
                     egui::pos2(origin.x, row_top),
