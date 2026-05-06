@@ -350,6 +350,10 @@ pub struct SpectralForgeParams {
 
     pub plpv_midside_enable: BoolParam,
 
+    /// Master output soft clipper toggle. Default true (safety-on-by-default).
+    /// See docs/superpowers/specs/2026-05-06-stabilization-sweep.md §4.4.
+    pub master_clip_enabled: BoolParam,
+
     pub plpv_phase_noise_floor_db: FloatParam,
 
     pub plpv_max_peaks: IntParam,
@@ -574,6 +578,7 @@ impl Default for SpectralForgeParams {
             auto_makeup: BoolParam::new("Auto Makeup", false),
             delta_monitor: BoolParam::new("Delta Monitor", false),
             enable_heavy_modules: BoolParam::new("Enable Heavy Modules", true),
+            master_clip_enabled: BoolParam::new("Master Clip", true),
             plpv_enable: BoolParam::new("PLPV Enable", true),
 
             plpv_dynamics_enable: BoolParam::new("Dynamics PLPV", true),
