@@ -527,9 +527,10 @@ impl FxMatrix {
             if s == 0 {
                 self.mix_buf[..num_bins].copy_from_slice(&complex_buf[..num_bins]);
             }
-            for src in 0..s {
+            for src in 0..(MAX_SLOTS - 1) {
+                if src == s { continue; }
                 let send = route_matrix.send[src][s];
-                if send < 0.001 { continue; }
+                if send.abs() < 0.001 { continue; }
                 // Copy source into scratch, apply amp, then accumulate.
                 self.amp_scratch[..num_bins].copy_from_slice(&self.slot_out[src][..num_bins]);
                 let amp_params_cell = &route_matrix.amp_params[src][s];
@@ -544,7 +545,7 @@ impl FxMatrix {
                 if let Some((src_slot, _kind)) = vrow {
                     if (src_slot as usize) < s {
                         let send = route_matrix.send[MAX_SLOTS + v][s];
-                        if send < 0.001 { continue; }
+                        if send.abs() < 0.001 { continue; }
                         // Copy virtual-row source into scratch, apply amp, then accumulate.
                         self.amp_scratch[..num_bins].copy_from_slice(&self.virtual_out[v][..num_bins]);
                         let amp_params_cell = &route_matrix.amp_params[MAX_SLOTS + v][s];
@@ -563,11 +564,12 @@ impl FxMatrix {
                 // mix_phys was reset_active at end of previous slot (or in reset() for first hop).
                 // Mix upstream physics outputs into mix_phys per the same route weights as audio.
                 // s == 0: no upstream physics; mix_phys stays at zero/default.
-                for u in 0..s {
+                for u in 0..(MAX_SLOTS - 1) {
+                    if u == s { continue; }
                     let send = route_matrix.send[u][s];
-                    if send < 0.001 { continue; }
+                    if send.abs() < 0.001 { continue; }
                     // slot_phys[u] and mix_phys are disjoint struct fields — safe split borrow.
-                    self.mix_phys.mix_from(&self.slot_phys[u], send, num_bins);
+                    self.mix_phys.mix_from(&self.slot_phys[u], send.abs(), num_bins);
                 }
 
                 // Auto-velocity: |curr_mag[k] - prev_mag[k]| written into mix_phys.velocity.
@@ -691,7 +693,7 @@ impl FxMatrix {
         self.mix_buf[..num_bins].fill(Complex::new(0.0, 0.0));
         for src in 0..8 {
             let send = route_matrix.send[src][8];
-            if send < 0.001 { continue; }
+            if send.abs() < 0.001 { continue; }
             // Copy source into scratch, apply amp, then accumulate.
             self.amp_scratch[..num_bins].copy_from_slice(&self.slot_out[src][..num_bins]);
             let amp_params_cell = &route_matrix.amp_params[src][8];
@@ -706,7 +708,7 @@ impl FxMatrix {
         if self.bin_physics_in_use {
             for u in 0..8 {
                 let send = route_matrix.send[u][8];
-                if send < 0.001 { continue; }
+                if send.abs() < 0.001 { continue; }
                 // slot_phys[u] and mix_phys are disjoint struct fields — safe split borrow.
                 self.mix_phys.mix_from(&self.slot_phys[u], send, num_bins);
             }
