@@ -973,7 +973,7 @@ impl Pipeline {
             for col in 0..crate::param_ids::NUM_SLOTS {
                 if r == col { continue; } // skip diagonal to prevent self-feedback
                 if let Some(p) = params.matrix_cell(r, col) {
-                    route_matrix_snap.send[col][r] = p.smoothed.next();
+                    route_matrix_snap.send[col][r] = p.smoothed.next_step(block_size);
                 }
             }
         }
