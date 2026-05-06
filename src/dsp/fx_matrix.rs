@@ -513,6 +513,31 @@ impl FxMatrix {
             self.virtual_out[v][..num_bins].fill(Complex::new(0.0, 0.0));
         }
 
+        // Compute which slots can transitively reach the Master (slot 8).
+        // A slot that cannot reach Master must not modify ctx.unwrapped_phase —
+        // the PLPV re-wrap stage applies that shared buffer to the master output,
+        // so an unrouted PLPV-modifying module (e.g. PhaseSmear) would contaminate
+        // the output regardless of its routing. We withhold unwrapped_phase from
+        // such slots so they fall back to the complex-domain (legacy) path.
+        let mut can_reach_master = [false; MAX_SLOTS];
+        for src in 0..8 {
+            if route_matrix.send[src][8].abs() > 0.001 {
+                can_reach_master[src] = true;
+            }
+        }
+        for _ in 0..7 {
+            let snapshot = can_reach_master;
+            for src in 0..8 {
+                if snapshot[src] { continue; }
+                for mid in 0..8 {
+                    if route_matrix.send[src][mid].abs() > 0.001 && snapshot[mid] {
+                        can_reach_master[src] = true;
+                        break;
+                    }
+                }
+            }
+        }
+
         // Iterate slots strictly in numerical order (Master at slot 8 is handled separately
         // below). Audio and physics both flow forward — `route_matrix.send[src][dst]` only
         // takes effect for `src < dst`. Writer modules (`writer_bits[s] == true`) get a
@@ -639,6 +664,12 @@ impl FxMatrix {
                 // borrow on mix_phys is live at any call site — borrow-checker safe.
                 let is_writer = self.writer_bits[s];
                 let mut ctx_for_slot = *ctx;
+                // Gate PLPV shared-phase access: a slot that cannot reach the Master
+                // output must not write to the shared unwrapped_phase buffer, or its
+                // phase modifications will bleed into the master via the re-wrap stage.
+                if !can_reach_master[s] {
+                    ctx_for_slot.unwrapped_phase = None;
+                }
                 let physics_arg: Option<&mut crate::dsp::bin_physics::BinPhysics>;
                 if self.bin_physics_in_use && is_writer {
                     ctx_for_slot.bin_physics = None;
