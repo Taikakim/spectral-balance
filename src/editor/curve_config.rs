@@ -545,11 +545,11 @@ fn default_config() -> CurveDisplayConfig {
     (g + o).clamp(0.0, 1.0)
 }
 
-/// Dynamics/Freeze THRESHOLD dBFS: WYSIWYG for anchors (db_min, -20, db_max).
-/// With db_min=-160, db_max=0: v=+1 → 0 dBFS, v=0 → -20 dBFS, v=-1 → -160 dBFS.
-/// Exponent 0.9 = 18 dB / 20 (symmetric: each unit of v shifts t_db by ±18 dB).
+/// Dynamics THRESHOLD dBFS: multiplicative log-dBFS, calibrated for db_min=-60, db_max=0.
+///   v ≥ 0:  display = -20 + 20·v  → factor 10^(0.3·v)
+///   v < 0:  display = -20 + 40·v  → factor 10^(0.6·v)
 #[inline] pub fn off_thresh(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
-    g * 10f32.powf(0.9 * o)
+    if o >= 0.0 { g * 10f32.powf(0.3 * o) } else { g * 10f32.powf(0.6 * o) }
 }
 
 /// Ratio 1–20: WYSIWYG with log axis (spec §2 axis-aware lerp).
@@ -613,13 +613,11 @@ fn default_config() -> CurveDisplayConfig {
     g * factor
 }
 
-/// Freeze THRESHOLD dBFS: WYSIWYG with log-gain dBFS axis (spec §3.1 of
-/// 2026-05-05-graph-display-correctness.md). Range -80..0, neutral -20.
-/// Inverse of `gain_to_display(9)` evaluated against the spec lerp:
+/// Freeze/Past THRESHOLD dBFS: multiplicative log-dBFS, range -80..0, neutral -20.
 ///   v ≥ 0:  display = -20 + 20·v  → factor 10^(0.3·v)
 ///   v < 0:  display = -20 + 60·v  → factor 10^(0.9·v)
 #[inline] pub fn off_freeze_thresh(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
-    g * 10f32.powf(0.9 * o)
+    if o >= 0.0 { g * 10f32.powf(0.3 * o) } else { g * 10f32.powf(0.9 * o) }
 }
 
 /// Portamento/SC-smooth ms: multiplicative, factor = 1000/200 = 5.0.

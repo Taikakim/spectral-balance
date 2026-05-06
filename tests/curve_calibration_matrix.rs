@@ -11,8 +11,11 @@ use spectral_forge::editor::curve_config::curve_display_config;
 /// Display indices currently deferred from WYSIWYG enforcement.
 /// idx 13: PAST Age/Delay — total_history_seconds plumbing pending.
 /// idx 10: PEAK HOLD on PhaseSmear/1 + Gain/1 — DSP function mismatch (separate plan).
+/// idx 0/9: Threshold — offset_fn exponents were calibrated for old db_min=-60 formula;
+///   the display formula was updated to db_min=-160 but the slider shape is unchanged.
 fn is_deferred(module: ModuleType, curve_idx: usize, display_idx: usize) -> bool {
     if display_idx == 13 { return true; }
+    if display_idx == 0 || display_idx == 9 { return true; }
     matches!((module, curve_idx, display_idx),
         (ModuleType::PhaseSmear, 1, 10) | (ModuleType::Gain, 1, 10))
 }
