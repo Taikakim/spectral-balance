@@ -12,14 +12,22 @@ pub struct KineticsPopupState {
 }
 
 const MODES: &[(KineticsMode, &str, &str)] = &[
-    (KineticsMode::Hooke,            "Hooke",             "Spring restoring force diffuses energy across adjacent bins"),
-    (KineticsMode::GravityWell,      "Gravity Well",      "Pull energy toward Static / Sidechain / MIDI source"),
-    (KineticsMode::InertialMass,     "Inertial Mass",     "Per-bin mass written to BinPhysics for downstream readers"),
-    (KineticsMode::OrbitalPhase,     "Orbital Phase",     "Phase orbits — satellites rotate opposite to planets"),
-    (KineticsMode::Ferromagnetism,   "Ferromagnetism",    "Aligns neighbour phases to nearest spectral peak"),
-    (KineticsMode::ThermalExpansion, "Thermal Expansion", "Heat accumulates and detunes phase (frequency drift)"),
-    (KineticsMode::TuningFork,       "Tuning Fork",       "Peak-driven phase modulation of nearby neighbours"),
-    (KineticsMode::Diamagnet,        "Diamagnet",         "Energy-conserving spectral carving with 1/d redistribution"),
+    (KineticsMode::Hooke, "Hooke",
+     "Hooke — spring restoring forces couple adjacent bins so energy diffuses sideways through the spectrum. STRENGTH sets the spring constant, REACH adds sympathetic harmonic resonators, DAMPING controls settling. Use it for soft, blooming spectral diffusion. Sidechain: not used."),
+    (KineticsMode::GravityWell, "Gravity Well",
+     "Gravity Well — Newtonian gravitational attraction pulls bins toward the well centre. Well source picked in this popup: Static (curve-driven), Sidechain (peak follower), or MIDI (note-on). Use it as a freeze-into-tone effect or a pitch quantizer driven by an external part. Sidechain: yes (when Sidechain source is selected)."),
+    (KineticsMode::InertialMass, "Inertial Mass",
+     "Inertial Mass — does not change audio; instead writes per-bin mass into BinPhysics so downstream Kinetics modes (Hooke, Gravity Well) see lighter/heavier bins. Mass source picked in this popup: Static curve or Sidechain rate-of-change. Sidechain: yes (Sidechain source)."),
+    (KineticsMode::OrbitalPhase, "Orbital Phase",
+     "Orbital Phase — detected spectral peaks become 'planets'; nearby satellite bins receive opposite-sign phase rotation, like moons in retrograde. STRENGTH sets the per-hop rotation. Use it for subtle phasing tied to the loudest content. Sidechain: not used."),
+    (KineticsMode::Ferromagnetism, "Ferromagnetism",
+     "Ferromagnetism — neighbour bins phase-align toward the nearest spectral peak's phase. Smooths phase relationships and tightens tonal clusters. Sidechain: not used."),
+    (KineticsMode::ThermalExpansion, "Thermal Expansion",
+     "Thermal Expansion — energy heats each bin; heat then drives a frequency-detune phase rotation that gradually cools. Loud sustains drift slightly out of tune over time. Sidechain: not used."),
+    (KineticsMode::TuningFork, "Tuning Fork",
+     "Tuning Fork — detects the strongest peak (the 'fork'), then sympathetic-resonates a cluster of nearby bins into matched modulation. Use it to make a single tone bloom into a small cluster of partials. Sidechain: not used."),
+    (KineticsMode::Diamagnet, "Diamagnet",
+     "Diamagnet — energy-conserving spectral carving: bins are pushed away from a target frequency and the carved magnitude is redistributed into neighbours by 1/d falloff. Use it as a notch-with-fill effect that doesn't change total spectral energy. Sidechain: not used."),
 ];
 
 const WELL_SOURCES: &[(WellSource, &str, &str)] = &[

@@ -12,14 +12,22 @@ pub struct HarmonyPopupState {
 }
 
 const MODES: &[(HarmonyMode, &str, &str)] = &[
-    (HarmonyMode::Chordification,   "Chordification",   "Snap chromagram to nearest of 24 major/minor chord templates"),
-    (HarmonyMode::Undertone,        "Undertone",         "IF-driven sub-harmonics + ground-loop hum"),
-    (HarmonyMode::Companding,       "Companding",        "Per-class harmonic-group attenuation"),
-    (HarmonyMode::FormantRotation,  "Formant Rotation",  "Cepstrum-preserved spectral envelope rotation"),
-    (HarmonyMode::Lifter,           "Lifter",            "Cepstrum-domain envelope/pitch shaping (heavy)"),
-    (HarmonyMode::Inharmonic,       "Inharmonic",        "Stiffness / Bessel / Prime detuning"),
-    (HarmonyMode::HarmonicGenerator,"Harmonic Generator","Synthesise harmonics from detected peaks"),
-    (HarmonyMode::Shuffler,         "Shuffler",          "Random bin swaps within SPREAD-controlled reach"),
+    (HarmonyMode::Chordification, "Chordification",
+     "Chordification — builds a chromagram from the loudest peaks then snaps out-of-chord bins toward the nearest of 24 major/minor chord templates. SPREAD controls the snap radius. Use it as a real-time pitch-class quantizer. Sidechain: not used."),
+    (HarmonyMode::Undertone, "Undertone",
+     "Undertone — generates sub-octave partials below detected peaks, optionally blended with a 50/60/120 Hz hum-frequency weighting (COEFFICIENT). Use it for a synthesized sub-bass parallel to existing tonal content. Sidechain: not used."),
+    (HarmonyMode::Companding, "Companding",
+     "Companding — classifies bins as fundamentals vs harmonics via the harmonic-groups detector, then attenuates overtones by COEFFICIENT. Use it to thin a busy harmonic spectrum back to its fundamentals. Sidechain: not used."),
+    (HarmonyMode::FormantRotation, "Formant Rotation",
+     "Formant Rotation — extracts the spectral envelope via the cepstrum and shifts harmonics by the COEFFICIENT ratio (0.5×–2.0×) while preserving formants. Use it as a vowel-preserving pitch shifter on tonal material. Sidechain: not used."),
+    (HarmonyMode::Lifter, "Lifter",
+     "Lifter — cepstrum-domain shaping where SPREAD scales the low-quefrency (envelope) window and COEFFICIENT scales the high-quefrency (pitch) window. Heavy-CPU mode. Use it for surgical envelope/pitch separation. Sidechain: not used."),
+    (HarmonyMode::Inharmonic, "Inharmonic",
+     "Inharmonic — remaps partials toward stiffness, Bessel, or prime frequency grids (chosen via the inharmonic sub-mode picker). Use it for piano/membrane/atonal harmonic textures. Sidechain: not used."),
+    (HarmonyMode::HarmonicGenerator, "Harmonic Generator",
+     "Harmonic Generator — synthesises overtone series from detected peaks. SPREAD sets per-partial decay; COEFFICIENT sets harmonic count. Use it to brighten a dull source by adding controlled overtones. Sidechain: not used."),
+    (HarmonyMode::Shuffler, "Shuffler",
+     "Shuffler — random bin swaps within SPREAD-controlled reach. Threshold gates which bins are swap candidates. Use it as a textural scramble that ranges from chorus-like to wholesale spectral chaos. Sidechain: not used."),
 ];
 
 const INHARMONIC_SUBMODES: &[(HarmonyInharmonicSubmode, &str, &str)] = &[

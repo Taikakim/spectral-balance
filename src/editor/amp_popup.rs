@@ -81,10 +81,30 @@ pub fn show_popup(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) -> bool
                 }
 
                 ui.separator();
-                ui.add(egui::Slider::new(&mut amount,    0.0..=2.0).text("amount"));
-                ui.add(egui::Slider::new(&mut threshold, 0.0..=1.0).text("threshold"));
-                ui.add(egui::Slider::new(&mut release,   1.0..=2000.0).text("release ms"));
-                ui.add(egui::Slider::new(&mut slew,      1.0..=240.0).text("slew dB/s"));
+                let amount_resp = ui.add(egui::Slider::new(&mut amount, 0.0..=2.0).text("amount"));
+                crate::editor::help_box::track_help_strings(
+                    ui, &amount_resp,
+                    "Amp · amount",
+                    "Strength of the selected amp filter. 0 = bypass (the send acts as if the filter were Linear), 1 = full effect, >1 exaggerates. The same value drives every filter type, so dialling this in lets you A/B-compare types at matched intensity.",
+                );
+                let thr_resp = ui.add(egui::Slider::new(&mut threshold, 0.0..=1.0).text("threshold"));
+                crate::editor::help_box::track_help_strings(
+                    ui, &thr_resp,
+                    "Amp · threshold",
+                    "Trip level (linear magnitude 0..1). Schmitt: bin must exceed this to latch on; the lower trip point sits below it via internal hysteresis. Stiction: minimum step size before the send budges. Ignored by Linear / Vactrol / Slew.",
+                );
+                let rel_resp = ui.add(egui::Slider::new(&mut release, 1.0..=2000.0).text("release ms"));
+                crate::editor::help_box::track_help_strings(
+                    ui, &rel_resp,
+                    "Amp · release ms",
+                    "Vactrol release time. The send envelope decays toward the input at this rate; longer values give the classic opto-coupler tail. Ignored by Linear / Schmitt / Slew / Stiction.",
+                );
+                let slew_resp = ui.add(egui::Slider::new(&mut slew, 1.0..=240.0).text("slew dB/s"));
+                crate::editor::help_box::track_help_strings(
+                    ui, &slew_resp,
+                    "Amp · slew dB/s",
+                    "Maximum rate of change for the send level (Slew filter). Lower = slower glide between targets, smearing fast modulation into a smooth ramp. Ignored by every other filter type.",
+                );
 
                 ui.separator();
                 if ui.button("Close").clicked() {

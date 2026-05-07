@@ -12,16 +12,26 @@ pub struct LifePopupState {
 }
 
 const MODES: &[(LifeMode, &str, &str)] = &[
-    (LifeMode::Viscosity,       "Viscosity",       "FTCS finite-volume diffusion across adjacent bins"),
-    (LifeMode::SurfaceTension,  "Surface Tension", "Coalesce adjacent spectral peaks toward the stronger"),
-    (LifeMode::Crystallization, "Crystallization", "Sustained tones lock to a stable phase"),
-    (LifeMode::Archimedes,      "Archimedes",      "Volume-conserving global ducking by overflow"),
-    (LifeMode::NonNewtonian,    "Non-Newtonian",   "Rate-limit fast transients; slow signals pass freely"),
-    (LifeMode::Stiction,        "Stiction",        "Static + kinetic friction: bins resist small movements"),
-    (LifeMode::Yield,           "Yield",           "Fabric tearing at threshold with phase scramble"),
-    (LifeMode::Capillary,       "Capillary",       "Wick energy upward into harmonic partials"),
-    (LifeMode::Sandpaper,       "Sandpaper",       "Phase friction emits granular sparks up the spectrum"),
-    (LifeMode::Brownian,        "Brownian",        "Temperature-driven random walk of bin magnitudes"),
+    (LifeMode::Viscosity, "Viscosity",
+     "Viscosity — FTCS finite-volume power diffusion smooths adjacent bin magnitudes like a fluid resistance. Higher AMOUNT = more spectral smoothing. Use it to take edge off harsh content without filtering. Sidechain: not used."),
+    (LifeMode::SurfaceTension, "Surface Tension",
+     "Surface Tension — strong peaks coalesce, stealing magnitude from weaker neighbours within REACH. Total spectral energy stays roughly conserved. Use it to consolidate a noisy cloud of bins into a single tonal core. Sidechain: not used."),
+    (LifeMode::Crystallization, "Crystallization",
+     "Crystallization — sustained tonal bins accumulate a crystallization envelope and lock to a stable phase. AMOUNT scales the growth rate; SPEED controls how fast the lock decays. Use it to glassify pads and held notes. Sidechain: not used."),
+    (LifeMode::Archimedes, "Archimedes",
+     "Archimedes — volume-conserving global ducking. When the total spectral magnitude exceeds the THRESHOLD capacity, every bin is scaled down proportionally. Use it as a self-balancing limiter that never colours the spectrum's shape. Sidechain: not used."),
+    (LifeMode::NonNewtonian, "Non-Newtonian",
+     "Non-Newtonian — oobleck behaviour: fast magnitude changes are clamped, slow ones pass freely. Squashes transients while leaving sustains intact. Sidechain: not used."),
+    (LifeMode::Stiction, "Stiction",
+     "Stiction — static + kinetic friction. Bins below a velocity threshold are held in place and decay to silence; moving bins pass freely. Use it to silence a wash of low-level noise while preserving moving content. Sidechain: not used."),
+    (LifeMode::Yield, "Yield",
+     "Yield — fabric tearing. Bins exceeding THRESHOLD have their phase scrambled and magnitude clamped; the tear heals over SPEED. Use it for controlled distortion that ramps with intensity. Sidechain: not used."),
+    (LifeMode::Capillary, "Capillary",
+     "Capillary — wicks energy upward through harmonic destinations. Source bins drain into harmonics above via a three-pass transport. Use it to pull a lo-fi signal into a richer harmonic spectrum. Sidechain: not used."),
+    (LifeMode::Sandpaper, "Sandpaper",
+     "Sandpaper — phase friction emits granular sparks of noise upward in frequency when bins rub against each other. Use it for textural high-end content tied to motion. Sidechain: not used."),
+    (LifeMode::Brownian, "Brownian",
+     "Brownian — temperature-driven random walk of per-bin magnitudes. AMOUNT scales the heat. Use it for unsettled, ever-shifting noise floors. Sidechain: not used."),
 ];
 
 pub fn mode_label(mode: LifeMode) -> &'static str {

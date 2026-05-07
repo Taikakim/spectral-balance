@@ -12,16 +12,26 @@ pub struct CircuitPopupState {
 }
 
 const MODES: &[(CircuitMode, &str, &str)] = &[
-    (CircuitMode::CrossoverDistortion, "Crossover Distortion", "Class A/B deadzone with C¹-smooth transition"),
-    (CircuitMode::SpectralSchmitt,     "Spectral Schmitt",     "Branch-free hysteresis latch per bin"),
-    (CircuitMode::BbdBins,             "BBD Bins",             "4-stage delay + lowpass + dither (bucket-brigade)"),
-    (CircuitMode::Vactrol,             "Vactrol",              "Cascaded 1-pole envelope follower; reads BinPhysics::flux"),
-    (CircuitMode::TransformerSaturation, "Transformer (heavy)", "tanh saturation + magnitude one-pole + spread; reads/writes flux"),
-    (CircuitMode::PowerSag,            "Power Sag",            "Energy-driven envelope; reads BinPhysics::temperature"),
-    (CircuitMode::ComponentDrift,      "Component Drift",      "Slow per-bin LFSR drift; reads/writes temperature"),
-    (CircuitMode::PcbCrosstalk,        "PCB Crosstalk",        "3-tap symmetric stencil leak between adjacent bins"),
-    (CircuitMode::SlewDistortion,      "Slew Distortion",      "Magnitude rate-limit + phase scramble; writes BinPhysics::slew"),
-    (CircuitMode::BiasFuzz,            "Bias Fuzz",            "DC offset envelope + asymmetric clip; reads/writes BinPhysics::bias"),
+    (CircuitMode::CrossoverDistortion, "Crossover Distortion",
+     "Crossover Distortion — class A/B-style deadzone around zero with a C¹-smooth re-emergence curve. Quiet content is silenced and sputters back when it crosses out of the deadzone. Use it for broken-radio fuzz on tails. Sidechain: not used."),
+    (CircuitMode::SpectralSchmitt, "Spectral Schmitt",
+     "Spectral Schmitt — branch-free hysteresis latch per bin with two trip points. Bins below the lower threshold are gated; once a bin crosses the upper trip it latches on until it drops below the lower again. Use it for sample-rate-style chunky gating. Sidechain: not used."),
+    (CircuitMode::BbdBins, "BBD Bins",
+     "BBD Bins — 4 cascaded LP stages + chip-noise dither emulate a bucket-brigade delay per bin. Smears magnitude over a few hops and adds analog-feeling grit. Sidechain: not used."),
+    (CircuitMode::Vactrol, "Vactrol",
+     "Vactrol — cascaded fast/slow opto-coupler caps act as a soft-saturating envelope follower. Reads BinPhysics::flux. RELEASE controls the slow-cap time constant for the classic ringing release character. Sidechain: not used."),
+    (CircuitMode::TransformerSaturation, "Transformer (heavy)",
+     "Transformer Saturation — tanh soft-clipping with magnitude one-pole and bin-spread coupling. Reads/writes BinPhysics::flux. Heavy-CPU mode. Use it to add a transformer-iron warmth to clean material. Sidechain: not used."),
+    (CircuitMode::PowerSag, "Power Sag",
+     "Power Sag — sustained loud bins drive a sag envelope that pulls the entire output level down, recovering after the load lifts. Reads BinPhysics::temperature so hot bins contribute more sag. Use it for that retro pumped-PSU character. Sidechain: not used."),
+    (CircuitMode::ComponentDrift, "Component Drift",
+     "Component Drift — slow per-bin pseudo-random gain wander driven by an LFSR. Reads/writes BinPhysics::temperature so hot bins drift further. Use it for analog-feeling instability. Sidechain: not used."),
+    (CircuitMode::PcbCrosstalk, "PCB Crosstalk",
+     "PCB Crosstalk — 3-tap symmetric stencil leaks energy between adjacent bins, like analog trace-coupling. Subtle smearing that adds analog character without filtering. Sidechain: not used."),
+    (CircuitMode::SlewDistortion, "Slew Distortion",
+     "Slew Distortion — magnitude rate-limit per bin. Slowed transients spit excess slew energy out as phase scramble, writing it into BinPhysics::slew for downstream readers. Use it as transient softening with controllable phase fuzz. Sidechain: not used."),
+    (CircuitMode::BiasFuzz, "Bias Fuzz",
+     "Bias Fuzz — DC offset envelope shifts the bin's zero-point off-centre, then loud transients clip asymmetrically against the top rail. Reads/writes BinPhysics::bias. Adds even-order harmonics to the magnitude envelope. Sidechain: not used."),
 ];
 
 pub fn mode_label(mode: CircuitMode) -> &'static str {
