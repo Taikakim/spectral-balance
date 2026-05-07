@@ -17,18 +17,22 @@ fn past_active_layout_granular_visible_curves() {
 
 #[test]
 fn past_active_layout_decay_sorter_visible_curves() {
+    // E-2: SPREAD (curve 3) now active in every mode with mode-specific
+    // label override.
     let layout = active_layout(PastMode::DecaySorter as u8);
-    assert_eq!(layout.active, &[0u8, 2, 4]);
-    assert!(layout.label_overrides.is_empty());
+    assert_eq!(layout.active, &[0u8, 2, 3, 4]);
+    let want: Vec<(u8, &'static str)> = vec![(3, "Smooth")];
+    let got = layout.label_overrides.iter().copied().collect::<Vec<_>>();
+    assert_eq!(got, want);
 }
 
 #[test]
 fn past_active_layout_convolution_visible_curves() {
     let layout = active_layout(PastMode::Convolution as u8);
-    assert_eq!(layout.active, &[0u8, 1, 2, 4]);
+    assert_eq!(layout.active, &[0u8, 1, 2, 3, 4]);
     let mut got = layout.label_overrides.iter().copied().collect::<Vec<_>>();
     got.sort();
-    let mut want: Vec<(u8, &'static str)> = vec![(1, "Delay")];
+    let mut want: Vec<(u8, &'static str)> = vec![(1, "Delay"), (3, "Kernel")];
     want.sort();
     assert_eq!(got, want);
 }
@@ -36,15 +40,19 @@ fn past_active_layout_convolution_visible_curves() {
 #[test]
 fn past_active_layout_reverse_visible_curves() {
     let layout = active_layout(PastMode::Reverse as u8);
-    assert_eq!(layout.active, &[0u8, 2, 4]);
-    assert!(layout.label_overrides.is_empty());
+    assert_eq!(layout.active, &[0u8, 2, 3, 4]);
+    let want: Vec<(u8, &'static str)> = vec![(3, "Smear")];
+    let got = layout.label_overrides.iter().copied().collect::<Vec<_>>();
+    assert_eq!(got, want);
 }
 
 #[test]
 fn past_active_layout_stretch_visible_curves() {
     let layout = active_layout(PastMode::Stretch as u8);
-    assert_eq!(layout.active, &[0u8, 4]);
-    assert!(layout.label_overrides.is_empty());
+    assert_eq!(layout.active, &[0u8, 3, 4]);
+    let want: Vec<(u8, &'static str)> = vec![(3, "Smear")];
+    let got = layout.label_overrides.iter().copied().collect::<Vec<_>>();
+    assert_eq!(got, want);
 }
 
 #[test]

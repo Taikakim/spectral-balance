@@ -46,11 +46,13 @@ fn past_active_layout_shapes_visible_curves_per_mode() {
     let layout_fn = module_spec(ModuleType::Past).active_layout
         .expect("Past has active_layout");
 
+    // E-2: SPREAD (curve 3) is now active in EVERY mode, so all counts
+    // bumped by 1 except Granular which already had it.
     assert_eq!(layout_fn(PastMode::Granular as u8).active.len(),    5);
-    assert_eq!(layout_fn(PastMode::DecaySorter as u8).active.len(), 3);
-    assert_eq!(layout_fn(PastMode::Convolution as u8).active.len(), 4);
-    assert_eq!(layout_fn(PastMode::Reverse as u8).active.len(),     3);
-    assert_eq!(layout_fn(PastMode::Stretch as u8).active.len(),     2);
+    assert_eq!(layout_fn(PastMode::DecaySorter as u8).active.len(), 4);
+    assert_eq!(layout_fn(PastMode::Convolution as u8).active.len(), 5);
+    assert_eq!(layout_fn(PastMode::Reverse as u8).active.len(),     4);
+    assert_eq!(layout_fn(PastMode::Stretch as u8).active.len(),     3);
 
     // Non-mode-bearing modules return None and the editor falls back to
     // rendering all curve_labels.

@@ -51,6 +51,9 @@ impl TryFrom<u8> for PastMode {
 ///
 /// Wired via `active_layout: Some(past::active_layout)` on the Past
 /// `ModuleSpec` literal (Task 7).
+///
+/// SPREAD (curve 3) is now active in EVERY mode, applying a continuous
+/// 3-tap frequency-axis smear to whatever each mode produces (E-2).
 pub fn active_layout(mode: u8) -> CurveLayout {
     match PastMode::try_from(mode).unwrap_or(PastMode::Granular) {
         PastMode::Granular => CurveLayout {
@@ -60,26 +63,26 @@ pub fn active_layout(mode: u8) -> CurveLayout {
             mode_overview:   None,
         },
         PastMode::DecaySorter => CurveLayout {
-            active:          &[0, 2, 4],
-            label_overrides: &[],
+            active:          &[0, 2, 3, 4],
+            label_overrides: &[(3, "Smooth")],
             help_for:        decay_sorter_help_for,
             mode_overview:   None,
         },
         PastMode::Convolution => CurveLayout {
-            active:          &[0, 1, 2, 4],
-            label_overrides: &[(1, "Delay")],
+            active:          &[0, 1, 2, 3, 4],
+            label_overrides: &[(1, "Delay"), (3, "Kernel")],
             help_for:        convolution_help_for,
             mode_overview:   None,
         },
         PastMode::Reverse => CurveLayout {
-            active:          &[0, 2, 4],
-            label_overrides: &[],
+            active:          &[0, 2, 3, 4],
+            label_overrides: &[(3, "Smear")],
             help_for:        reverse_help_for,
             mode_overview:   None,
         },
         PastMode::Stretch => CurveLayout {
-            active:          &[0, 4],
-            label_overrides: &[],
+            active:          &[0, 3, 4],
+            label_overrides: &[(3, "Smear")],
             help_for:        stretch_help_for,
             mode_overview:   None,
         },
@@ -91,7 +94,7 @@ fn granular_help_for(curve_idx: u8) -> &'static str {
         0 => "How much of the historical bin replaces the current bin. 0 = current only, 1 = historical only. Adds with upstream BinPhysics `crystallization`.",
         1 => "Per-bin lookback into history. 0 = now, 1 = oldest available frame.",
         2 => "Per-bin gate. Bins whose current magnitude falls below the threshold pass through unchanged.",
-        3 => "Toggle (>0.5) per-bin 3-bin frequency smear of the historical read. Smooths bin-leakage across narrow partials.",
+        3 => "Smear — continuous 3-bin frequency blend of the historical read. 0 = sharp, 1 = full neighbour-average. Smooths bin-leakage across narrow partials.",
         4 => "Per-bin wet/dry.",
         _ => "",
     }
@@ -101,6 +104,7 @@ fn decay_sorter_help_for(curve_idx: u8) -> &'static str {
     match curve_idx {
         0 => "Per-bin output gain on the rearranged signal.",
         2 => "Per-bin floor — bins below this magnitude are excluded from sorting.",
+        3 => "Smooth — 3-bin blend on the rearranged output. 0 = sharp sort boundaries, 1 = blurred. Use to soften the step-function character of the sort.",
         4 => "Per-bin wet/dry of sorted output vs. original.",
         _ => "",
     }
@@ -111,6 +115,7 @@ fn convolution_help_for(curve_idx: u8) -> &'static str {
         0 => "Per-bin convolution strength. Multiplied by upstream BinPhysics `flux` if present (gates by recent change).",
         1 => "Per-bin delay into history. Low bins can sample old, high bins recent, or any other shape.",
         2 => "Per-bin gate on the current frame's magnitude.",
+        3 => "Kernel — widens the convolution kernel. 0 = single-bin point convolution, 1 = full 3-bin average of the historical read. Wider = broader spectral self-resonance.",
         4 => "Per-bin wet/dry.",
         _ => "",
     }
@@ -120,6 +125,7 @@ fn reverse_help_for(curve_idx: u8) -> &'static str {
     match curve_idx {
         0 => "Per-bin keep during the reverse read.",
         2 => "Per-bin gate.",
+        3 => "Smear — 3-bin frequency blend of the reversed read. 0 = sharp, 1 = full neighbour-average. Smooths the reversed playback's spectral profile.",
         4 => "Per-bin wet/dry.",
         _ => "",
     }
@@ -128,6 +134,7 @@ fn reverse_help_for(curve_idx: u8) -> &'static str {
 fn stretch_help_for(curve_idx: u8) -> &'static str {
     match curve_idx {
         0 => "Per-bin keep during the stretched read.",
+        3 => "Smear — 3-bin frequency blend of the stretched read. 0 = sharp, 1 = full neighbour-average. Smooths the stretch playback at the cost of transient definition.",
         4 => "Per-bin wet/dry.",
         _ => "",
     }
@@ -359,10 +366,10 @@ impl SpectralModule for PastModule {
         let ch = channel.min(1);
         match self.mode {
             PastMode::Granular   => self.apply_granular(ch, bins, history, amount, time, threshold, spread, mix, ctx),
-            PastMode::DecaySorter=> self.apply_decay_sorter(ch, bins, history, amount, threshold, mix, ctx),
-            PastMode::Convolution=> self.apply_convolution(ch, bins, history, amount, time, threshold, mix, ctx),
-            PastMode::Reverse    => self.apply_reverse(ch, bins, history, amount, threshold, mix, ctx),
-            PastMode::Stretch    => self.apply_stretch(ch, bins, history, amount, mix, ctx),
+            PastMode::DecaySorter=> self.apply_decay_sorter(ch, bins, history, amount, threshold, spread, mix, ctx),
+            PastMode::Convolution=> self.apply_convolution(ch, bins, history, amount, time, threshold, spread, mix, ctx),
+            PastMode::Reverse    => self.apply_reverse(ch, bins, history, amount, threshold, spread, mix, ctx),
+            PastMode::Stretch    => self.apply_stretch(ch, bins, history, amount, spread, mix, ctx),
         }
     }
 
@@ -430,10 +437,18 @@ impl PastModule {
             let age = (time.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0) * max_age).round() as usize;
             let frame = match hist.read_frame(ch, age) { Some(f) => f, None => continue };
             if k >= frame.len() { continue; }
-            let val = if spread.get(k).copied().unwrap_or(0.0) > 0.5 && k > 0 && k + 1 < frame.len() {
-                (frame[k - 1] + frame[k] + frame[k + 1]) * (1.0 / 3.0)
-            } else {
-                frame[k]
+            // Continuous 3-bin smear (E-2 Granular): blend the historical
+            // read with the average of its frequency neighbours, weighted
+            // by SPREAD ∈ [0, 1]. SPREAD=0 keeps the sharp historical
+            // bin; SPREAD=1 fully replaces with the neighbour average.
+            let val = {
+                let smear = spread.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0);
+                if smear > 0.0 && k > 0 && k + 1 < frame.len() {
+                    let neighbour_avg = (frame[k - 1] + frame[k + 1]) * 0.5;
+                    frame[k] * (1.0 - smear) + neighbour_avg * smear
+                } else {
+                    frame[k]
+                }
             };
             let replacement = val * effective_amount;
             let m_val = mix.get(k).copied().unwrap_or(1.0).clamp(0.0, 1.0);
@@ -443,7 +458,7 @@ impl PastModule {
 
     fn apply_decay_sorter(
         &mut self, ch: usize, bins: &mut [Complex<f32>], hist: &HistoryBuffer,
-        amount: &[f32], threshold: &[f32], mix: &[f32], ctx: &ModuleContext<'_>,
+        amount: &[f32], threshold: &[f32], spread: &[f32], mix: &[f32], ctx: &ModuleContext<'_>,
     ) {
         let n = bins.len();
         let norm_factor = ctx.fft_size as f32 / 4.0;
@@ -511,11 +526,30 @@ impl PastModule {
                 bins[kk] = scratch[kk] * (1.0 - m_val);
             }
         }
+        // Post-sort smooth (E-2 DecaySorter): blur the rearranged destination
+        // bins by their frequency neighbours, weighted by SPREAD ∈ [0, 1].
+        // Two-pass with a `prev` cache so in-place writes don't corrupt the
+        // neighbour reads.
+        if max_dest > low_k + 2 {
+            let mut prev = bins[low_k];
+            for k in (low_k + 1)..(max_dest - 1) {
+                let smear = spread.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0);
+                if smear > 0.0 {
+                    let next = bins[k + 1];
+                    let neighbour_avg = (prev + next) * 0.5;
+                    let smoothed = bins[k] * (1.0 - smear) + neighbour_avg * smear;
+                    prev = bins[k];
+                    bins[k] = smoothed;
+                } else {
+                    prev = bins[k];
+                }
+            }
+        }
     }
 
     fn apply_convolution(
         &mut self, ch: usize, bins: &mut [Complex<f32>], hist: &HistoryBuffer,
-        amount: &[f32], time: &[f32], threshold: &[f32], mix: &[f32], ctx: &ModuleContext<'_>,
+        amount: &[f32], time: &[f32], threshold: &[f32], spread: &[f32], mix: &[f32], ctx: &ModuleContext<'_>,
     ) {
         let n = bins.len().min(ctx.num_bins);
         let max_age = hist.capacity_frames() as f32;
@@ -532,7 +566,20 @@ impl PastModule {
             let age = (time.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0) * max_age).round() as usize;
             let frame = match hist.read_frame(ch, age) { Some(f) => f, None => continue };
             if k >= frame.len() { continue; }
-            let conv = bins[k] * frame[k] * bin_amount;
+            // Convolution kernel widening (E-2 Convolution): SPREAD blends
+            // the per-bin convolution kernel from a 1-bin point (frame[k])
+            // toward a 3-bin neighbour-average for broader spectral
+            // self-resonance.
+            let kernel = {
+                let smear = spread.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0);
+                if smear > 0.0 && k > 0 && k + 1 < frame.len() {
+                    let neighbour_avg = (frame[k - 1] + frame[k + 1]) * 0.5;
+                    frame[k] * (1.0 - smear) + neighbour_avg * smear
+                } else {
+                    frame[k]
+                }
+            };
+            let conv = bins[k] * kernel * bin_amount;
             let m_val = mix.get(k).copied().unwrap_or(1.0).clamp(0.0, 1.0);
             bins[k] = bins[k] * (1.0 - m_val) + conv * m_val;
         }
@@ -540,7 +587,7 @@ impl PastModule {
 
     fn apply_reverse(
         &mut self, ch: usize, bins: &mut [Complex<f32>], hist: &HistoryBuffer,
-        amount: &[f32], threshold: &[f32], mix: &[f32],
+        amount: &[f32], threshold: &[f32], spread: &[f32], mix: &[f32],
         ctx: &ModuleContext<'_>,
     ) {
         let n = bins.len().min(ctx.num_bins);
@@ -561,7 +608,17 @@ impl PastModule {
             if mag_sq < thr_lin * thr_lin { continue; }
             if k >= frame.len() { continue; }
             let bin_amount = amount.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0);
-            let value = frame[k] * bin_amount;
+            // Smear the reversed read on the frequency axis (E-2 Reverse).
+            let read = {
+                let smear = spread.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0);
+                if smear > 0.0 && k > 0 && k + 1 < frame.len() {
+                    let neighbour_avg = (frame[k - 1] + frame[k + 1]) * 0.5;
+                    frame[k] * (1.0 - smear) + neighbour_avg * smear
+                } else {
+                    frame[k]
+                }
+            };
+            let value = read * bin_amount;
             let m_val = mix.get(k).copied().unwrap_or(1.0).clamp(0.0, 1.0);
             bins[k] = bins[k] * (1.0 - m_val) + value * m_val;
         }
@@ -569,7 +626,7 @@ impl PastModule {
 
     fn apply_stretch(
         &mut self, ch: usize, bins: &mut [Complex<f32>], hist: &HistoryBuffer,
-        amount: &[f32], mix: &[f32],
+        amount: &[f32], spread: &[f32], mix: &[f32],
         ctx: &ModuleContext<'_>,
     ) {
         let n = bins.len().min(ctx.num_bins);
@@ -606,7 +663,21 @@ impl PastModule {
             let bin_amount = amount.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0);
             if bin_amount < 1e-6 { continue; }
 
-            let mut sample = self.channels[ch].sort_scratch[k];
+            // Frequency-axis smear of the stretched read (E-2 Stretch):
+            // SPREAD blends the fractional-read scratch sample with its
+            // neighbour-average for smoother stretch playback at the cost
+            // of transient definition. scratch isn't mutated in this
+            // loop so neighbour reads are safe.
+            let mut sample = {
+                let scratch = &self.channels[ch].sort_scratch;
+                let smear = spread.get(k).copied().unwrap_or(0.0).clamp(0.0, 1.0);
+                if smear > 0.0 && k > 0 && k + 1 < n {
+                    let neighbour_avg = (scratch[k - 1] + scratch[k + 1]) * 0.5;
+                    scratch[k] * (1.0 - smear) + neighbour_avg * smear
+                } else {
+                    scratch[k]
+                }
+            };
 
             // Phase rotation: 2π · if_offset · (rate - 1) cycles.
             let if_off = if_offset.get(k).copied().unwrap_or(0.0);
