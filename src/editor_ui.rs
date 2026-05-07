@@ -1401,8 +1401,13 @@ pub fn create_editor(
                         }
                         // Reset tilt/offset/curvature FloatParam atomics so the slider UI matches.
                         // assign_module reset the smoothers; the setter writes mirror the FloatParam
-                        // values through nih-plug's host-aware path so .value() also reads zero.
-                        for (c, kind, value) in crate::editor::module_popup::transform_reset_pairs(changed_slot) {
+                        // values through nih-plug's host-aware path so .value() also reads the
+                        // correct default (+1.0 for natural-at-max curves, 0.0 otherwise).
+                        let new_module_ty  = params.slot_module_types.lock()[changed_slot];
+                        let new_gain_mode  = params.slot_gain_mode.lock()[changed_slot];
+                        for (c, kind, value) in crate::editor::module_popup::transform_reset_pairs(
+                            changed_slot, new_module_ty, new_gain_mode,
+                        ) {
                             let p = match kind {
                                 "tilt"      => params.tilt_param(changed_slot, c),
                                 "offset"    => params.offset_param(changed_slot, c),

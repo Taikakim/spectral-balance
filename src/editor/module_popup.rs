@@ -1,5 +1,5 @@
 use nih_plug_egui::egui::{self, Pos2, Ui};
-use crate::dsp::modules::{module_spec, ModuleType};
+use crate::dsp::modules::{module_spec, GainMode, ModuleType};
 use crate::editor::theme as th;
 use crate::params::SpectralForgeParams;
 
@@ -142,12 +142,26 @@ pub fn open_popup(ui: &mut Ui, slot: usize, pos: Pos2) {
 /// that needs to be reset on module switch. `kind` is "tilt" | "offset" |
 /// "curvature". Caller (editor_ui.rs) iterates these and writes each via
 /// `setter.set_parameter`. Mirrors the per-curve graph_node reset block.
-pub fn transform_reset_pairs(slot: usize) -> impl Iterator<Item = (usize, &'static str, f32)> {
+///
+/// The offset reset value is module-aware: curves where `natural_at_max` is
+/// true default to `+1.0` (so the user loads at `y_max` and slides down),
+/// while all other curves reset to `0.0`.  Tilt and curvature always reset
+/// to `0.0`.
+///
+/// The `slot` parameter is kept for API consistency but is unused internally;
+/// the new-module type and gain-mode carry all necessary context.
+pub fn transform_reset_pairs(
+    slot:      usize,
+    module_ty: ModuleType,
+    gain_mode: GainMode,
+) -> impl Iterator<Item = (usize, &'static str, f32)> {
     let _ = slot;
-    (0..7).flat_map(|c| {
+    (0..7).flat_map(move |c| {
+        let cfg = crate::editor::curve_config::curve_display_config(module_ty, c, gain_mode);
+        let offset_default = if cfg.natural_at_max { 1.0_f32 } else { 0.0_f32 };
         [
-            (c, "tilt", 0.0_f32),
-            (c, "offset", 0.0_f32),
+            (c, "tilt",      0.0_f32),
+            (c, "offset",    offset_default),
             (c, "curvature", 0.0_f32),
         ]
     })
@@ -174,12 +188,19 @@ fn assign_module(params: &SpectralForgeParams, slot: usize, ty: ModuleType) {
     // assign_module has no ParamSetter access so we reset the smoothers directly;
     // the audio thread reads tilt/offset via smoothed.next(), so this takes effect
     // on the next processing block without host notification.
+    //
+    // Offset resets to +1.0 for natural-at-max curves (y_natural == y_max) of the
+    // newly assigned module, matching the T3 FloatParam default set at plugin load.
+    // All other transforms reset to 0.0.
+    let gain_mode = params.slot_gain_mode.lock()[slot];
     for c in 0..7 {
         if let Some(p) = params.tilt_param(slot, c) {
             p.smoothed.reset(0.0);
         }
         if let Some(p) = params.offset_param(slot, c) {
-            p.smoothed.reset(0.0);
+            let cfg = crate::editor::curve_config::curve_display_config(ty, c, gain_mode);
+            let offset_default = if cfg.natural_at_max { 1.0_f32 } else { 0.0_f32 };
+            p.smoothed.reset(offset_default);
         }
         if let Some(p) = params.curvature_param(slot, c) {
             p.smoothed.reset(0.0);
