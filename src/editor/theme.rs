@@ -170,6 +170,13 @@ pub const FONT_SIZE_MATRIX_CELL:  f32 = 8.0;
 /// FX matrix T/S virtual-row icon and self-send markers.
 pub const FONT_SIZE_MATRIX_VROW:  f32 = 7.0;
 
+// ─── Off-rect node indicator ──────────────────────────────────────────────────
+
+/// Off-rect node indicator (drawn when |node.y| > 1).
+pub const NODE_OFFRECT_COLOR:      Color32 = Color32::from_rgb(220, 60, 60); // red
+pub const NODE_OFFRECT_SIZE_PX:    f32     = 6.0;
+pub const NODE_OFFRECT_OFFSET_PX:  f32     = 3.0; // distance outside the rect edge
+
 // ─── Modulation Ring overlay ──────────────────────────────────────────────────
 
 pub const MOD_RING_RADIUS:     f32     = 16.0;

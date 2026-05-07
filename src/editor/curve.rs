@@ -1044,6 +1044,40 @@ pub fn curve_widget(
                     Stroke::new(th::STROKE_BORDER, th::BORDER));
             }
         }
+
+        // Off-rect indicator: when node.y is outside the visible ±1 range, draw a
+        // red directional triangle at the corresponding rect edge. The node circle
+        // itself is already pinned to the rect edge for display when |y| > 1; this
+        // adds a visual cue so users can see WHICH direction the node lives in.
+        if nodes[i].y.abs() > 1.0 {
+            let edge_y = if nodes[i].y > 0.0 {
+                rect.top() - th::NODE_OFFRECT_OFFSET_PX
+            } else {
+                rect.bottom() + th::NODE_OFFRECT_OFFSET_PX
+            };
+            let half = th::NODE_OFFRECT_SIZE_PX / 2.0;
+            let sx = rect.left() + nodes[i].x.clamp(0.0, 1.0) * rect.width();
+            let triangle = if nodes[i].y > 0.0 {
+                // pointing up (node is above the visible rect)
+                vec![
+                    Pos2::new(sx,          edge_y - half),
+                    Pos2::new(sx - half,   edge_y + half),
+                    Pos2::new(sx + half,   edge_y + half),
+                ]
+            } else {
+                // pointing down (node is below the visible rect)
+                vec![
+                    Pos2::new(sx,          edge_y + half),
+                    Pos2::new(sx - half,   edge_y - half),
+                    Pos2::new(sx + half,   edge_y - half),
+                ]
+            };
+            ui.painter().add(Shape::convex_polygon(
+                triangle,
+                th::NODE_OFFRECT_COLOR,
+                Stroke::NONE,
+            ));
+        }
     }
 
     CurveWidgetResult { changed, drag_started, drag_stopped, alt_clicked_node }
