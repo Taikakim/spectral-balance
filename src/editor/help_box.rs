@@ -260,6 +260,8 @@ pub fn draw(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) {
         .inner_margin(egui::Margin { left: pad, right: pad, top: pad, bottom: pad })
         .show(ui, |ui| {
             ui.set_width(inner_w);
+            // Heading. The exact pattern that has reliably wrapped here
+            // for months: RichText + Label::wrap(). DON'T touch this.
             ui.add(
                 egui::Label::new(
                     RichText::new(head.as_ref())
@@ -268,39 +270,37 @@ pub fn draw(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) {
                 ).wrap(),
             );
             ui.add_space(4.0);
-            // Body. Always rendered through a LayoutJob with explicit wrap
-            // width — `Label::wrap()` and `ui.available_width()` both
-            // proved unreliable inside this Frame (parent UI width leaks
-            // through). Hard-coding the wrap target to the same value we
-            // gave to `set_width` (minus the symmetric inner margin) is
-            // the only reliable way to keep body text bounded.
-            let body_font  = FontId::proportional(th::scaled(th::FONT_SIZE_HELP_BODY, scale));
-            let body_color = th::HELP_BOX_BODY;
-            let yellow     = egui::Color32::from_rgb(0xff, 0xc8, 0x40);
-            let mut job = egui::text::LayoutJob::default();
-            job.wrap.max_width      = (inner_w - 2.0 * pad as f32).max(40.0);
-            job.wrap.break_anywhere = false;
+            // Yellow "Feedback" prefix, when present, on its own row above
+            // the body. Inline coloured prefix attempts via LayoutJob /
+            // horizontal_wrapped have been unreliable in this egui — a
+            // separate Label is the boring-but-works approach.
+            let body_font = FontId::proportional(th::scaled(th::FONT_SIZE_HELP_BODY, scale));
             if let Some(prefix) = yellow_prefix {
-                job.append(
-                    &format!("{} ", prefix),
-                    0.0,
-                    egui::TextFormat {
-                        font_id: body_font.clone(),
-                        color:   yellow,
-                        ..Default::default()
-                    },
+                let yellow = egui::Color32::from_rgb(0xff, 0xc8, 0x40);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(prefix.as_str())
+                            .color(yellow)
+                            .strong()
+                            .font(body_font.clone()),
+                    ).wrap(),
                 );
+                ui.add_space(2.0);
             }
-            job.append(
-                body.as_ref(),
-                0.0,
-                egui::TextFormat {
-                    font_id: body_font,
-                    color:   body_color,
-                    ..Default::default()
-                },
+            // Body — same RichText + Label::wrap() pattern as the heading.
+            // This is the pattern that has wrapped reliably in this code
+            // base for months; previous attempts to swap it for LayoutJob
+            // broke wrapping at every character, then again as a single
+            // unwrapped line. Stop trying to be clever here.
+            ui.add(
+                egui::Label::new(
+                    RichText::new(body.as_ref())
+                        .color(th::HELP_BOX_BODY)
+                        .font(body_font),
+                ).wrap(),
             );
-            ui.add(egui::Label::new(job));
+            // Quiet the unused-variable hint when no inner_w consumer.
+            let _ = inner_w;
         });
 }
 
