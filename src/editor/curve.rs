@@ -897,15 +897,36 @@ pub struct CurveWidgetResult {
     pub alt_clicked_node: Option<(Pos2, usize)>,
 }
 
+/// Curve display context — the slice of state needed for the dot to land on
+/// the rendered curve at a node's frequency. When `Some`, dots track the line
+/// through offset/tilt/curvature transforms; when `None`, dots fall back to the
+/// raw `node.y` mapping (legacy behavior).
+pub struct NodeDisplayContext<'a> {
+    pub gains:                 &'a [f32],
+    pub fft_size:              usize,
+    pub tilt:                  f32,
+    pub offset:                f32,
+    pub curvature:             f32,
+    pub cfg:                   &'a CurveDisplayConfig,
+    pub db_min:                f32,
+    pub db_max:                f32,
+    pub global_attack_ms:      f32,
+    pub global_release_ms:     f32,
+    pub total_history_seconds: f32,
+    pub display_curve_idx:     usize,
+}
+
 /// Draw interactive nodes for the active curve. Returns drag/change state.
-/// Handles are drawn at normalised y positions (node.y ∈ [-1, +1] mapped to [bottom, top])
-/// so they cover the full display height and track the cursor 1:1 when dragged.
+/// When `display_ctx` is `Some`, each dot's screen y matches the rendered
+/// curve at the node's frequency (dots follow offset/tilt/curvature). When
+/// `None`, dots fall back to the raw `node.y` mapping.
 pub fn curve_widget(
     ui: &mut Ui,
     rect: Rect,
     nodes: &mut [CurveNode; 6],
     curve_idx: usize,
     sample_rate: f32,
+    display_ctx: Option<&NodeDisplayContext<'_>>,
 ) -> CurveWidgetResult {
     use nih_plug_egui::egui::Sense;
 
@@ -924,12 +945,36 @@ pub fn curve_widget(
         )
     };
 
+    // Pre-compute anchors once if we have a display context.
+    let display_anchors = display_ctx.map(|d| runtime_anchors(
+        d.cfg, d.display_curve_idx, d.total_history_seconds,
+        d.db_min, d.db_max, d.global_attack_ms, d.global_release_ms,
+    ));
+
     for i in 0..6 {
-        // Normalised y position: node.y ∈ [-1, +1] maps linearly to [bottom, top] of rect.
-        // node.y has ±2 parameter headroom (see drag clamp below) but the dot is pinned to the
-        // graph rect so it can never stray into the routing matrix above or below. The headroom
-        // still influences the rendered response curve and underlying parameters.
-        let sy_raw = rect.bottom() - (nodes[i].y + 1.0) / 2.0 * rect.height();
+        // Dot screen-y: when a display context is provided, place the dot ON
+        // the rendered curve at the node's frequency by replicating
+        // paint_response_curve's per-bin path. Otherwise fall back to the raw
+        // node.y mapping. node.y has ±2 parameter headroom (drag clamp below)
+        // but the dot is pinned to the graph rect.
+        let sy_raw = if let (Some(d), Some(anchors)) = (display_ctx, display_anchors) {
+            let f_hz = (20.0_f32 * 1000.0_f32.powf(nodes[i].x.clamp(0.0, 1.0))).max(20.0);
+            let bin_k = ((f_hz * d.fft_size as f32 / sample_rate).round() as usize)
+                .min(d.gains.len().saturating_sub(1));
+            let raw_gain = d.gains.get(bin_k).copied().unwrap_or(1.0);
+            let adj = apply_curve_adjustments(
+                raw_gain, f_hz, d.tilt, d.offset, d.curvature,
+                d.cfg.offset_fn, anchors, max_hz,
+            );
+            let v = gain_to_display(
+                d.display_curve_idx, adj,
+                d.global_attack_ms, d.global_release_ms,
+                d.db_min, d.db_max, d.total_history_seconds,
+            );
+            physical_to_y(v, d.cfg, anchors, rect)
+        } else {
+            rect.bottom() - (nodes[i].y + 1.0) / 2.0 * rect.height()
+        };
         let sy = sy_raw.clamp(rect.top(), rect.bottom());
 
         // Visual position scaled to the current SR's Nyquist range.

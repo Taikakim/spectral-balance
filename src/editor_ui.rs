@@ -578,8 +578,23 @@ pub fn create_editor(
                             );
 
                             let mut nodes = slot_nodes[editing_curve];
+                            let display_ctx = crv::NodeDisplayContext {
+                                gains:                 &all_gains[editing_curve],
+                                fft_size,
+                                tilt,
+                                offset,
+                                curvature,
+                                cfg:                   &cfg,
+                                db_min,
+                                db_max,
+                                global_attack_ms:      atk_ms,
+                                global_release_ms:     rel_ms,
+                                total_history_seconds,
+                                display_curve_idx:     disp_curve,
+                            };
                             let cwr = crv::curve_widget(
                                 ui, curve_rect, &mut nodes, editing_curve, sr,
+                                Some(&display_ctx),
                             );
                             if cwr.drag_started {
                                 for n in 0..crate::param_ids::NUM_NODES {
