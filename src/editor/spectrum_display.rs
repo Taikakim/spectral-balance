@@ -1,5 +1,6 @@
 use nih_plug_egui::egui::{Color32, Mesh, Painter, Pos2, Rect, Shape, Stroke};
 use crate::editor::theme as th;
+use crate::editor::curve::db_inner_rect;
 
 /// Map an FFT bin index to a log-scaled x position using the same formula as
 /// `freq_to_x_max` so the spectrum aligns with the grid and response curves.
@@ -42,6 +43,12 @@ pub fn paint_spectrum_and_suppression(
     let n = magnitudes.len();
     if n < 2 { return; }
 
+    // Headroom-aware inner rect: spectrum bars and post-FX line live inside
+    // the inner rect, leaving the top HEADROOM_PX strip clear for nodes
+    // dragged above 0 dB.
+    let scale = painter.ctx().pixels_per_point();
+    let inner_rect = db_inner_rect(rect, scale);
+
     let mut pre_pts:  Vec<Pos2> = Vec::with_capacity(n);
     let mut post_pts: Vec<Pos2> = Vec::with_capacity(n);
 
@@ -51,8 +58,8 @@ pub fn paint_spectrum_and_suppression(
         let pre_db = if mag > 1e-10 { 20.0 * mag.log10() } else { db_min - 1.0 };
         let gr_db  = suppression.get(k).copied().unwrap_or(0.0).max(0.0);
         let post_db = pre_db - gr_db;
-        pre_pts.push( Pos2::new(x, db_y(pre_db,  db_min, db_max, rect)) );
-        post_pts.push(Pos2::new(x, db_y(post_db, db_min, db_max, rect)) );
+        pre_pts.push( Pos2::new(x, db_y(pre_db,  db_min, db_max, inner_rect)) );
+        post_pts.push(Pos2::new(x, db_y(post_db, db_min, db_max, inner_rect)) );
     }
 
     // Gradient fill between the two lines (turquoise top → pink bottom)

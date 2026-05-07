@@ -466,7 +466,11 @@ pub fn paint_hover_text(
     let nyquist = (sample_rate / 2.0).max(20_001.0);
     let freq_hz = screen_to_freq(cursor_pos.x, rect, nyquist);
     let anchors = runtime_anchors(cfg, display_idx, total_history_seconds, db_min, db_max, attack_ms, release_ms);
-    let phys    = screen_y_to_physical(cursor_pos.y, cfg, anchors, rect);
+    // Cursor → physical value uses the headroom-aware inner rect so the
+    // reported dBFS / value matches the curve drawn by paint_response_curve.
+    let scale = painter.ctx().pixels_per_point();
+    let inner_rect = db_inner_rect(rect, scale);
+    let phys    = screen_y_to_physical(cursor_pos.y, cfg, anchors, inner_rect);
     let text = if cfg.y_label.is_empty() {
         format!("{}  /  {:.2}", format_freq_hz(freq_hz), phys)
     } else {
@@ -489,6 +493,21 @@ pub fn paint_hover_text(
     );
     painter.rect_filled(bg_rect, 2.0, Color32::from_black_alpha(180));
     painter.galley(tip_pos, galley, th::GRID_TEXT);
+}
+
+/// Shrink `rect` from the top by `HEADROOM_PX` (scaled) so db→y mappings
+/// reserve a visual headroom strip above the y_max grid line. Returns the
+/// inner rect to use for grid lines, response curves, and the spectrum
+/// gradient. Click areas and node-clamp logic continue to use the FULL rect
+/// so virtual nodes can still be drawn into and beyond the headroom strip.
+/// See `HEADROOM_PX` in theme.rs.
+#[inline]
+pub fn db_inner_rect(rect: Rect, scale: f32) -> Rect {
+    let headroom = th::scaled(th::HEADROOM_PX, scale);
+    Rect::from_min_max(
+        nih_plug_egui::egui::pos2(rect.left(), (rect.top() + headroom).min(rect.bottom())),
+        rect.max,
+    )
 }
 
 /// Map a physical value to pixel y using a linear scale.
@@ -710,12 +729,18 @@ pub fn paint_grid(
     let max_hz  = nyquist.max(20_001.0);
     let grid_stroke = Stroke::new(th::scaled_stroke(th::STROKE_THIN, scale), th::GRID_LINE);
     let font = nih_plug_egui::egui::FontId::proportional(th::scaled(th::FONT_SIZE_GRID, scale));
+    // Headroom-aware inner rect: db→y mappings (horizontal grid lines, the
+    // y-axis label, response curves, spectrum overlay) all live inside the
+    // inner rect, leaving HEADROOM_PX of empty space above the y_max grid
+    // line. Vertical Hz lines span the full rect so the frequency grid still
+    // covers the entire visible area including the headroom strip.
+    let inner_rect = db_inner_rect(rect, scale);
     // Resolve runtime anchors once for grid-line y mapping.
     // Pass 0.0 for total_history_seconds — the only index that uses it (idx 13) is the Past
     // Age curve; Task 14 will plumb the real value end-to-end.
     let anchors = runtime_anchors(cfg, display_idx, 0.0, db_min, db_max, attack_ms, release_ms);
 
-    // Vertical lines at Hz intervals
+    // Vertical lines at Hz intervals — span the full rect including headroom.
     for &f in HZ_VERTICALS {
         if f > max_hz { continue; }
         let x = freq_to_x_max(f, max_hz, rect);
@@ -764,6 +789,7 @@ pub fn paint_grid(
 
     // Horizontal grid lines driven by CurveDisplayConfig.grid_lines.
     // See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §3.
+    // y values map into `inner_rect` (headroom-aware); lines span full width.
     for &(v, label) in cfg.grid_lines {
         // Skip values that fall outside the curve's configured display range
         // (e.g. Threshold grid line -48 dBFS when db_min > -48).
@@ -771,7 +797,7 @@ pub fn paint_grid(
         // For curves whose runtime display range is user-adjustable (threshold),
         // also respect the current db_min/db_max window.
         if display_idx == 0 && (v < db_min || v > db_max) { continue; }
-        let y = physical_to_y(v, cfg, anchors, rect);
+        let y = physical_to_y(v, cfg, anchors, inner_rect);
         painter.line_segment(
             [Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)],
             grid_stroke,
@@ -830,6 +856,8 @@ pub fn paint_response_curve(
     if gains.len() < 2 { return; }
     let n = gains.len();
     let max_hz = (sample_rate / 2.0).max(20_001.0);
+    let scale  = painter.ctx().pixels_per_point();
+    let inner_rect = db_inner_rect(rect, scale);
 
     // Coloured response line — dashed for attack/release, solid for all others.
     // Tilt, offset, and curvature are applied to the raw gain before display mapping.
@@ -839,7 +867,7 @@ pub fn paint_response_curve(
         let x    = freq_to_x_max(f_hz, max_hz, rect);
         let adj  = apply_curve_adjustments(gains[k], f_hz, tilt, offset, curvature, cfg.offset_fn, anchors, max_hz);
         let v    = gain_to_display(curve_idx, adj, global_attack_ms, global_release_ms, db_min, db_max, total_history_seconds);
-        let y    = physical_to_y(v, cfg, anchors, rect);
+        let y    = physical_to_y(v, cfg, anchors, inner_rect);
         Pos2::new(x, y)
     }).collect();
     let line_stroke = Stroke::new(stroke_width, color);
@@ -871,6 +899,7 @@ pub fn paint_peak_hold_envelope_overlay(
     if envelope.is_empty() || fft_size == 0 { return; }
     // UI parameter contract: see docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §4
     let scale = painter.ctx().pixels_per_point();
+    let inner_rect = db_inner_rect(rect, scale);
     // Derive a darker tone from curve_color (r/3, g/3, b/3, opaque).
     let dim = Color32::from_rgb(
         curve_color.r() / 3,
@@ -888,9 +917,10 @@ pub fn paint_peak_hold_envelope_overlay(
         let x    = freq_to_x_max(f_hz, max_hz, rect);
         let mag  = (envelope[k] * norm_factor).max(1e-12);
         let db   = 20.0 * mag.log10();
-        // Map dB onto the spectrum display range [db_min..db_max]. Top = db_max, bottom = db_min.
+        // Map dB onto the spectrum display range [db_min..db_max] inside the
+        // headroom-aware inner rect.
         let norm = ((db - db_min) / range).clamp(0.0, 1.0);
-        let y    = rect.max.y - norm * rect.height();
+        let y    = inner_rect.max.y - norm * inner_rect.height();
         if let Some(p) = prev {
             painter.line_segment([p, Pos2::new(x, y)], overlay_stroke);
         }
@@ -966,12 +996,21 @@ pub fn curve_widget(
         d.db_min, d.db_max, d.global_attack_ms, d.global_release_ms,
     ));
 
+    // Headroom-aware inner rect for db→y mapping. The painters draw the
+    // response curve into this inner rect, so dots must use it too to land
+    // on the line. Click areas / drag clamps continue to use the FULL rect
+    // so virtual nodes (|y| > 1) can still be drawn into and beyond the
+    // headroom strip with their off-rect indicator.
+    let scale = ui.ctx().pixels_per_point();
+    let inner_rect = db_inner_rect(rect, scale);
+
     for i in 0..6 {
         // Dot screen-y: when a display context is provided, place the dot ON
         // the rendered curve at the node's frequency by replicating
         // paint_response_curve's per-bin path. Otherwise fall back to the raw
         // node.y mapping. node.y has ±2 parameter headroom (drag clamp below)
-        // but the dot is pinned to the graph rect.
+        // but the dot is pinned to the FULL graph rect (which includes the
+        // headroom strip).
         let sy_raw = if let (Some(d), Some(anchors)) = (display_ctx, display_anchors) {
             let f_hz = (20.0_f32 * 1000.0_f32.powf(nodes[i].x.clamp(0.0, 1.0))).max(20.0);
             let bin_k = ((f_hz * d.fft_size as f32 / sample_rate).round() as usize)
@@ -986,8 +1025,9 @@ pub fn curve_widget(
                 d.global_attack_ms, d.global_release_ms,
                 d.db_min, d.db_max, d.total_history_seconds,
             );
-            physical_to_y(v, d.cfg, anchors, rect)
+            physical_to_y(v, d.cfg, anchors, inner_rect)
         } else {
+            // No display context: map raw node.y to FULL rect (legacy behavior).
             rect.bottom() - (nodes[i].y + 1.0) / 2.0 * rect.height()
         };
         let sy = sy_raw.clamp(rect.top(), rect.bottom());

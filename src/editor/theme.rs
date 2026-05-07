@@ -147,6 +147,15 @@ pub const STROKE_CURVE:    f32 = 1.0;
 pub const STROKE_MEDIUM:   f32 = 1.5;
 pub const NODE_RADIUS:     f32 = 5.0;
 
+/// Visual headroom strip above the 0 dB / y_max grid line in the curve area.
+/// All db→y mappings shrink the active rect from the top by this many pixels
+/// (scaled), so loud bins above unity and dragged-up nodes have somewhere to
+/// live without clipping into the top edge. Virtual node range and red
+/// off-rect triangles still use the FULL rect so dragging up a node still
+/// goes into and beyond the headroom strip with the existing indicator.
+/// See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §3.
+pub const HEADROOM_PX: f32 = 50.0;
+
 // ─── Font size base values (at 1× scale) ─────────────────────────────────────
 
 /// Grid axis labels (Hz / value markers).
