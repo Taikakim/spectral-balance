@@ -37,9 +37,13 @@ pub fn create_editor(
                 return;
             }
 
-            // Clear any per-widget help focus from the previous frame. Widgets
-            // claim it back via `track_help` while they're hovered/dragged.
-            crate::editor::help_box::reset_focus(ctx);
+            // Promote the previous frame's pending help focus into the
+            // presented slot, then clear pending. Widgets call `track_help*`
+            // throughout the frame to write fresh claims into pending; the
+            // help-box reads from presented. The 1-frame indirection lets
+            // popups (rendered AFTER help_box::draw) still update the
+            // help-box.
+            crate::editor::help_box::promote_focus(ctx);
 
             // Scaling: use the user's chosen scale directly as pixels_per_point.
             // This is stable (no feedback loop) and ensures content renders at the target

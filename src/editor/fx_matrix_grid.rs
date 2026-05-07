@@ -36,31 +36,27 @@ fn endpoint_label(slot_idx: usize, ty: ModuleType, slot_name: &[u8; 32]) -> Stri
 }
 
 /// Build the dynamic help-box body for a routing-matrix send cell.
+///
+/// When `is_feedback` is true the caller passes the body through
+/// `track_help_strings_yellow` with a "Feedback" prefix, so the body itself
+/// starts with a lowercase "routing"; the heading already carries the
+/// from→to slot info, so no Flow line is needed.
 fn build_cell_help_body(
-    row:           usize,
-    col:           usize,
-    src_ty:        ModuleType,
-    dst_ty:        ModuleType,
-    src_name:      &[u8; 32],
-    dst_name:      &[u8; 32],
     amp_mode:      AmpMode,
     is_feedback:   bool,
     disconnected:  bool,
 ) -> String {
     let mut body = String::new();
-    body.push_str("Routing matrix send. Drag to set the amplitude (0 = off, 1 = unity, up to 2). Right-click for the amp filter popup.\n\n");
-    body.push_str(amp_mode.hint());
-    body.push_str("\n\nFlow: ");
-    body.push_str(&endpoint_label(row, src_ty, src_name));
-    body.push_str(" \u{2192} ");
-    body.push_str(&endpoint_label(col, dst_ty, dst_name));
     if is_feedback {
-        body.push_str("\n\nFeedback routing (output of a later slot feeds an earlier one). Negative gain.");
+        body.push_str("routing matrix send. Drag to set the amplitude (0 = off, 1 = unity, up to 2). Right-click for the amp filter popup. The audio engine processes sends as forward-only (source slot before destination), so this cell is silent.");
+    } else {
+        body.push_str("Routing matrix send. Drag to set the amplitude (0 = off, 1 = unity, up to 2). Right-click for the amp filter popup.");
     }
+    body.push_str("\n\n");
+    body.push_str(amp_mode.hint());
     if disconnected {
         body.push_str("\n\nDisconnected — one endpoint is Empty, so no audio flows through this send.");
     }
-    let _ = (row, col);
     body
 }
 
@@ -254,8 +250,16 @@ pub fn paint_fx_matrix_grid(
                             interact.on_hover_text(slot_name_str(&slot_names[row]));
                         }
                     } else {
-                        // Off-diagonal send cell
-                        let is_feedback = col > row;
+                        // Off-diagonal send cell.
+                        // The audio engine processes sends as forward-only
+                        // (`route_matrix.send[src][dst]` only takes effect
+                        // when src < dst — see fx_matrix.rs:199). Cells where
+                        // `col < row` (dst earlier than src) are therefore
+                        // feedback routings — silent in this engine — so we
+                        // dim their background and prefix their help text
+                        // with a yellow "Feedback" word so the user sees at
+                        // a glance that the cell is non-audible.
+                        let is_feedback = col < row;
                         let bg = if is_feedback { th::BG_FEEDBACK } else { th::BG_RAISED };
                         painter.rect(cell_rect, 0.0, bg, Stroke::new(th::scaled_stroke(th::STROKE_HAIRLINE, scale), th::GRID_LINE), StrokeKind::Middle);
 
@@ -310,25 +314,31 @@ pub fn paint_fx_matrix_grid(
                                 },
                             );
                             crate::editor::delayed_tooltip(ui, &inner.inner,
-                                format!("Slot {} \u{2192} Slot {} send", row + 1, col + 1));
+                                format!("Slot {} -> Slot {} send", row + 1, col + 1));
                             // Amp-mode indicator dot (top-right corner) when non-Linear.
                             let amp_mode = route_matrix.amp_mode[row][col];
-                            // Build a dynamic help body for this cell so the user
-                            // sees the active filter's description plus the from/to
-                            // module names — and a "Negative gain" note for feedback
-                            // routings (col > row, output of a later slot feeding an
-                            // earlier slot). Disconnected sends call this out too.
+                            // Heading carries the from/to slot info (with custom
+                            // names where set) and the active amp filter; body is
+                            // the static "Routing matrix send" sentence + amp
+                            // hint, with a yellow "Feedback" prefix when the cell
+                            // is below the diagonal. Disconnected sends append a
+                            // one-liner.
                             let head = format!(
-                                "Slot {} \u{2192} Slot {}  ({})",
-                                row + 1, col + 1, amp_mode.label(),
+                                "{}  ->  {}  ({})",
+                                endpoint_label(row, src_ty, &slot_names[row]),
+                                endpoint_label(col, dst_ty, &slot_names[col]),
+                                amp_mode.label(),
                             );
-                            let body = build_cell_help_body(
-                                row, col, src_ty, dst_ty, &slot_names[row], &slot_names[col],
-                                amp_mode, is_feedback, disconnected,
-                            );
-                            crate::editor::help_box::track_help_strings(
-                                ui, &inner.inner, head.clone(), body.clone(),
-                            );
+                            let body = build_cell_help_body(amp_mode, is_feedback, disconnected);
+                            if is_feedback {
+                                crate::editor::help_box::track_help_strings_yellow(
+                                    ui, &inner.inner, head.clone(), body.clone(), "Feedback",
+                                );
+                            } else {
+                                crate::editor::help_box::track_help_strings(
+                                    ui, &inner.inner, head.clone(), body.clone(),
+                                );
+                            }
                             if amp_mode != AmpMode::Linear {
                                 let dot_pos = egui::pos2(cell_rect.right() - 4.0, cell_rect.top() + 4.0);
                                 ui.painter().circle_filled(
@@ -345,9 +355,15 @@ pub fn paint_fx_matrix_grid(
                             );
                             // Hovering anywhere on the cell (including the corner
                             // dot, outside the inner DragValue) shows the same help.
-                            crate::editor::help_box::track_help_strings(
-                                ui, &amp_resp, head, body,
-                            );
+                            if is_feedback {
+                                crate::editor::help_box::track_help_strings_yellow(
+                                    ui, &amp_resp, head, body, "Feedback",
+                                );
+                            } else {
+                                crate::editor::help_box::track_help_strings(
+                                    ui, &amp_resp, head, body,
+                                );
+                            }
                             if amp_resp.secondary_clicked() {
                                 let p = amp_resp.interact_pointer_pos().unwrap_or(cell_rect.center());
                                 result.amp_right_click = Some((row, col, p));
@@ -446,7 +462,7 @@ pub fn paint_fx_matrix_grid(
                             },
                         );
                         crate::editor::delayed_tooltip(ui, &vinner.inner,
-                            format!("{} \u{2192} Slot {} send", vrow_label, col + 1));
+                            format!("{} -> Slot {} send", vrow_label, col + 1));
                         let amp_mode = route_matrix.amp_mode[*vrow_src][col];
                         let dst_ty   = module_types[col];
                         let stream   = match kind {
@@ -454,20 +470,17 @@ pub fn paint_fx_matrix_grid(
                             VirtualRowKind::Sustained => "sustained stream",
                         };
                         let head = format!(
-                            "{} \u{2192} Slot {}  ({})",
-                            vrow_label, col + 1, amp_mode.label(),
+                            "{} ({})  ->  {}  ({})",
+                            endpoint_label(*parent_slot, ModuleType::TransientSustainedSplit, &slot_names[*parent_slot]),
+                            stream,
+                            endpoint_label(col, dst_ty, &slot_names[col]),
+                            amp_mode.label(),
                         );
                         let mut body = String::new();
-                        body.push_str("T/S Split virtual row. Drag to set send amplitude for the ");
+                        body.push_str("T/S Split virtual-row send. Drag to set send amplitude for the ");
                         body.push_str(stream);
                         body.push_str(" feeding this slot. Right-click for the amp filter popup.\n\n");
                         body.push_str(amp_mode.hint());
-                        body.push_str("\n\nFlow: ");
-                        body.push_str(&endpoint_label(*parent_slot, ModuleType::TransientSustainedSplit, &slot_names[*parent_slot]));
-                        body.push_str(" (");
-                        body.push_str(stream);
-                        body.push_str(") \u{2192} ");
-                        body.push_str(&endpoint_label(col, dst_ty, &slot_names[col]));
                         crate::editor::help_box::track_help_strings(
                             ui, &vinner.inner, head.clone(), body.clone(),
                         );

@@ -121,9 +121,11 @@ pub fn topic_help_text(topic: HelpTopic) -> &'static str {
     }
 }
 
-const HELP_TOPIC_KEY: &str = "spectral_forge::help_topic";
+const HELP_PENDING_KEY:   &str = "spectral_forge::help_pending";
+const HELP_PRESENTED_KEY: &str = "spectral_forge::help_presented";
 
-fn topic_id() -> egui::Id { egui::Id::new(HELP_TOPIC_KEY) }
+fn pending_id()   -> egui::Id { egui::Id::new(HELP_PENDING_KEY) }
+fn presented_id() -> egui::Id { egui::Id::new(HELP_PRESENTED_KEY) }
 
 /// Per-frame help focus claim.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,14 +133,16 @@ pub enum HelpFocus {
     /// Lookup by enum (static head + body via topic_head / topic_help_text).
     Topic(HelpTopic),
     /// Free-form head and body. Owned `String` so the same code path serves
-    /// both static literals (cheap `to_string()`) and per-frame dynamic text
-    /// (e.g. matrix cell `Slot 1: Punch → Slot 5: Freeze` summaries).
-    Custom { head: String, body: String },
+    /// both static literals and per-frame dynamic text (e.g. routing matrix
+    /// `Slot 1 -> Slot 9` summaries). When `yellow_prefix` is `Some(word)`
+    /// the renderer paints `word` in yellow before `body`.
+    Custom { head: String, body: String, yellow_prefix: Option<String> },
 }
 
 /// Track that `response` is being hovered/dragged/focused. If so, claim the
-/// per-frame help focus for `topic`. Multiple widgets may call this in a
-/// single frame; the last claim wins.
+/// pending help focus for `topic`. Pending is promoted to presented at the
+/// next frame's `promote_focus` call so claims from popups (rendered after
+/// the help-box draws) still appear.
 pub fn track_help(ui: &egui::Ui, response: &egui::Response, topic: HelpTopic) {
     set_focus_if_active(ui, response, HelpFocus::Topic(topic));
 }
@@ -152,14 +156,34 @@ pub fn track_help_strings(
     body: impl Into<String>,
 ) {
     if response.hovered() || response.dragged() || response.has_focus() {
-        let focus = HelpFocus::Custom { head: head.into(), body: body.into() };
-        ui.ctx().data_mut(|d| d.insert_temp::<Option<HelpFocus>>(topic_id(), Some(focus)));
+        let focus = HelpFocus::Custom {
+            head: head.into(), body: body.into(), yellow_prefix: None,
+        };
+        ui.ctx().data_mut(|d| d.insert_temp::<Option<HelpFocus>>(pending_id(), Some(focus)));
+    }
+}
+
+/// Same as `track_help_strings` but renders `prefix` (a single short word)
+/// in yellow before `body`. Used for feedback-routing cells in the matrix.
+pub fn track_help_strings_yellow(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    head: impl Into<String>,
+    body: impl Into<String>,
+    prefix: impl Into<String>,
+) {
+    if response.hovered() || response.dragged() || response.has_focus() {
+        let focus = HelpFocus::Custom {
+            head: head.into(), body: body.into(),
+            yellow_prefix: Some(prefix.into()),
+        };
+        ui.ctx().data_mut(|d| d.insert_temp::<Option<HelpFocus>>(pending_id(), Some(focus)));
     }
 }
 
 fn set_focus_if_active(ui: &egui::Ui, response: &egui::Response, focus: HelpFocus) {
     if response.hovered() || response.dragged() || response.has_focus() {
-        ui.ctx().data_mut(|d| d.insert_temp::<Option<HelpFocus>>(topic_id(), Some(focus)));
+        ui.ctx().data_mut(|d| d.insert_temp::<Option<HelpFocus>>(pending_id(), Some(focus)));
     }
 }
 
@@ -174,14 +198,23 @@ pub fn curve_help_text(ty: ModuleType, mode_byte: u8, curve_idx: usize) -> &'sta
     single_mode_curve_help(ty, curve_idx)
 }
 
-/// Clear the per-frame help focus. Call once at the very top of the editor
-/// frame so stale focus from a previous frame doesn't leak through.
-pub fn reset_focus(ctx: &egui::Context) {
-    ctx.data_mut(|d| d.insert_temp::<Option<HelpFocus>>(topic_id(), None));
+/// Promote the previous frame's pending focus into the presented slot, then
+/// clear pending so this frame's widgets start with an empty claim. Call
+/// once at the very top of the editor frame.
+///
+/// The 1-frame delay lets popups (rendered after `help_box::draw` in the
+/// frame order) still update the help-box — their writes from frame N
+/// surface in frame N+1's render. Imperceptible at refresh-rate cadence.
+pub fn promote_focus(ctx: &egui::Context) {
+    let pending = ctx.data(|d| d.get_temp::<Option<HelpFocus>>(pending_id())).flatten();
+    ctx.data_mut(|d| {
+        d.insert_temp::<Option<HelpFocus>>(presented_id(), pending);
+        d.insert_temp::<Option<HelpFocus>>(pending_id(), None);
+    });
 }
 
 fn current_focus(ctx: &egui::Context) -> Option<HelpFocus> {
-    ctx.data(|d| d.get_temp::<Option<HelpFocus>>(topic_id())).flatten()
+    ctx.data(|d| d.get_temp::<Option<HelpFocus>>(presented_id())).flatten()
 }
 
 // ── Render ────────────────────────────────────────────────────────────────
@@ -201,19 +234,20 @@ pub fn draw(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) {
     let help_on = params.help_enabled.value();
     let focus   = current_focus(ui.ctx());
 
-    let (head, body): (Cow<'static, str>, Cow<'static, str>) = if !help_on {
+    let (head, body, yellow_prefix): (Cow<'static, str>, Cow<'static, str>, Option<String>) = if !help_on {
         (Cow::Borrowed("Help (off)"),
-         Cow::Borrowed("Toggle the HELP button in the top bar to bring help back."))
+         Cow::Borrowed("Toggle the HELP button in the top bar to bring help back."),
+         None)
     } else {
         match focus {
             Some(HelpFocus::Topic(t)) =>
-                (Cow::Borrowed(topic_head(t)), Cow::Borrowed(topic_help_text(t))),
-            Some(HelpFocus::Custom { head, body }) =>
-                (Cow::Owned(head), Cow::Owned(body)),
+                (Cow::Borrowed(topic_head(t)), Cow::Borrowed(topic_help_text(t)), None),
+            Some(HelpFocus::Custom { head, body, yellow_prefix }) =>
+                (Cow::Owned(head), Cow::Owned(body), yellow_prefix),
             None => {
                 let h = Cow::Borrowed(spec.display_name);
                 let b = body_text(layout.as_ref(), mode_byte, editing_type, editing_curve, spec.curve_labels);
-                (h, b)
+                (h, b, None)
             }
         }
     };
@@ -233,13 +267,39 @@ pub fn draw(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) {
                 ).wrap(),
             );
             ui.add_space(4.0);
-            ui.add(
-                egui::Label::new(
-                    RichText::new(body.as_ref())
-                        .color(th::HELP_BOX_BODY)
-                        .font(FontId::proportional(th::scaled(th::FONT_SIZE_HELP_BODY, scale))),
-                ).wrap(),
-            );
+            let body_font = FontId::proportional(th::scaled(th::FONT_SIZE_HELP_BODY, scale));
+            if let Some(prefix) = yellow_prefix {
+                let body_color = th::HELP_BOX_BODY;
+                let yellow     = egui::Color32::from_rgb(0xff, 0xc8, 0x40);
+                let mut job = egui::text::LayoutJob::default();
+                job.append(
+                    &format!("{} ", prefix),
+                    0.0,
+                    egui::TextFormat {
+                        font_id: body_font.clone(),
+                        color:   yellow,
+                        ..Default::default()
+                    },
+                );
+                job.append(
+                    body.as_ref(),
+                    0.0,
+                    egui::TextFormat {
+                        font_id: body_font,
+                        color:   body_color,
+                        ..Default::default()
+                    },
+                );
+                ui.add(egui::Label::new(job).wrap());
+            } else {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(body.as_ref())
+                            .color(th::HELP_BOX_BODY)
+                            .font(body_font),
+                    ).wrap(),
+                );
+            }
         });
 }
 
