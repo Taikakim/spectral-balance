@@ -1046,9 +1046,9 @@ pub fn curve_widget(
         }
 
         // Off-rect indicator: when node.y is outside the visible ±1 range, draw a
-        // red directional triangle at the corresponding rect edge. The node circle
-        // itself is already pinned to the rect edge for display when |y| > 1; this
-        // adds a visual cue so users can see WHICH direction the node lives in.
+        // red directional triangle at the corresponding rect edge. Triangle x matches the
+        // node dot's screen-x (log-frequency mapping); only sy was clamped, sx is unmodified.
+        // This visual cue shows users WHICH direction the node lives in.
         if nodes[i].y.abs() > 1.0 {
             let edge_y = if nodes[i].y > 0.0 {
                 rect.top() - th::NODE_OFFRECT_OFFSET_PX
@@ -1056,7 +1056,8 @@ pub fn curve_widget(
                 rect.bottom() + th::NODE_OFFRECT_OFFSET_PX
             };
             let half = th::NODE_OFFRECT_SIZE_PX / 2.0;
-            let sx = rect.left() + nodes[i].x.clamp(0.0, 1.0) * rect.width();
+            // Use the same screen-x as the node dot (log-frequency mapping); see line ~960.
+            let sx = sx_actual;
             let triangle = if nodes[i].y > 0.0 {
                 // pointing up (node is above the visible rect)
                 vec![
