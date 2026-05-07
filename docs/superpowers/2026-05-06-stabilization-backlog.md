@@ -33,17 +33,17 @@ Numbered for cross-reference. Status: 🔴 critical · 🟠 important · 🟡 no
 | 3 | ✅ | PAST AMOUNT/Age/Smear/MIX sliders cap at "0" — resolved by C-1 (offset default +1 for natural-at-max curves). Age idx 13 still pending total_history_seconds plumbing — sub-project E. | user msg + diagnosed |
 | 4 | ✅ | Routing matrix fix landed: GUI cell-click writes via setter to FloatParam. Off-diagonal cells fully functional. Virtual rows (T/S Split) noted with TODO — matrix_cell bounds-check rejects r>=9, needs separate work. | user msg + screenshot |
 | 5 | ✅ | MIX default 100% wet — resolved by C-1 (offset FloatParam defaults to +1.0 for natural-at-max curves; loads at y_max). | user msg |
-| 6 | 🟡 | PAST SMEAR is binary toggle at 50% (apply_granular only); ignored in 4 of 5 PAST modes | user msg + audit |
+| 6 | ✅ | PAST SMEAR — E-2 (commit `72b640f`): SPREAD active in all 5 modes with mode-specific semantics (Granular/Reverse/Stretch Smear, DecaySorter Smooth, Convolution Kernel) on a continuous 3-bin frequency-axis blend. | user msg + audit |
 | 7 | ✅ | Dead-half on `y_natural==y_max` curves — resolved by C-1 (default load at v=+1, slider semantics universal -1..+1 unchanged). | user msg |
 | 8 | ✅ | Dev plugin identity needs distinct CLAP ID — already exists via `dev-build` feature | resolved |
-| 9 | 🟡 | Dynamics THRESHOLD floors at db_min (-60 default) — tied to (10) | user msg |
-| 10 | 🟠 | Master Floor default should be -120 dBFS | user directive |
-| 11 | 🟡 | Tilt range needs ~2× steeper angles | user directive |
+| 9 | ✅ | Dynamics THRESHOLD axis floor — D-1c (commit `4aa0600`): `off_thresh` recalibrated to symmetric `10^(0.9·v)` so the slider hits both endpoints of the y_min=-160..y_max=0 axis from neutral curve gain. | user msg |
+| 10 | ✅ | "Master Floor" — confirmed by user, db_min already at -160 (passed -120 target). New goal absorbed into D-2: visual headroom above 0 dB. | user directive |
+| 11 | ✅ | Tilt range — D-1a (commit `4aa0600`): TILT_MAX 2 → 4 dB/oct. D-2 follow-up: display path multiplies by TILT_MAX (commit `bd00a2a`) so visible curve matches DSP. | user directive |
 | 12 | ✅ | Smearing fix: PLPV `prev_unwrapped_phase` + `total_hops_per_ch` reset every 4096 hops (~44s at fft 2048/sr 48k). Phase 1 audit identified the cause; commit `f26c3ac`. | user msg |
 | 13 | ✅ | Module-switch carryover — resolved: tilt/offset/curvature FloatParam atomics now reset via setter on module switch (commit `1496f12`); offset reset is module-aware so natural-at-max defaults are honored (commit `1d2b706`). | user clarification |
 | 14 | ✅ | PAST mode UI: resolved by inlining 5 mode labels in the slot row (commit `5d6f3b4`); popup removed; DecaySorter sub-picker stays inline. | user msg |
-| 15 | 🟡 | Freeze: most curves work; Resistance has weak audible effect — likely a level-mismatch in the kernel | user msg |
-| 16 | 🟡 | Freeze PORTAMENTO range: should be 0ms (instant)..~750ms; currently 40..1000 | user msg |
+| 15 | ✅ | Freeze RESISTANCE — E-1 (commit `c7fb5e3`): per-hop accumulator switched from linear `mag/threshold - 1` (10–30/hop in normal mixes) to log-scaled excess capped at 0.1/hop. Resistance now maps to audible time ranges (~120 ms at 1.0, ~240 ms at 2.0). | user msg |
+| 16 | ✅ | Freeze PORTAMENTO range — D-1b (commit `4aa0600` + correction `dba2265`): mapping changed to `curve * 150 ms`, clamped to `1..750 ms` (1 ms floor per user request). | user msg |
 | 17 | ✅ | Virtual node range -2..+2 with red directional triangle indicator at rect edge when off-rect (commits `8801840`, `590d41c`). | user msg |
 | 18 | ✅ | Offset-aware drag — resolved structurally by virtual node range (#17); the wider underlying y space gives full drag headroom regardless of offset position. | user msg + screenshot |
 
@@ -139,6 +139,107 @@ Combined small-task sweep on top of A and the follow-up UI fixes. Spec at `docs/
 
 Sub-projects D, E, F remain open.
 
+## Sub-projects D + E — complete (2026-05-08)
+
+Combined sweep covering axis defaults / per-curve ranges (D), Freeze
+RESISTANCE kernel + PAST SMEAR plumbing (E), the curve-area headroom
+(D-2), the help-system follow-ups, and a long bug list surfaced
+during smoke-testing.
+
+**D-1 — param ranges (one commit, `4aa0600`):**
+- D-1a · `TILT_MAX 2.0 → 4.0` dB/oct.
+- D-1b · Freeze portamento `curve * 200 ms / clamp 0..1000` →
+  `curve * 150 ms / clamp 1..750` (1 ms floor per user follow-up
+  `dba2265`).
+- D-1c · `off_thresh` recalibrated to symmetric `10^(0.9·v)` so the
+  Dynamics/Freeze threshold slider actually reaches the y_min=-160
+  axis floor and y_max=0 ceiling from neutral curve gain.
+
+**D-2 — curve area headroom (`e4a4481` + `bf4fd4c` + `e954bd8`):**
+- New `HEADROOM_PX = 50` constant + `db_inner_rect()` helper. Six
+  painters (paint_grid horizontals, paint_response_curve,
+  paint_peak_hold_envelope_overlay, paint_hover_text, curve_widget
+  dots, paint_spectrum_and_suppression) shrink the y mapping rect
+  from the top by HEADROOM_PX so the 0 dB / y_max grid line sits
+  ~50 px below the visible top.
+- Removed upper clamps from `linear_to_y`, `log_to_y`, `db_y`, AND
+  every `gain_to_display` arm so curves, dots, and spectrum bars
+  flow into the headroom strip when offset/tilt push them above
+  y_max.
+- Virtual −2..+2 node range and red off-rect triangles preserved —
+  they continue to use the FULL outer rect.
+
+**E-1 — Freeze RESISTANCE (commit `c7fb5e3`):** per-hop accumulator
+switched from linear `mag/threshold - 1` (10–30/hop in normal mixes,
+fired any resistance ≤ 2 in one hop) to log-scaled excess capped at
+0.1/hop. Resistance now maps to audible time:
+  resistance 0   → instant
+  resistance 1   → ~10 hops sustained excess (~120 ms)
+  resistance 2   → ~20 hops (~240 ms)
+
+**E-2 — PAST SMEAR per-mode (commit `72b640f`):** SPREAD (curve 3)
+active in all five modes with mode-specific semantic + label, all
+built on a continuous 3-bin frequency-axis blend:
+- Granular Smear · DecaySorter Smooth · Convolution Kernel ·
+  Reverse Smear · Stretch Smear
+
+**Help-system overhauls (commits `eccb283` → `1d5a274`):**
+- Added context-sensitive help-box driven by per-frame focus
+  (pending/presented model so popups rendered after the help-box
+  draw still work).
+- HelpFocus enum with Topic/Custom variants; `track_help` and
+  `track_help_strings_yellow` helpers.
+- Per-curve / per-mode help text for every shipped module.
+- Routing matrix cells: dynamic flow text + yellow "Feedback" inline
+  prefix below the diagonal (where the engine treats sends as
+  silent).
+- Module/mode/sort-key popups: claim help on hover.
+- Help-box body wrap reverted to `Label::wrap()` after multiple
+  failed LayoutJob attempts; yellow prefix renders on its own short
+  row above the body.
+
+**Bug-list fixes from 2026-05-08 morning smoke (commits `b280220`,
+`bf4fd4c`, `e954bd8`, `3576940`, `376b5f2`):**
+- Mode popups (Circuit/Life/Kinetics/Harmony) opened nothing — popup
+  state key used `ui.id().with(...)` from different scopes for
+  open vs show; switched to stable `egui::Id::new(...)`.
+- Life missing from the module-selector ASSIGNABLE list.
+- "100% offset" pattern across Mid-Side/EXPANSION,
+  Future/TIME, Punch/WIDTH, Rhythm/DIVISION, Geometry/MODE_CAP,
+  Kinetics/MASS — `default_nodes_for_module_curve` fell through to
+  `default_nodes_for_curve(1)` which returned RATIO defaults
+  (y=0.334 high shelf at 20 Hz, ~2× boost). Fixed by routing every
+  non-Dynamics module through `default_nodes()` (flat y=0).
+- Curve-tab help, matrix-cell amp-mode help, popup browse-time help
+  all now update on hover.
+- PEAK HOLD (PhaseSmear / Gain) graph mapping matched DSP via new
+  display idx 14 calling `peak_hold_curve_to_ms`.
+- Tilt display/DSP mismatch — display path now multiplies
+  normalized tilt by `TILT_MAX` so the visible curve tilts at the
+  same dB/oct the DSP applies.
+- Help body single-character wrap regression — `Label::wrap()` works
+  for the heading but not the body when nested in this Frame; both
+  paths reverted to `RichText + Label::wrap`. Yellow prefix moved to
+  its own row above the body (no inline LayoutJob).
+- Contrast standalone panel — Atk/Rel/Sens/Width group now visible
+  for both Dynamics and Contrast, with per-module label.
+- Gain Pull/Match offset broken — display_curve_idx routed to dB
+  index 12 instead of % index 6; fixed.
+- Harmony THRESHOLD natural-at-mid via new `off_threshold_pct`
+  offset_fn (slider sweeps 0..50..100 % from a neutral middle).
+- Rhythm panel resizes plugin — 8×8 grid is Arpeggiator-only;
+  early-return for Euclidean / Phase Reset.
+- Light-blue 25 %-from-bottom line on every graph — peak-hold
+  spectrum settled at hardcoded -120 dBFS for silent input;
+  changed to -200 so the held line settles off-screen.
+
+**Final regression:** `cargo test` 0 failures across the full suite
+(498+ tests). Dev plugin built and installed at
+`~/.clap/spectral/dev/spectral_dev.clap`.
+
+Tracker remaining open: only sub-project F (PEAK HOLD spec / spec-
+table follow-ups) and item #4's virtual-row matrix_cell extension.
+
 ## Update log
 
 - 2026-05-06: doc created with full backlog, sub-project decomposition, Sub-project A Phase plan, dev-install workflow facts.
@@ -148,3 +249,4 @@ Sub-projects D, E, F remain open.
 - 2026-05-06 morning: user smoke-tested. CLIP toggle was non-clickable (param not registered with host — fixed `6212441`). Soft clipper "ate the bass" because per-bin K/(K+|x|) tilts the spectrum even at quiet inputs — replaced with threshold-knee soft saturation + `master_clip_threshold_db` knob (`7f57c58`). Threshold reference was uncalibrated for fft-size-dependent bin magnitudes — fixed by scaling threshold reference by `fft_size/4` (`cf40590`). Matrix row/column labels persisted on Empty slots — fixed (`82d8ff4`).
 - 2026-05-06 morning (cont.): user reported sidebands appearing at ~21 sec on idle three-sine input. Confirmed cause: the periodic phase reset I added in `f26c3ac` IS itself a phase discontinuity → spectral spreading at exactly the reset moment. Replaced periodic reset with bounded-incremental-accumulator pattern: `prev_unwrapped_phase` and `expected_phase_acc` wrapped to `(-π, π]` after every hop. Freeze module's `frozen_unwrapped` accumulator likewise wrapped; freeze blend upgraded to complex-space (geodesic) per pvx reference convention. New phase-handling spec written at `docs/superpowers/specs/2026-05-06-phase-handling.md`; CLAUDE.md points to it.
 - 2026-05-07: sub-project B+C complete. Module-switch hygiene (B-1) + PAST inline UI (B-2) + dead-half resolution (C-1) + node off-rect indicator (C-2) landed across 6 commits (`1496f12` → `590d41c`). Tracker open issues now: D, E, F. Closed during this sweep: #3, #5, #7, #13, #14, #17, #18.
+- 2026-05-08: sub-projects D + E complete + help-system overhauls + long bug-list cleanup. Closed during this sweep: #6, #9, #10, #11, #15, #16. Plus systemic root-cause fixes for the "100% offset" pattern (default_nodes_for_module_curve), the matrix popup state key (ui.id() → stable Id), tilt display/DSP consistency, Contrast UI panel, Gain Pull/Match display index, Harmony THRESHOLD axis, Rhythm panel resize, the persistent ~25% spectrum line, and the help-box wrap regression. ~30 commits (`4aa0600` → `376b5f2`). Tracker remaining open: F (PEAK HOLD spec) and #4's virtual-row matrix_cell extension.
