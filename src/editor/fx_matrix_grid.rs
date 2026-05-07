@@ -258,12 +258,14 @@ pub fn paint_fx_matrix_grid(
                             );
                             crate::editor::delayed_tooltip(ui, &inner.inner,
                                 format!("Slot {} \u{2192} Slot {} send", row + 1, col + 1));
-                            crate::editor::help_box::track_help(
-                                ui, &inner.inner, crate::editor::help_box::HelpTopic::MatrixCellSend,
-                            );
-
                             // Amp-mode indicator dot (top-right corner) when non-Linear.
                             let amp_mode = route_matrix.amp_mode[row][col];
+                            // Hover help: show the current amp mode's description so
+                            // matrix filter types are discoverable from the cell, not
+                            // just inside the right-click popup.
+                            crate::editor::help_box::track_help_strings(
+                                ui, &inner.inner, amp_mode.label(), amp_mode.hint(),
+                            );
                             if amp_mode != AmpMode::Linear {
                                 let dot_pos = egui::pos2(cell_rect.right() - 4.0, cell_rect.top() + 4.0);
                                 ui.painter().circle_filled(
@@ -377,11 +379,10 @@ pub fn paint_fx_matrix_grid(
                         );
                         crate::editor::delayed_tooltip(ui, &vinner.inner,
                             format!("{} \u{2192} Slot {} send", vrow_label, col + 1));
-                        crate::editor::help_box::track_help(
-                            ui, &vinner.inner, crate::editor::help_box::HelpTopic::MatrixCellSend,
-                        );
-
                         let amp_mode = route_matrix.amp_mode[*vrow_src][col];
+                        crate::editor::help_box::track_help_strings(
+                            ui, &vinner.inner, amp_mode.label(), amp_mode.hint(),
+                        );
                         if amp_mode != AmpMode::Linear {
                             let dot_pos = egui::pos2(cell_rect.right() - 4.0, cell_rect.top() + 3.0);
                             ui.painter().circle_filled(

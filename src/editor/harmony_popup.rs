@@ -35,6 +35,13 @@ pub fn mode_label(mode: HarmonyMode) -> &'static str {
     "Unknown"
 }
 
+pub fn mode_hint(mode: HarmonyMode) -> &'static str {
+    for &(m, _, hint) in MODES {
+        if m == mode { return hint; }
+    }
+    ""
+}
+
 /// Render the popup if open. Call every frame from the main UI closure.
 /// Returns true if the popup consumed a click.
 ///

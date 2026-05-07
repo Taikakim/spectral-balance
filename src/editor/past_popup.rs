@@ -8,10 +8,10 @@ pub const MODES: &[(PastMode, &str, &str)] = &[
     (PastMode::Stretch,     "Stretch",             "Phase-coherent variable-rate playback (0.25\u{00d7} \u{2013} 4\u{00d7})"),
 ];
 
-pub const SORT_KEYS: &[(SortKey, &str)] = &[
-    (SortKey::Decay,     "Decay (ring time)"),
-    (SortKey::Stability, "Stability (IF)"),
-    (SortKey::Area,      "Area (RMS)"),
+pub const SORT_KEYS: &[(SortKey, &str, &str)] = &[
+    (SortKey::Decay,     "Decay (ring time)", "Sort bins by how long they ring out — slowest-decaying bins move toward the loudest positions."),
+    (SortKey::Stability, "Stability (IF)",    "Sort bins by instantaneous-frequency stability — most stable (tonal) bins move toward the loudest positions."),
+    (SortKey::Area,      "Area (RMS)",        "Sort bins by recent RMS energy — loudest-on-average bins move toward the loudest positions."),
 ];
 
 pub fn mode_label(mode: PastMode) -> &'static str {

@@ -125,23 +125,47 @@ const HELP_TOPIC_KEY: &str = "spectral_forge::help_topic";
 
 fn topic_id() -> egui::Id { egui::Id::new(HELP_TOPIC_KEY) }
 
+/// Per-frame help focus claim.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum HelpFocus {
+    /// Lookup by enum (static head + body via topic_head / topic_help_text).
+    Topic(HelpTopic),
+    /// Free-form head and body, e.g. for per-mode hints whose text varies.
+    Custom { head: &'static str, body: &'static str },
+}
+
 /// Track that `response` is being hovered/dragged/focused. If so, claim the
 /// per-frame help focus for `topic`. Multiple widgets may call this in a
 /// single frame; the last claim wins.
 pub fn track_help(ui: &egui::Ui, response: &egui::Response, topic: HelpTopic) {
+    set_focus_if_active(ui, response, HelpFocus::Topic(topic));
+}
+
+/// Track free-form help text for `response`. Use when no fixed `HelpTopic`
+/// fits — typically per-mode buttons whose head/body change per item.
+pub fn track_help_strings(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    head: &'static str,
+    body: &'static str,
+) {
+    set_focus_if_active(ui, response, HelpFocus::Custom { head, body });
+}
+
+fn set_focus_if_active(ui: &egui::Ui, response: &egui::Response, focus: HelpFocus) {
     if response.hovered() || response.dragged() || response.has_focus() {
-        ui.ctx().data_mut(|d| d.insert_temp::<Option<HelpTopic>>(topic_id(), Some(topic)));
+        ui.ctx().data_mut(|d| d.insert_temp::<Option<HelpFocus>>(topic_id(), Some(focus)));
     }
 }
 
 /// Clear the per-frame help focus. Call once at the very top of the editor
 /// frame so stale focus from a previous frame doesn't leak through.
 pub fn reset_focus(ctx: &egui::Context) {
-    ctx.data_mut(|d| d.insert_temp::<Option<HelpTopic>>(topic_id(), None));
+    ctx.data_mut(|d| d.insert_temp::<Option<HelpFocus>>(topic_id(), None));
 }
 
-fn current_topic(ctx: &egui::Context) -> Option<HelpTopic> {
-    ctx.data(|d| d.get_temp::<Option<HelpTopic>>(topic_id())).flatten()
+fn current_focus(ctx: &egui::Context) -> Option<HelpFocus> {
+    ctx.data(|d| d.get_temp::<Option<HelpFocus>>(topic_id())).flatten()
 }
 
 // ── Render ────────────────────────────────────────────────────────────────
@@ -159,16 +183,22 @@ pub fn draw(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) {
     let layout = active_layout_for_slot(editing_type, params, editing_slot);
 
     let help_on = params.help_enabled.value();
-    let topic   = current_topic(ui.ctx());
+    let focus   = current_focus(ui.ctx());
 
     let (head, body): (&str, Cow<'static, str>) = if !help_on {
         ("Help (off)", Cow::Borrowed("Toggle the HELP button in the top bar to bring help back."))
-    } else if let Some(t) = topic {
-        (topic_head(t), Cow::Borrowed(topic_help_text(t)))
     } else {
-        let h = spec.display_name;
-        let b = body_text(layout.as_ref(), editing_type, editing_curve, spec.curve_labels);
-        (h, b)
+        match focus {
+            Some(HelpFocus::Topic(t)) =>
+                (topic_head(t), Cow::Borrowed(topic_help_text(t))),
+            Some(HelpFocus::Custom { head, body }) =>
+                (head, Cow::Borrowed(body)),
+            None => {
+                let h = spec.display_name;
+                let b = body_text(layout.as_ref(), editing_type, editing_curve, spec.curve_labels);
+                (h, b)
+            }
+        }
     };
 
     let pad = th::scaled(th::HELP_BOX_PADDING, scale).round() as i8;

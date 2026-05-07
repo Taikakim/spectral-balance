@@ -998,9 +998,9 @@ pub fn curve_widget(
 
         let node_rect = Rect::from_center_size(node_pos, Vec2::splat(th::NODE_RADIUS * 3.0));
         let resp = ui.interact(node_rect, ui.id().with(("node", i)), Sense::drag());
-        crate::editor::help_box::track_help(
-            ui, &resp, crate::editor::help_box::HelpTopic::CurveNode,
-        );
+        // Hovering a node falls through to the per-curve help text resolved
+        // by help_box::draw from the active curve layout — same fallback as
+        // the empty graph area.
         drag_started |= resp.drag_started();
         drag_stopped |= resp.drag_stopped();
 

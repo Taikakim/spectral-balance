@@ -398,8 +398,11 @@ pub fn create_editor(
                             (avail.max.y - strip_height).max(avail.min.y),
                         ),
                     );
-                    let curve_area_resp = ui.allocate_rect(curve_rect, egui::Sense::hover());
-                    track_help(ui, &curve_area_resp, HelpTopic::CurveGraph);
+                    // Hovering the empty curve area falls through to the
+                    // per-curve / per-mode help (resolved by help_box::draw
+                    // from the editing slot's active layout). Only the node
+                    // dots themselves claim a topic explicitly.
+                    let _curve_area_resp = ui.allocate_rect(curve_rect, egui::Sense::hover());
 
                     // Read spectrum + suppression from bridge.
                     // Cache the last successful read so try_lock misses don't flicker.
@@ -873,11 +876,11 @@ pub fn create_editor(
 
                                 let cur_mode = params.slot_gain_mode.lock()[edit_slot];
                                 use crate::dsp::modules::GainMode;
-                                for (label, mode) in [
-                                    ("Add",      GainMode::Add),
-                                    ("Subtract", GainMode::Subtract),
-                                    ("Pull",     GainMode::Pull),
-                                    ("Match",    GainMode::Match),
+                                for (label, hint, mode) in [
+                                    ("Add",      "Add the GAIN curve to the input spectrum (additive synthesis-style boost).", GainMode::Add),
+                                    ("Subtract", "Subtract the GAIN curve from the input spectrum (carve content away).",      GainMode::Subtract),
+                                    ("Pull",     "Pull bins toward the GAIN curve over PEAK HOLD time. The PEAK HOLD curve becomes the second active curve.", GainMode::Pull),
+                                    ("Match",    "Match the input spectrum to the GAIN curve shape (spectral matcher).",       GainMode::Match),
                                 ] {
                                     let is_active = cur_mode == mode;
                                     let fill     = if is_active { th::BORDER } else { th::BG };
@@ -888,7 +891,7 @@ pub fn create_editor(
                                     .fill(fill)
                                     .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
                                     let resp = ui.add(btn);
-                                    track_help(ui, &resp, HelpTopic::ModuleMode);
+                                    crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
                                     if is_gain && resp.clicked() {
                                         params.slot_gain_mode.lock()[edit_slot] = mode;
                                     }
@@ -926,9 +929,9 @@ pub fn create_editor(
                                 if is_future {
                                     let cur_mode = params.slot_future_mode.lock()[edit_slot];
                                     use crate::dsp::modules::FutureMode;
-                                    for (label, mode) in [
-                                        ("Print-Thru", FutureMode::PrintThrough),
-                                        ("Pre-Echo",   FutureMode::PreEcho),
+                                    for (label, hint, mode) in [
+                                        ("Print-Thru", "Print-through — bleeds future spectral content backward into present, like analogue tape print-through.", FutureMode::PrintThrough),
+                                        ("Pre-Echo",   "Pre-echo — adds advance copies of upcoming transients before they arrive.",                              FutureMode::PreEcho),
                                     ] {
                                         let is_active = cur_mode == mode;
                                         let fill     = if is_active { th::BORDER } else { th::BG };
@@ -939,7 +942,7 @@ pub fn create_editor(
                                         .fill(fill)
                                         .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
                                         let resp = ui.add(btn);
-                                        track_help(ui, &resp, HelpTopic::ModuleMode);
+                                        crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
                                         if resp.clicked() {
                                             params.slot_future_mode.lock()[edit_slot] = mode;
                                         }
@@ -947,9 +950,9 @@ pub fn create_editor(
                                 } else if is_punch {
                                     let cur_mode = params.slot_punch_mode.lock()[edit_slot];
                                     use crate::dsp::modules::punch::PunchMode;
-                                    for (label, mode) in [
-                                        ("Direct",  PunchMode::Direct),
-                                        ("Inverse", PunchMode::Inverse),
+                                    for (label, hint, mode) in [
+                                        ("Direct",  "Direct — emphasise transients in the wet signal.",        PunchMode::Direct),
+                                        ("Inverse", "Inverse — duck transients (attenuate them on the way out).", PunchMode::Inverse),
                                     ] {
                                         let is_active = cur_mode == mode;
                                         let fill     = if is_active { th::BORDER } else { th::BG };
@@ -960,7 +963,7 @@ pub fn create_editor(
                                         .fill(fill)
                                         .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
                                         let resp = ui.add(btn);
-                                        track_help(ui, &resp, HelpTopic::ModuleMode);
+                                        crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
                                         if resp.clicked() {
                                             params.slot_punch_mode.lock()[edit_slot] = mode;
                                         }
@@ -968,10 +971,10 @@ pub fn create_editor(
                                 } else if is_rhythm {
                                     let cur_mode = params.slot_rhythm_mode.lock()[edit_slot];
                                     use crate::dsp::modules::rhythm::RhythmMode;
-                                    for (label, mode) in [
-                                        ("Euclidean",   RhythmMode::Euclidean),
-                                        ("Arpeggiator", RhythmMode::Arpeggiator),
-                                        ("Phase Reset", RhythmMode::PhaseReset),
+                                    for (label, hint, mode) in [
+                                        ("Euclidean",   "Euclidean — distributes pulses evenly across the bar (k pulses in n steps).",            RhythmMode::Euclidean),
+                                        ("Arpeggiator", "Arpeggiator — sequences active spectral peaks rhythmically across the chosen pattern.",  RhythmMode::Arpeggiator),
+                                        ("Phase Reset", "Phase Reset — re-zeros bin phases on the rhythm pulse for tight, percussive transients.", RhythmMode::PhaseReset),
                                     ] {
                                         let is_active = cur_mode == mode;
                                         let fill     = if is_active { th::BORDER } else { th::BG };
@@ -982,7 +985,7 @@ pub fn create_editor(
                                         .fill(fill)
                                         .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
                                         let resp = ui.add(btn);
-                                        track_help(ui, &resp, HelpTopic::ModuleMode);
+                                        crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
                                         if resp.clicked() {
                                             params.slot_rhythm_mode.lock()[edit_slot] = mode;
                                         }
@@ -990,9 +993,9 @@ pub fn create_editor(
                                 } else if is_geometry {
                                     let cur_mode = params.slot_geometry_mode.lock()[edit_slot];
                                     use crate::dsp::modules::geometry::GeometryMode;
-                                    for (label, mode) in [
-                                        ("Chladni",   GeometryMode::Chladni),
-                                        ("Helmholtz", GeometryMode::Helmholtz),
+                                    for (label, hint, mode) in [
+                                        ("Chladni",   "Chladni — emphasises nodal-line frequencies of a vibrating-plate model. Carves resonances along the plate's modal pattern.", GeometryMode::Chladni),
+                                        ("Helmholtz", "Helmholtz — resonates a single frequency band like a Helmholtz cavity (cylindrical neck + cavity volume).",                  GeometryMode::Helmholtz),
                                     ] {
                                         let is_active = cur_mode == mode;
                                         let fill     = if is_active { th::BORDER } else { th::BG };
@@ -1003,7 +1006,7 @@ pub fn create_editor(
                                         .fill(fill)
                                         .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
                                         let resp = ui.add(btn);
-                                        track_help(ui, &resp, HelpTopic::ModuleMode);
+                                        crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
                                         if resp.clicked() {
                                             params.slot_geometry_mode.lock()[edit_slot] = mode;
                                         }
@@ -1011,15 +1014,15 @@ pub fn create_editor(
                                 } else if is_modulate {
                                     let cur_mode = params.slot_modulate_mode.lock()[edit_slot];
                                     use crate::dsp::modules::modulate::ModulateMode;
-                                    for (label, mode) in [
-                                        ("Phase Phaser", ModulateMode::PhasePhaser),
-                                        ("Bin Swapper",  ModulateMode::BinSwapper),
-                                        ("RM/FM",        ModulateMode::RmFmMatrix),
-                                        ("Diode RM",     ModulateMode::DiodeRm),
-                                        ("Ground Loop",  ModulateMode::GroundLoop),
-                                        ("Gravity",      ModulateMode::GravityPhaser),
-                                        ("PLL Tear",     ModulateMode::PllTear),
-                                        ("FM Network",   ModulateMode::FmNetwork),
+                                    for (label, hint, mode) in [
+                                        ("Phase Phaser", "Phase Phaser — sweeps notch-comb across the spectrum via per-bin phase rotation.",                                                  ModulateMode::PhasePhaser),
+                                        ("Bin Swapper",  "Bin Swapper — pseudo-randomly transposes bin pairs at the rate set by the SPEED curve.",                                              ModulateMode::BinSwapper),
+                                        ("RM/FM",        "RM/FM Matrix — ring/frequency modulates each bin against an internal carrier matrix for sideband colours.",                          ModulateMode::RmFmMatrix),
+                                        ("Diode RM",     "Diode RM — ring mod through a soft-clipping diode model, giving asymmetric harmonics.",                                                ModulateMode::DiodeRm),
+                                        ("Ground Loop",  "Ground Loop — injects a 50/60 Hz hum-style modulator that beats with low-frequency content.",                                          ModulateMode::GroundLoop),
+                                        ("Gravity",      "Gravity Phaser — pulls/pushes bins toward a moving gravity well; combine with Repel to invert and SC-pos to position via sidechain.", ModulateMode::GravityPhaser),
+                                        ("PLL Tear",     "PLL Tear — phase-locked loop on dominant peaks; modulation introduces controlled lock-loss artefacts.",                                ModulateMode::PllTear),
+                                        ("FM Network",   "FM Network — graph of frequency-modulating bin pairs producing complex sideband structures.",                                          ModulateMode::FmNetwork),
                                     ] {
                                         let is_active = cur_mode == mode;
                                         let fill     = if is_active { th::BORDER } else { th::BG };
@@ -1030,7 +1033,7 @@ pub fn create_editor(
                                         .fill(fill)
                                         .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
                                         let resp = ui.add(btn);
-                                        track_help(ui, &resp, HelpTopic::ModuleMode);
+                                        crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
                                         if resp.clicked() {
                                             params.slot_modulate_mode.lock()[edit_slot] = mode;
                                         }
@@ -1063,6 +1066,7 @@ pub fn create_editor(
                                 } else if is_circuit {
                                     let cur_mode = params.slot_circuit_mode.lock()[edit_slot];
                                     let label = crate::editor::circuit_popup::mode_label(cur_mode);
+                                    let hint  = crate::editor::circuit_popup::mode_hint(cur_mode);
                                     let btn_text = format!("Mode: {}", label);
                                     let btn = egui::Button::new(
                                         egui::RichText::new(btn_text).color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale))
@@ -1070,13 +1074,14 @@ pub fn create_editor(
                                     .fill(th::BG)
                                     .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
                                     let resp = ui.add(btn);
-                                    track_help(ui, &resp, HelpTopic::ModuleMode);
+                                    crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
                                     if resp.clicked() {
                                         crate::editor::circuit_popup::open_at(ui, edit_slot, resp.rect.right_top());
                                     }
                                 } else if is_life {
                                     let cur_mode = params.slot_life_mode.lock()[edit_slot];
                                     let label = crate::editor::life_popup::mode_label(cur_mode);
+                                    let hint  = crate::editor::life_popup::mode_hint(cur_mode);
                                     let btn_text = format!("Mode: {}", label);
                                     let btn = egui::Button::new(
                                         egui::RichText::new(btn_text).color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale))
@@ -1084,7 +1089,7 @@ pub fn create_editor(
                                     .fill(th::BG)
                                     .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
                                     let resp = ui.add(btn);
-                                    track_help(ui, &resp, HelpTopic::ModuleMode);
+                                    crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
                                     if resp.clicked() {
                                         crate::editor::life_popup::open_at(ui, edit_slot, resp.rect.right_top());
                                     }
@@ -1098,7 +1103,7 @@ pub fn create_editor(
                                                     .color(if selected { th::MODULE_COLOR_LIT } else { th::LABEL_DIM })
                                                     .size(th::scaled(th::FONT_SIZE_LABEL, scale))
                                             ).on_hover_text(hint);
-                                            track_help(ui, &resp, HelpTopic::ModuleMode);
+                                            crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
                                             if resp.clicked() && !selected {
                                                 params.slot_past_mode.lock()[edit_slot] = mode;
                                             }
@@ -1113,14 +1118,14 @@ pub fn create_editor(
                                                     .color(th::LABEL_DIM)
                                                     .size(th::scaled(th::FONT_SIZE_LABEL, scale))
                                             );
-                                            for &(sort_key, sort_label) in crate::editor::past_popup::SORT_KEYS {
+                                            for &(sort_key, sort_label, sort_hint) in crate::editor::past_popup::SORT_KEYS {
                                                 let selected = cur_key == sort_key;
                                                 let resp = ui.selectable_label(selected,
                                                     egui::RichText::new(sort_label)
                                                         .color(if selected { th::MODULE_COLOR_LIT } else { th::LABEL_DIM })
                                                         .size(th::scaled(th::FONT_SIZE_LABEL, scale))
                                                 );
-                                                track_help(ui, &resp, HelpTopic::PastSortKey);
+                                                crate::editor::help_box::track_help_strings(ui, &resp, sort_label, sort_hint);
                                                 if resp.clicked() && !selected {
                                                     params.slot_past_sort_key.lock()[edit_slot] = sort_key;
                                                 }
@@ -1130,6 +1135,7 @@ pub fn create_editor(
                                 } else if is_kinetics {
                                     let cur_mode = params.slot_kinetics_mode.lock()[edit_slot];
                                     let label = crate::editor::kinetics_popup::mode_label(cur_mode);
+                                    let hint  = crate::editor::kinetics_popup::mode_hint(cur_mode);
                                     let btn_text = format!("Mode: {}", label);
                                     let btn = egui::Button::new(
                                         egui::RichText::new(btn_text).color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale))
@@ -1137,13 +1143,14 @@ pub fn create_editor(
                                     .fill(th::BG)
                                     .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
                                     let resp = ui.add(btn);
-                                    track_help(ui, &resp, HelpTopic::ModuleMode);
+                                    crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
                                     if resp.clicked() {
                                         crate::editor::kinetics_popup::open_at(ui, edit_slot, resp.rect.right_top());
                                     }
                                 } else if is_harmony {
                                     let cur_mode = params.slot_harmony_mode.lock()[edit_slot];
                                     let label = crate::editor::harmony_popup::mode_label(cur_mode);
+                                    let hint  = crate::editor::harmony_popup::mode_hint(cur_mode);
                                     let btn_text = format!("Mode: {}", label);
                                     let btn = egui::Button::new(
                                         egui::RichText::new(btn_text).color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale))
@@ -1151,7 +1158,7 @@ pub fn create_editor(
                                     .fill(th::BG)
                                     .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
                                     let resp = ui.add(btn);
-                                    track_help(ui, &resp, HelpTopic::ModuleMode);
+                                    crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
                                     if resp.clicked() {
                                         crate::editor::harmony_popup::open_at(ui, edit_slot, resp.rect.right_top());
                                     }

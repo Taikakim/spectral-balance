@@ -25,6 +25,19 @@ impl AmpMode {
             AmpMode::Stiction => "Stiction",
         }
     }
+
+    /// One-paragraph description of what this amp mode does to a routing send.
+    /// Surfaced in the help-box when the user interacts with the mode in the
+    /// matrix-cell amp popup or hovers a cell with that mode active.
+    pub fn hint(self) -> &'static str {
+        match self {
+            AmpMode::Linear   => "Linear — clean unity send. The send amplitude scales the signal directly with no shape or memory.",
+            AmpMode::Vactrol  => "Vactrol — opto-coupler envelope follower with asymmetric attack/release. The send level lags rises and decays slowly (set by Release ms), like a vactrol-driven VCA.",
+            AmpMode::Schmitt  => "Schmitt — branch-free hysteresis latch on bin magnitude. Below threshold the send is gated off; above, it latches on until the magnitude drops below the lower trip point.",
+            AmpMode::Slew     => "Slew — rate-limits the send level in dB/s. Sudden jumps glide smoothly; sets a maximum modulation speed.",
+            AmpMode::Stiction => "Stiction — static-friction model: the send only changes when the magnitude crosses the threshold step size. Holds steady inside the deadband.",
+        }
+    }
 }
 
 /// Per-cell numeric parameters shared across all amp modes. Each mode reads only

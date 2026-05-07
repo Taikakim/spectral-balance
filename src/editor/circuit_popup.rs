@@ -31,6 +31,13 @@ pub fn mode_label(mode: CircuitMode) -> &'static str {
     "Unknown"
 }
 
+pub fn mode_hint(mode: CircuitMode) -> &'static str {
+    for &(m, _, hint) in MODES {
+        if m == mode { return hint; }
+    }
+    ""
+}
+
 pub fn show_popup(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) -> bool {
     let key = ui.id().with("circuit_popup");
     let state: CircuitPopupState = ui.data(|d| d.get_temp(key).unwrap_or_default());

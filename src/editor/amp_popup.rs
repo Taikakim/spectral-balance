@@ -70,6 +70,9 @@ pub fn show_popup(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) -> bool
                 for &mode in MODES {
                     let selected = current_mode == mode;
                     let resp = ui.selectable_label(selected, mode.label());
+                    crate::editor::help_box::track_help_strings(
+                        ui, &resp, mode.label(), mode.hint(),
+                    );
                     if resp.clicked() && !selected {
                         current_mode = mode;
                         mode_changed = true;
