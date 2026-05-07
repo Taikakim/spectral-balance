@@ -398,8 +398,19 @@ fn kinetics_config(i: usize) -> CurveDisplayConfig {
 
 fn harmony_config(i: usize) -> CurveDisplayConfig {
     match i {
-        // AMOUNT, THRESHOLD, STABILITY, SPREAD, MIX: 0–100 %
-        0 | 1 | 2 | 3 | 5 => CurveDisplayConfig {
+        // THRESHOLD: bidirectional 0–100 % with neutral at 50 %, so the
+        // offset slider can sweep the full range from either direction
+        // (the prior natural-at-max config left the user "stuck at 100 %"
+        // — see 2026-05-08 bug list).
+        1 => CurveDisplayConfig {
+            y_label: "%", y_min: 0.0, y_max: 100.0, y_log: false,
+            grid_lines: &[(25.0, "25%"), (50.0, "50%"), (75.0, "75%"), (100.0, "100%")],
+            y_natural: 50.0,
+            offset_fn: off_threshold_pct,
+            natural_at_max: false,
+        },
+        // AMOUNT, STABILITY, SPREAD, MIX: 0–100 %, natural-at-max
+        0 | 2 | 3 | 5 => CurveDisplayConfig {
             y_label: "%", y_min: 0.0, y_max: 100.0, y_log: false,
             grid_lines: &[(25.0, "25%"), (50.0, "50%"), (75.0, "75%"), (100.0, "100%")],
             y_natural: 100.0,
@@ -697,6 +708,17 @@ fn default_config() -> CurveDisplayConfig {
 /// off=+1 → g=2.0 → 2.0; off=-1 → g=0.0 → 0.0.
 #[inline] pub fn off_resistance(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     g + o
+}
+
+/// Threshold % with neutral at 50 % on a 0..100 % axis. Pairs with
+/// `gain_to_display` idx 6 (`gain * 100`). Maps:
+///   gain=1.0, o=-1 → 0.0  → display 0 %
+///   gain=1.0, o= 0 → 0.5  → display 50 %
+///   gain=1.0, o=+1 → 1.0  → display 100 %
+/// Curve nodes still scale via `g * 0.5`, so a node dragged to its top
+/// (gain=2.0) maps to display 100 % with the offset slider at 0.
+#[inline] pub fn off_threshold_pct(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
+    (g * 0.5 + o * 0.5).max(0.0)
 }
 
 /// Identity: no offset effect. Used for curves with unclear calibration and default_config.

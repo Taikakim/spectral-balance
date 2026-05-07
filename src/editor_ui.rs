@@ -1285,8 +1285,15 @@ pub fn create_editor(
                         .min(crate::dsp::modules::module_spec(editing_type).num_curves.saturating_sub(1));
 
                     let is_dynamics = editing_type == crate::dsp::modules::ModuleType::Dynamics;
+                    let is_contrast = editing_type == crate::dsp::modules::ModuleType::Contrast;
+                    // Show the Atk/Rel/Sens/Width group for both Dynamics and
+                    // Contrast — Contrast uses the same envelope-follower
+                    // params internally. Group label changes per module so
+                    // the user knows what's being controlled.
+                    let show_dyn_group = is_dynamics || is_contrast;
+                    let group_label = if is_contrast { "Contrast" } else { "Dynamics" };
                     let mut dyn_builder = egui::UiBuilder::new();
-                    if !is_dynamics { dyn_builder = dyn_builder.invisible(); }
+                    if !show_dyn_group { dyn_builder = dyn_builder.invisible(); }
                     ui.scope_builder(dyn_builder, |ui| {
                         ui.horizontal(|ui| {
                             let dyn_frame = egui::Frame::new()
@@ -1302,7 +1309,7 @@ pub fn create_editor(
                             });
                             let lbl_pos = dyn_resp.response.rect.left_top() + egui::vec2(4.0, 0.0);
                             ui.painter().text(
-                                lbl_pos, egui::Align2::LEFT_TOP, "Dynamics",
+                                lbl_pos, egui::Align2::LEFT_TOP, group_label,
                                 egui::FontId::proportional(th::scaled(th::FONT_SIZE_TINY, scale)), th::LABEL_DIM,
                             );
                         });

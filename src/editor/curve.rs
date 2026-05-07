@@ -288,10 +288,14 @@ pub fn display_curve_idx(module_type: ModuleType, curve_idx: usize, gain_mode: G
         },
         ModuleType::Gain => match curve_idx {
             // In Add/Subtract the curve is a ±18 dB gain; in Pull/Match it's a
-            // clamped [0, 1] wet/dry mix drawn on the same screen scale but with
-            // percentage grid labels.
+            // clamped [0, 1] wet/dry mix on a 0..100 % axis. Pull/Match used
+            // to route to idx 12 (dB-scaled) which mapped neutral gain to
+            // 0 dB → display 0 % (curve at the bottom of the % axis); offset
+            // changes barely moved the visible line. Routing to idx 6
+            // (`gain * 100 %`) puts neutral gain at 100 % matching the cfg
+            // and lets the offset slider sweep the full 0..100 % range.
             0 => match gain_mode {
-                GainMode::Pull | GainMode::Match => 12,
+                GainMode::Pull | GainMode::Match => 6,
                 _ => 5,
             },
             1 => 14,            // PEAK HOLD → ms via peak_hold_curve_to_ms (was 10, misused Portamento mapping)

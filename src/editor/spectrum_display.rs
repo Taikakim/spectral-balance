@@ -107,7 +107,11 @@ pub fn decay_peak_hold(magnitudes: &[f32], hold_db: &mut Vec<f32>, falloff_ms: f
     // Rate: enough to drop ~60 dB over falloff_ms
     let drop = if falloff_ms < 1.0 { f32::INFINITY } else { 60.0 / (falloff_ms * 0.001) * dt_s };
     for (h, &mag) in hold_db.iter_mut().zip(magnitudes.iter()) {
-        let db = if mag > 1e-10 { 20.0 * mag.log10() } else { -120.0 };
+        // Silent bins → hold at -200 dBFS (well below the typical db_min
+        // of -160) so the peak-hold spectrum line settles OFF-screen
+        // instead of leaving a persistent ~-120 dBFS line at ~25 % from
+        // the bottom of every graph (2026-05-08 bug list).
+        let db = if mag > 1e-10 { 20.0 * mag.log10() } else { -200.0 };
         if db >= *h { *h = db; } else { *h = (*h - drop).max(db); }
     }
 }

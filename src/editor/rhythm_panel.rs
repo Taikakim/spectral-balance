@@ -75,6 +75,14 @@ pub fn render(
         });
     }
 
+    // The 8×8 voice/step grid is only consumed by Arpeggiator mode.
+    // Skip rendering it for Euclidean / Phase Reset so the panel
+    // collapses and the plugin doesn't grow vertically when the user
+    // selects a non-grid mode (2026-05-08 bug list).
+    if mode != RhythmMode::Arpeggiator {
+        return;
+    }
+
     // Snapshot the grid so we don't hold the lock across egui interaction calls.
     let mut grid: ArpGrid = params.slot_arp_grid.lock()[slot];
     let mut changed = false;
