@@ -113,7 +113,7 @@ pub fn topic_help_text(topic: HelpTopic) -> &'static str {
         HelpTopic::DynSuppressionWidth => "Width of the per-bin suppression footprint. Wider = the bin's gain reduction also pulls down its neighbours, smoothing the spectral result.",
 
         HelpTopic::Offset           => "Offset — shifts the entire curve up or down. v=0 sits at the curve's natural value; v=±1 reaches the curve's display min/max via the calibrated axis_aware_lerp.",
-        HelpTopic::Tilt             => "Tilt — frequency-dependent shift pivoted at 1 kHz. Negative tilts the curve down at high frequencies; positive tilts it up. Up to ±2 dB/oct.",
+        HelpTopic::Tilt             => "Tilt — frequency-dependent shift pivoted at 1 kHz. Negative tilts the curve down at high frequencies; positive tilts it up. Up to ±4 dB/oct (near-diagonal at v = ±1).",
         HelpTopic::Curvature        => "Curvature — bends the tilt into a smoothstep S-curve, concentrating the change around the 1 kHz pivot. 0 = straight tilt; 1 = full S.",
 
         HelpTopic::MatrixCellSend   => "Routing matrix cell — send amplitude from this row's slot to this column's slot. 0 = off, 1 = unity. Drag to set; right-click for the amp popup.",
@@ -729,7 +729,7 @@ fn single_mode_curve_help(ty: ModuleType, curve_idx: usize) -> &'static str {
         // Freeze — 5 curves. SC: yes.
         (ModuleType::Freeze, 0) => "Freeze · LENGTH — per-bin freeze duration. Longer = the captured moment holds for more hops before releasing back to live audio.",
         (ModuleType::Freeze, 1) => "Freeze · THRESHOLD — per-bin gate. Bins below threshold pass live; bins at/above are eligible to freeze. Sidechain (when patched) replaces the bin's magnitude in the comparison.",
-        (ModuleType::Freeze, 2) => "Freeze · PORTAMENTO — glide time from the live magnitude to the frozen magnitude when a bin enters freeze. 0 ms = snap; longer = smooth crossfade.",
+        (ModuleType::Freeze, 2) => "Freeze · PORTAMENTO — glide time from the live magnitude to the frozen magnitude when a bin enters freeze. Range 0..750 ms (neutral curve gain = 150 ms). 0 ms = instant snap.",
         (ModuleType::Freeze, 3) => "Freeze · RESISTANCE — how strongly the frozen bin resists being overwritten by louder live audio. 0 = a louder transient retriggers the freeze; 1 = the freeze is locked.",
         (ModuleType::Freeze, 4) => "Freeze · MIX — per-bin wet/dry between the frozen and live signal.",
 

@@ -600,11 +600,23 @@ fn default_config() -> CurveDisplayConfig {
     (g + o).clamp(0.0, 1.0)
 }
 
-/// Dynamics THRESHOLD dBFS: multiplicative log-dBFS, calibrated for db_min=-60, db_max=0.
-///   v ≥ 0:  display = -20 + 20·v  → factor 10^(0.3·v)
-///   v < 0:  display = -20 + 40·v  → factor 10^(0.6·v)
+/// Dynamics / Freeze THRESHOLD dBFS: multiplicative log-dBFS, calibrated so
+/// the offset slider spans the full y_min=-160..y_max=0 axis from v=±1
+/// when the curve gain is at its neutral 1.0.
+///
+/// `curve_to_threshold_db` (see `dsp::modules::freeze::curve_to_threshold_db`)
+/// maps curve_gain g via t_db = 20·log10(g) and then:
+///   - positive: display = -20 + (20/18)·t_db, so display=0 needs t_db=18.
+///   - negative: display = -20 + (140/18)·t_db, so display=-160 needs t_db=-18.
+/// Both ends require the SAME |t_db| = 18 (asymmetric only in display
+/// scaling, not in curve-gain space), so a single symmetric multiplier
+/// 10^(0.9·v) reaches y_max at v=+1 and y_min at v=-1.
+///
+/// Previous calibration used 0.3·v / 0.6·v which only reached display = -13
+/// at v=+1 and -113 at v=-1 — leaving most of the axis unreachable from
+/// the slider. Fixed 2026-05-07 (D-1c).
 #[inline] pub fn off_thresh(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
-    if o >= 0.0 { g * 10f32.powf(0.3 * o) } else { g * 10f32.powf(0.6 * o) }
+    g * 10f32.powf(0.9 * o)
 }
 
 /// Ratio 1–20: WYSIWYG with log axis (spec §2 axis-aware lerp).

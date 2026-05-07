@@ -886,7 +886,9 @@ pub struct CurveTransform {
 
 /// Maximum physical tilt in dB/octave units (normalized tilt × TILT_MAX = physical tilt).
 /// Shared between the audio thread (pipeline.rs) and the GUI (editor_ui.rs).
-pub const TILT_MAX: f32 = 2.0;
+/// Bumped from 2.0 to 4.0 on 2026-05-07 (D-1a) — user wants the curve to
+/// reach a near-diagonal slope at v = ±1 instead of a gentle slant.
+pub const TILT_MAX: f32 = 4.0;
 
 /// Apply spectral tilt (pivoted at 1 kHz), calibrated offset, and curvature (S-curve blend)
 /// to a slice of per-bin curve gains, then clamp to [0, ∞).

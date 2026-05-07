@@ -308,12 +308,16 @@ fn offset_calibration_thresh_reaches_endpoints() {
     let cfg = curve_display_config(ModuleType::Dynamics, 0, GainMode::Add);
     let g_neutral = 1.0_f32;
     let sentinel = (cfg.y_min, cfg.y_natural, cfg.y_max);
-    // off=+1 → g = 10^(0.3×1) ≈ 1.9953 (multiplicative log-dBFS, post-Task-5)
-    let expected_hi = 10f32.powf(0.3);
+    // Post-D-1c (2026-05-07): off_thresh is symmetric 10^(0.9·v) so the
+    // slider reaches both endpoints of the y_min=-160 .. y_max=0 axis when
+    // the curve gain is at its neutral 1.0.
+    //
+    // off=+1 → g = 10^0.9 ≈ 7.9433 → curve_to_threshold_db ≈ 18 → display 0 dBFS
+    let expected_hi = 10f32.powf(0.9);
     assert!(((cfg.offset_fn)(g_neutral, 1.0, sentinel) - expected_hi).abs() < 1e-4,
         "thresh off=+1 should give g≈{expected_hi:.5}, got {}", (cfg.offset_fn)(g_neutral, 1.0, sentinel));
-    // off=-1 → g = 10^(0.6×-1) ≈ 0.25119 (negative branch uses 0.6 exponent)
-    let expected_lo = 10f32.powf(-0.6);
+    // off=-1 → g = 10^-0.9 ≈ 0.12589 → curve_to_threshold_db ≈ -18 → display -160 dBFS
+    let expected_lo = 10f32.powf(-0.9);
     assert!(((cfg.offset_fn)(g_neutral, -1.0, sentinel) - expected_lo).abs() < 1e-4,
         "thresh off=-1 should give g≈{expected_lo:.5}, got {}", (cfg.offset_fn)(g_neutral, -1.0, sentinel));
     // off=0 → identity

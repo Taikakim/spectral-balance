@@ -168,8 +168,14 @@ impl SpectralModule for FreezeModule {
             #[cfg(any(test, feature = "probe"))]
             let threshold_db  = curve_to_threshold_db(thr_gain);
 
+            // Range adjusted on 2026-05-07 (D-1b): the previous 0..1000 ms
+            // ceiling at curve gain * 200 made even the neutral position
+            // (200 ms) feel sluggish on percussive freezes. New mapping:
+            // neutral = 150 ms, ceiling = 750 ms — fast enough to feel
+            // instantaneous at v = 0, long enough at v = +1 to glide
+            // smoothly through chord changes.
             let port_ms   = (curves.get(2).and_then(|c| c.get(k)).copied().unwrap_or(1.0)
-                             * 200.0).clamp(0.0, 1000.0);
+                             * 150.0).clamp(0.0, 750.0);
             let port_hops = (port_ms / hop_ms).max(0.5);
 
             // Resistance is a dimensionless relative-excess threshold (0–2).
