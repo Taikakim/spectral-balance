@@ -14,9 +14,16 @@ fn bin_x(k: usize, sample_rate: f32, fft_size: usize, rect: Rect) -> f32 {
 }
 
 /// Map a dB value to a y position in `rect` (higher dB = higher on screen).
+///
+/// Clamped at the bottom (no bins below `db_min`) but NOT at the top — bins
+/// above `db_max` produce y above `rect.top()` so loud peaks can flow into
+/// the headroom strip drawn above the inner rect (see `db_inner_rect`).
+/// egui clips painted geometry that extends past the outer paint rect, so
+/// this is safe in practice.
 #[inline]
 fn db_y(db: f32, db_min: f32, db_max: f32, rect: Rect) -> f32 {
-    let t = ((db - db_min) / (db_max - db_min)).clamp(0.0, 1.0);
+    let denom = (db_max - db_min).max(1e-6);
+    let t = ((db - db_min) / denom).max(0.0);
     rect.bottom() - t * rect.height()
 }
 

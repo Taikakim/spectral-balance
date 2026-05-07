@@ -511,17 +511,27 @@ pub fn db_inner_rect(rect: Rect, scale: f32) -> Rect {
 }
 
 /// Map a physical value to pixel y using a linear scale.
+///
+/// `t` is clamped at the bottom (no values below y_min) but NOT at the top
+/// — values above y_max produce y above `rect.top()` so curves and dots can
+/// flow into the HEADROOM_PX strip (or beyond, where egui's painter clips).
+/// Caller is responsible for any further clamping (e.g. `curve_widget`
+/// keeps node dots inside the FULL outer rect).
 #[inline]
 fn linear_to_y(v: f32, y_min: f32, y_max: f32, rect: Rect) -> f32 {
-    let t = ((v - y_min) / (y_max - y_min)).clamp(0.0, 1.0);
+    let denom = (y_max - y_min).max(1e-6);
+    let t = ((v - y_min) / denom).max(0.0);
     rect.bottom() - t * rect.height()
 }
 
 /// Map a physical value to pixel y using a logarithmic scale.
+///
+/// Like `linear_to_y`, the result may extend above `rect.top()` for values
+/// above y_max so the curve can flow into the headroom strip.
 #[inline]
 fn log_to_y(v: f32, y_min: f32, y_max: f32, rect: Rect) -> f32 {
     let v   = v.max(y_min);
-    let t   = ((v / y_min).log10() / (y_max / y_min).log10()).clamp(0.0, 1.0);
+    let t   = ((v / y_min).log10() / (y_max / y_min).log10()).max(0.0);
     rect.bottom() - t * rect.height()
 }
 
