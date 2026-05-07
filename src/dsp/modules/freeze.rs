@@ -202,12 +202,27 @@ impl SpectralModule for FreezeModule {
                     self.frozen_bins[k].im * (1.0 - t) + self.freeze_target[k].im * t,
                 );
             } else {
-                // Settled: hold and accumulate normalised excess energy toward next transition.
+                // Settled: hold and accumulate excess energy toward next transition.
                 self.freeze_hold_hops[k] += 1;
                 let mag = bins[k].norm();
                 if mag > threshold_lin && threshold_lin > 0.0 {
-                    // Relative excess: 0 at threshold, 1 when mag = 2× threshold (+6 dB)
-                    self.freeze_accum[k] += mag / threshold_lin - 1.0;
+                    // Per-hop accumulation: log-scaled excess (dB above
+                    // threshold) divided by 20 (so +20 dB = 1.0/hop equiv),
+                    // CAPPED at 0.1 per hop. The cap is what makes
+                    // resistance audibly meaningful — without it, typical
+                    // mixes sit 20–30 dB above threshold and the prior
+                    // linear `mag/threshold - 1` formula added 10–30 per
+                    // hop, blowing through any resistance ≤ 2 in a single
+                    // hop. With the cap, resistance maps to a real time
+                    // range:
+                    //   resistance 0   → instant (next hop crossing thr)
+                    //   resistance 1   → ~10 hops  (~120 ms @ fft 2048 / 44.1k)
+                    //   resistance 2   → ~20 hops  (~240 ms)
+                    // and faint excess (+0.5 dB) takes proportionally
+                    // longer at any resistance.
+                    let excess_db = 20.0 * (mag / threshold_lin).log10();
+                    let increment = (excess_db / 20.0).clamp(0.0, 0.1);
+                    self.freeze_accum[k] += increment;
                 }
                 // Trigger when hold duration AND accumulated excess both met.
                 if self.freeze_hold_hops[k] >= length_hops && self.freeze_accum[k] >= resistance {
