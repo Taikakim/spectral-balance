@@ -49,7 +49,7 @@ pub fn mode_hint(mode: LifeMode) -> &'static str {
 }
 
 pub fn show_popup(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) -> bool {
-    let key = ui.id().with("life_popup");
+    let key = egui::Id::new("life_popup_state");
     let state: LifePopupState = ui.data(|d| d.get_temp(key).unwrap_or_default());
     if !state.open { return false; }
 
@@ -66,6 +66,7 @@ pub fn show_popup(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) -> bool
 
     egui::Area::new(egui::Id::new("life_popup_area"))
         .fixed_pos(state.pos)
+        .constrain(true)
         .order(egui::Order::Foreground)
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
@@ -102,6 +103,6 @@ pub fn show_popup(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) -> bool
 }
 
 pub fn open_at(ui: &mut Ui, slot: usize, pos: Pos2) {
-    let key = ui.id().with("life_popup");
+    let key = egui::Id::new("life_popup_state");
     ui.data_mut(|d| d.insert_temp(key, LifePopupState { open: true, slot, pos }));
 }

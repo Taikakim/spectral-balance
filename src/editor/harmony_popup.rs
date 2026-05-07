@@ -56,7 +56,7 @@ pub fn mode_hint(mode: HarmonyMode) -> &'static str {
 /// UX note: stays open after a mode click so the user can also pick the
 /// Inharmonic sub-mode in a single trip. Only the "Close" button dismisses.
 pub fn show_popup(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) -> bool {
-    let key = ui.id().with("harmony_popup");
+    let key = egui::Id::new("harmony_popup_state");
     let state: HarmonyPopupState = ui.data(|d| d.get_temp(key).unwrap_or_default());
     if !state.open { return false; }
 
@@ -73,6 +73,7 @@ pub fn show_popup(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) -> bool
 
     egui::Area::new(egui::Id::new("harmony_popup_area"))
         .fixed_pos(state.pos)
+        .constrain(true)
         .order(egui::Order::Foreground)
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
@@ -132,7 +133,7 @@ pub fn show_popup(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) -> bool
 
 /// Open the popup for a slot at the given screen position.
 pub fn open_at(ui: &mut Ui, slot: usize, pos: Pos2) {
-    let key = ui.id().with("harmony_popup");
+    let key = egui::Id::new("harmony_popup_state");
     ui.data_mut(|d| d.insert_temp(key, HarmonyPopupState { open: true, slot, pos }));
 }
 
