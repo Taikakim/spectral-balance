@@ -280,6 +280,12 @@ pub fn paint_fx_matrix_grid(
                                 ui.id().with(("amp_cell", row, col)),
                                 egui::Sense::click(),
                             );
+                            // Hovering anywhere on the cell (including the corner
+                            // dot, outside the inner DragValue) shows the active
+                            // amp filter's help.
+                            crate::editor::help_box::track_help_strings(
+                                ui, &amp_resp, amp_mode.label(), amp_mode.hint(),
+                            );
                             if amp_resp.secondary_clicked() {
                                 let p = amp_resp.interact_pointer_pos().unwrap_or(cell_rect.center());
                                 result.amp_right_click = Some((row, col, p));
@@ -395,6 +401,9 @@ pub fn paint_fx_matrix_grid(
                             cell_rect,
                             ui.id().with(("amp_vcell", *vrow_src, col)),
                             egui::Sense::click(),
+                        );
+                        crate::editor::help_box::track_help_strings(
+                            ui, &amp_resp, amp_mode.label(), amp_mode.hint(),
                         );
                         if amp_resp.secondary_clicked() {
                             let p = amp_resp.interact_pointer_pos().unwrap_or(cell_rect.center());
