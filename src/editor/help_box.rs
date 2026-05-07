@@ -267,16 +267,19 @@ pub fn draw(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) {
                 ).wrap(),
             );
             ui.add_space(4.0);
-            let body_font = FontId::proportional(th::scaled(th::FONT_SIZE_HELP_BODY, scale));
+            // Body. Always rendered through a LayoutJob with explicit wrap
+            // width — `Label::wrap()` proved unreliable for these labels in
+            // the current nih_plug-egui (per-character wrapping in some
+            // cases). The LayoutJob path also lets us inline a yellow
+            // "Feedback" prefix for matrix feedback cells without a second
+            // widget.
+            let body_font  = FontId::proportional(th::scaled(th::FONT_SIZE_HELP_BODY, scale));
+            let body_color = th::HELP_BOX_BODY;
+            let yellow     = egui::Color32::from_rgb(0xff, 0xc8, 0x40);
+            let mut job = egui::text::LayoutJob::default();
+            job.wrap.max_width      = ui.available_width();
+            job.wrap.break_anywhere = false;
             if let Some(prefix) = yellow_prefix {
-                let body_color = th::HELP_BOX_BODY;
-                let yellow     = egui::Color32::from_rgb(0xff, 0xc8, 0x40);
-                let mut job = egui::text::LayoutJob::default();
-                // Set the wrap width on the LayoutJob itself; Label::wrap()
-                // doesn't override the inner job's wrap config, so without
-                // this the layout breaks at every character.
-                job.wrap.max_width      = ui.available_width();
-                job.wrap.break_anywhere = false;
                 job.append(
                     &format!("{} ", prefix),
                     0.0,
@@ -286,25 +289,17 @@ pub fn draw(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) {
                         ..Default::default()
                     },
                 );
-                job.append(
-                    body.as_ref(),
-                    0.0,
-                    egui::TextFormat {
-                        font_id: body_font,
-                        color:   body_color,
-                        ..Default::default()
-                    },
-                );
-                ui.add(egui::Label::new(job));
-            } else {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(body.as_ref())
-                            .color(th::HELP_BOX_BODY)
-                            .font(body_font),
-                    ).wrap(),
-                );
             }
+            job.append(
+                body.as_ref(),
+                0.0,
+                egui::TextFormat {
+                    font_id: body_font,
+                    color:   body_color,
+                    ..Default::default()
+                },
+            );
+            ui.add(egui::Label::new(job));
         });
 }
 

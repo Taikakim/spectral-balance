@@ -545,8 +545,17 @@ pub fn create_editor(
                         };
 
                         // Read tilt/offset/curvature lock-free from automatable params.
+                        // Tilt is normalized [-1, 1] in the param store; the DSP path
+                        // (`pipeline.rs::process` -> `apply_curve_transform`) multiplies by
+                        // `TILT_MAX` to convert to physical dB/oct. The display
+                        // (`apply_curve_adjustments`) takes the same physical-tilt
+                        // value, so we apply the same scaling here. Without it the
+                        // visible curve tilts at 1/TILT_MAX of what the DSP actually
+                        // does, and the user sees compression triggering on bins
+                        // that look untouched.
+                        use crate::dsp::modules::TILT_MAX;
                         let slot_meta: [(f32, f32, f32); 7] = std::array::from_fn(|c| {
-                            let t  = params.tilt_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0);
+                            let t  = params.tilt_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0) * TILT_MAX;
                             let o  = params.offset_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0);
                             let cv = params.curvature_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0);
                             (t, o, cv)
