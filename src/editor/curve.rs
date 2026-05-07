@@ -269,7 +269,7 @@ pub fn display_curve_idx(module_type: ModuleType, curve_idx: usize, gain_mode: G
         },
         ModuleType::PhaseSmear => match curve_idx {
             0 => 7,             // AMOUNT → 0–200 %
-            1 => 10,            // PEAK HOLD → ms (log, treated as time constant)
+            1 => 14,            // PEAK HOLD → ms via peak_hold_curve_to_ms (was 10, misused Portamento mapping)
             2 => 6,             // MIX → %
             _ => curve_idx,
         },
@@ -285,7 +285,7 @@ pub fn display_curve_idx(module_type: ModuleType, curve_idx: usize, gain_mode: G
                 GainMode::Pull | GainMode::Match => 12,
                 _ => 5,
             },
-            1 => 10,            // PEAK HOLD → ms
+            1 => 14,            // PEAK HOLD → ms via peak_hold_curve_to_ms (was 10, misused Portamento mapping)
             _ => curve_idx,
         },
         ModuleType::MidSide => match curve_idx {
@@ -631,6 +631,12 @@ pub fn gain_to_display(
         10 => (gain * 200.0).clamp(0.0, 1000.0),            // Portamento/SC Smooth: 0-1000ms (neutral=200ms)
         11 => gain.clamp(0.0, 2.0),                          // Resistance: 0-2 (normalised excess)
         13 => (gain * total_history_seconds).clamp(0.0, total_history_seconds),
+        // PEAK HOLD ms — matches the DSP-side `peak_hold_curve_to_ms` helper
+        // (log-piecewise: gain 0→1 ms, 1→50 ms, 2→500 ms). Used by
+        // PhaseSmear PEAK HOLD and Gain PEAK HOLD; replaces the prior
+        // misuse of idx 10 which mapped neutral gain to 200 ms when the
+        // helper actually returns 50 ms.
+        14 => crate::dsp::modules::peak_hold_curve_to_ms(gain),
         _ => gain,
     }
 }

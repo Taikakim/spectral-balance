@@ -10,14 +10,19 @@ use spectral_forge::editor::curve_config::curve_display_config;
 
 /// Display indices currently deferred from WYSIWYG enforcement.
 /// idx 13: PAST Age/Delay — total_history_seconds plumbing pending.
-/// idx 10: PEAK HOLD on PhaseSmear/1 + Gain/1 — DSP function mismatch (separate plan).
+/// idx 14: PEAK HOLD on PhaseSmear/1 + Gain/1 — `peak_hold_curve_to_ms`
+///   (log-piecewise) doesn't compose smoothly with `off_portamento`
+///   (geometric in g), so endpoints match axis_aware_lerp but mid-range
+///   slider positions show ±5 ms variance vs the displayed graph value.
+///   A proper fix needs a custom `off_peak_hold` that's the inverse of
+///   peak_hold_curve_to_ms ∘ axis_aware_lerp; deferred to a follow-up.
 /// idx 0/9: Threshold — offset_fn exponents were calibrated for old db_min=-60 formula;
 ///   the display formula was updated to db_min=-160 but the slider shape is unchanged.
 fn is_deferred(module: ModuleType, curve_idx: usize, display_idx: usize) -> bool {
     if display_idx == 13 { return true; }
     if display_idx == 0 || display_idx == 9 { return true; }
     matches!((module, curve_idx, display_idx),
-        (ModuleType::PhaseSmear, 1, 10) | (ModuleType::Gain, 1, 10))
+        (ModuleType::PhaseSmear, 1, 14) | (ModuleType::Gain, 1, 14))
 }
 
 fn check_one(module: ModuleType, curve_idx: usize) -> Result<(), String> {
