@@ -582,14 +582,15 @@ pub fn past_config(curve_idx: usize, _mode: u8) -> CurveDisplayConfig {
             // Display index 13 (Past Age/Delay) treats these anchors as
             // fractions of `total_history_seconds` — the runtime substitution
             // happens in `runtime_anchors()` and `gain_to_display(13, ...)`.
-            // y_natural at 0.5 puts the offset slider's neutral at the
-            // midpoint of the buffer so the slider has equal headroom in
-            // both directions (spec §2 piecewise lerp).
+            // y_natural=1.0 (full history at gain=1) matches the DSP-side
+            // mapping `gain.clamp(0,1) * max_age` in past.rs, so the slider's
+            // neutral position is at top-of-axis. natural_at_max=true allows
+            // the asymmetric off_mix offset_fn to shift only toward 0 s.
             y_label: "s", y_min: 0.0, y_max: 1.0, y_log: false,
             grid_lines: &[(0.25, "25%"), (0.5, "50%"), (0.75, "75%"), (1.0, "100%")],
-            y_natural: 0.5,
-            offset_fn: off_amount_norm,
-            natural_at_max: false,
+            y_natural: 1.0,
+            offset_fn: off_mix,
+            natural_at_max: true,
         },
         2 => CurveDisplayConfig {
             y_label: "dBFS", y_min: -160.0, y_max: 0.0, y_log: false,

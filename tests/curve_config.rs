@@ -165,15 +165,16 @@ fn past_config_returns_calibrated_display_per_curve() {
     assert!((amount.y_natural - 100.0).abs() < 1e-6);
     assert!(is_mix(amount.offset_fn), "AMOUNT should route to off_mix");
 
-    // TIME (curve 1) — seconds, neutral at 0.5 (midpoint fraction of total
-    // history; runtime_anchors() scales by total_history_seconds), off_amount_norm
+    // TIME (curve 1) — seconds, neutral at 1.0 (full-history fraction; matches
+    // DSP-side `gain.clamp(0,1) * max_age` where gain=1 → oldest frame).
+    // runtime_anchors() scales the fraction anchors by total_history_seconds.
+    // off_mix: asymmetric, slider only shifts toward 0 s (natural_at_max=true).
     let time = curve_display_config(ModuleType::Past, 1, GainMode::Add);
     assert_eq!(time.y_label, "s");
     assert_eq!(time.y_min, 0.0);
-    // y_max=1.0 placeholder; runtime_anchors substitutes total_history_seconds.
     assert_eq!(time.y_max, 1.0);
-    assert!((time.y_natural - 0.5).abs() < 1e-6, "TIME y_natural should be 0.5 (midpoint fraction)");
-    assert!(is_amount_norm(time.offset_fn), "TIME should route to off_amount_norm");
+    assert!((time.y_natural - 1.0).abs() < 1e-6, "TIME y_natural should be 1.0 (full-history fraction)");
+    assert!(is_mix(time.offset_fn), "TIME should route to off_mix");
 
     // THRESHOLD (curve 2) — dBFS -160..0, neutral -20 (matches gain_to_display(9, 1.0)),
     // off_freeze_thresh so the offset slider can reach the full visible y range.
@@ -249,7 +250,7 @@ fn runtime_anchors_substitutes_history_seconds_for_index_13() {
     let cfg = curve_display_config(ModuleType::Past, 1, GainMode::Add);
     let (lo, nat, hi) = runtime_anchors(&cfg, 13, 4.0, -60.0, 0.0, 10.0, 100.0);
     assert_eq!(lo, 0.0);
-    assert!((nat - 2.0).abs() < 1e-6, "y_natural=0.5 × total=4.0 = 2.0 s, got {nat}");
+    assert!((nat - 4.0).abs() < 1e-6, "y_natural=1.0 × total=4.0 = 4.0 s, got {nat}");
     assert!((hi - 4.0).abs() < 1e-6);
 }
 

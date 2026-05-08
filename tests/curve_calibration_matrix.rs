@@ -9,13 +9,12 @@ use spectral_forge::editor::curve::{
 use spectral_forge::editor::curve_config::curve_display_config;
 
 /// Display indices currently deferred from WYSIWYG enforcement.
-/// idx 13: PAST Age/Delay — total_history_seconds plumbing pending.
-/// idx 0 + 9 (Threshold dBFS): D-1c (off_thresh) and G-2 (off_freeze_thresh)
-/// fixed both to symmetric 10^(0.9·v) so the slider reaches y_min..y_max
-/// from neutral curve gain. Removed from deferral.
-/// idx 14 (PEAK HOLD): G-1 added off_peak_hold inverse-compose. Removed.
-fn is_deferred(_module: ModuleType, _curve_idx: usize, display_idx: usize) -> bool {
-    display_idx == 13
+/// (none — idx 13 was the last; sub-project F closed it by setting PAST
+/// Age/Delay's cfg to y_natural=1.0 + natural_at_max=true + off_mix, so
+/// the slider's three endpoints {-1, 0, +1} now map to {0, H, H} and
+/// agree with axis_aware_lerp for any total_history_seconds.)
+fn is_deferred(_module: ModuleType, _curve_idx: usize, _display_idx: usize) -> bool {
+    false
 }
 
 fn check_one(module: ModuleType, curve_idx: usize) -> Result<(), String> {
