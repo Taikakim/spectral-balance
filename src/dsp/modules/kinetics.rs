@@ -105,8 +105,13 @@ const MAX_PEAKS: usize = 16;
 
 // ── Ferromagnetism kernel constants ──────────────────────────────────────────
 
+/// Peak detection threshold multiplier for Ferromagnetism mode.
+/// A bin qualifies as a master peak only if its magnitude exceeds this factor
+/// times the local-window mean over `FERRO_PEAK_WINDOW_HALF` bins on each side.
+/// Independent of `orbital_peak_threshold_factor` (OrbitalPhase-only scalar) per spec §2.
+const FERRO_PEAK_THRESHOLD_FACTOR: f32 = 2.0;
 /// Peak detection window half-width for Ferromagnetism mode.
-/// A bin counts as a peak only if its magnitude exceeds `ORBITAL_PEAK_THRESHOLD_FACTOR`
+/// A bin counts as a peak only if its magnitude exceeds `FERRO_PEAK_THRESHOLD_FACTOR`
 /// times the local-window mean over this many bins on each side.
 const FERRO_PEAK_WINDOW_HALF: usize = 8;
 /// Per-hop alpha multiplier on STRENGTH: `alpha = STRENGTH * FERRO_ALPHA_SCALE`.
@@ -795,12 +800,12 @@ impl KineticsModule {
         let damping_curve  = &self.smoothed_curves[channel][3][..num_bins];
         let mix_curve      = &self.smoothed_curves[channel][4][..num_bins];
 
-        let ferro_peak_threshold_factor = self.scalars.orbital_peak_threshold_factor;
+        let ferro_peak_threshold_factor = FERRO_PEAK_THRESHOLD_FACTOR;
 
         // -- Pass A: Find peaks. --
         // A bin qualifies as a master peak if:
         //   1. magnitude > both immediate neighbours (local maximum)
-        //   2. magnitude > orbital_peak_threshold_factor × the mean over the local
+        //   2. magnitude > FERRO_PEAK_THRESHOLD_FACTOR × the mean over the local
         //      FERRO_PEAK_WINDOW_HALF window
         // SmallVec stays stack-allocated up to MAX_PEAKS = 16 entries; no heap allocation.
         // Tuple: (bin_index, magnitude, phase)
