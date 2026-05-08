@@ -207,14 +207,49 @@ fn phase_smear_config(i: usize) -> CurveDisplayConfig {
 }
 
 fn contrast_config(i: usize) -> CurveDisplayConfig {
+    // 2026-05-08: 6-curve layout (THRESHOLD, RATIO, ATTACK, RELEASE, KNEE,
+    // MIX) mirrors Dynamics so prototyping shares calibration.
     match i {
-        // AMOUNT: gain maps directly to bp_ratio (ratio 1–20); log scale; same as dynamics ratio
+        // 0 THRESHOLD: dBFS, same anchors as Dynamics threshold.
         0 => CurveDisplayConfig {
+            y_label: "dBFS", y_min: -160.0, y_max: 0.0, y_log: false,
+            grid_lines: &[(-20.0, "-20"), (-60.0, "-60"), (-100.0, "-100"), (-140.0, "-140")],
+            y_natural: -20.0,
+            offset_fn: off_thresh,
+            natural_at_max: false,
+        },
+        // 1 RATIO 1..20.
+        1 => CurveDisplayConfig {
             y_label: "ratio", y_min: 1.0, y_max: 20.0, y_log: true,
-            grid_lines: &[(1.25, "1:1.25"), (2.5, "1:2.5"), (5.0, "1:5"), (10.0, "1:10")],
+            grid_lines: &[(1.5, "1:1.5"), (2.5, "1:2.5"), (5.0, "1:5"), (10.0, "1:10")],
             y_natural: 1.0,
             offset_fn: off_ratio,
             natural_at_max: false,
+        },
+        // 2 / 3 ATTACK / RELEASE — runtime y_natural substituted from the
+        // global Atk/Rel knobs via runtime_anchors.
+        2 | 3 => CurveDisplayConfig {
+            y_label: "ms", y_min: 1.0, y_max: 1024.0, y_log: true,
+            grid_lines: &[(4.0, "4ms"), (16.0, "16ms"), (64.0, "64ms"), (256.0, "256ms")],
+            y_natural: 1.0,
+            offset_fn: off_atk_rel,
+            natural_at_max: false,
+        },
+        // 4 KNEE dB.
+        4 => CurveDisplayConfig {
+            y_label: "dB", y_min: 0.0, y_max: 48.0, y_log: false,
+            grid_lines: &[(6.0, "6dB"), (12.0, "12dB"), (24.0, "24dB"), (36.0, "36dB")],
+            y_natural: 6.0,
+            offset_fn: off_knee,
+            natural_at_max: false,
+        },
+        // 5 MIX %.
+        5 => CurveDisplayConfig {
+            y_label: "%", y_min: 0.0, y_max: 100.0, y_log: false,
+            grid_lines: &[(25.0, "25%"), (50.0, "50%"), (75.0, "75%"), (100.0, "100%")],
+            y_natural: 100.0,
+            offset_fn: off_mix,
+            natural_at_max: true,
         },
         _ => default_config(),
     }

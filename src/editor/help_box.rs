@@ -734,8 +734,13 @@ fn single_mode_curve_help(ty: ModuleType, curve_idx: usize) -> &'static str {
         (ModuleType::PhaseSmear, 1) => "Phase Smear · PEAK HOLD — peak-envelope hold time per bin. Smearing follows a peak follower with this hold time so quiet bins are smeared longer than the transient that just rang them.",
         (ModuleType::PhaseSmear, 2) => "Phase Smear · MIX — per-bin wet/dry between smeared and original phase.",
 
-        // Contrast — 1 curve. SC: no.
-        (ModuleType::Contrast, 0) => "Contrast · AMOUNT — per-bin transient/spectral-contrast amount. Positive sharpens (peaks louder, valleys quieter); negative softens. The Sens / Width knobs in the Dynamics group below shape the detector envelope.",
+        // Contrast — 6 curves (Dynamics-mirror, 2026-05-08). SC: no.
+        (ModuleType::Contrast, 0) => "Contrast · THRESHOLD — per-bin level above which contrast engages (dBFS). Same calibration as Dynamics threshold.",
+        (ModuleType::Contrast, 1) => "Contrast · RATIO — per-bin contrast ratio 1..20. 1 = no contrast; higher sharpens peaks more aggressively.",
+        (ModuleType::Contrast, 2) => "Contrast · ATTACK — per-bin attack-time multiplier on the global Atk knob (Contrast group below).",
+        (ModuleType::Contrast, 3) => "Contrast · RELEASE — per-bin release-time multiplier on the global Rel knob.",
+        (ModuleType::Contrast, 4) => "Contrast · KNEE — soft-knee width in dB (0..48). Smooths the threshold transition.",
+        (ModuleType::Contrast, 5) => "Contrast · MIX — per-bin wet/dry of contrast-processed vs original.",
 
         // Gain — 2 curves; PEAK HOLD only meaningful in Pull/Match. SC: yes for Pull/Match.
         (ModuleType::Gain, 0) => "Gain · GAIN — per-bin spectral gain. Add / Subtract / Pull / Match modes (selector below) change how this curve is applied: Add adds to input, Subtract carves, Pull pulls toward the curve over time, Match shapes input to the curve.",

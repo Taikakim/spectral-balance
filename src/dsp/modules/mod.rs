@@ -554,8 +554,11 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         display_name: "Contrast",
         color_lit: Color32::from_rgb(0xb0, 0x60, 0xe0),
         color_dim: Color32::from_rgb(0x38, 0x20, 0x48),
-        num_curves: 1,
-        curve_labels: &["AMOUNT"],
+        // 2026-05-08: full 6-curve layout for prototyping. Mirrors Dynamics
+        // (THRESHOLD / RATIO / ATTACK / RELEASE / KNEE / MIX) so the user
+        // can dial in the underlying engine while we find good ranges.
+        num_curves: 6,
+        curve_labels: &["THRESHOLD", "RATIO", "ATTACK", "RELEASE", "KNEE", "MIX"],
         supports_sidechain: false,
         wants_sidechain: false,
         panel_widget: None,

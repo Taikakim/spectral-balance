@@ -68,15 +68,26 @@ impl SpectralModule for ContrastModule {
         _physics: Option<&mut crate::dsp::bin_physics::BinPhysics>,
         ctx: &ModuleContext<'_>,
     ) {
+        // Contrast now mirrors Dynamics' 6-curve layout (2026-05-08): every
+        // bin parameter is exposed for prototyping. See `freeze.rs::curve_to_threshold_db`
+        // for the canonical dBFS calibration; ATTACK / RELEASE multiply the
+        // global Atk/Rel knobs (so curve gain 1.0 hits the global value).
+        use super::freeze::curve_to_threshold_db;
         let n = self.num_bins;
         for k in 0..n {
-            let amount = curves.get(0).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
-            self.bp_ratio[k]     = amount.max(1.0).min(20.0);
-            self.bp_threshold[k] = -20.0;
-            self.bp_attack[k]    = ctx.attack_ms.clamp(0.1, 500.0);
-            self.bp_release[k]   = ctx.release_ms.clamp(1.0, 2000.0);
-            self.bp_knee[k]      = 6.0;
-            self.bp_mix[k]       = 1.0;
+            let thr_g  = curves.get(0).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
+            let rat_g  = curves.get(1).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
+            let atk_g  = curves.get(2).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
+            let rel_g  = curves.get(3).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
+            let knee_g = curves.get(4).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
+            let mix_g  = curves.get(5).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
+
+            self.bp_threshold[k] = curve_to_threshold_db(thr_g);
+            self.bp_ratio[k]     = rat_g.clamp(1.0, 20.0);
+            self.bp_attack[k]    = (ctx.attack_ms  * atk_g.max(0.0)).clamp(0.1, 500.0);
+            self.bp_release[k]   = (ctx.release_ms * rel_g.max(0.0)).clamp(1.0, 2000.0);
+            self.bp_knee[k]      = (knee_g * 6.0).clamp(0.0, 48.0);
+            self.bp_mix[k]       = mix_g.clamp(0.0, 1.0);
         }
         let params = BinParams {
             threshold_db:        &self.bp_threshold,
@@ -118,7 +129,7 @@ impl SpectralModule for ContrastModule {
     }
 
     fn module_type(&self) -> ModuleType { ModuleType::Contrast }
-    fn num_curves(&self) -> usize { 1 }
+    fn num_curves(&self) -> usize { 6 }
 
     #[cfg(any(test, feature = "probe"))]
     fn last_probe(&self) -> crate::dsp::modules::ProbeSnapshot { self.last_probe }

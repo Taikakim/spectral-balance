@@ -283,7 +283,13 @@ pub fn display_curve_idx(module_type: ModuleType, curve_idx: usize, gain_mode: G
             _ => curve_idx,
         },
         ModuleType::Contrast => match curve_idx {
-            0 => 1,             // AMOUNT → ratio 1–20 (maps gain directly to bp_ratio)
+            // 2026-05-08: 6-curve layout mirroring Dynamics.
+            0 => 9,  // THRESHOLD → dBFS (idx 9 = dBFS log mapping)
+            1 => 1,  // RATIO 1–20
+            2 => 2,  // ATTACK ms
+            3 => 3,  // RELEASE ms
+            4 => 4,  // KNEE dB
+            5 => 6,  // MIX → %
             _ => curve_idx,
         },
         ModuleType::Gain => match curve_idx {

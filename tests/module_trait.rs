@@ -38,8 +38,11 @@ fn curve_labels_post_refactor() {
     use spectral_forge::dsp::modules::{module_spec, ModuleType};
     assert_eq!(module_spec(ModuleType::Gain).curve_labels, &["GAIN", "PEAK HOLD"]);
     assert_eq!(module_spec(ModuleType::PhaseSmear).curve_labels, &["AMOUNT", "PEAK HOLD", "MIX"]);
-    assert_eq!(module_spec(ModuleType::Contrast).curve_labels, &["AMOUNT"]);
-    assert_eq!(module_spec(ModuleType::Contrast).num_curves, 1);
+    // 2026-05-08: Contrast extended to 6 curves mirroring Dynamics for
+    // prototyping (THRESHOLD/RATIO/ATTACK/RELEASE/KNEE/MIX).
+    assert_eq!(module_spec(ModuleType::Contrast).curve_labels,
+        &["THRESHOLD", "RATIO", "ATTACK", "RELEASE", "KNEE", "MIX"]);
+    assert_eq!(module_spec(ModuleType::Contrast).num_curves, 6);
 }
 
 #[test]
