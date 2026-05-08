@@ -679,7 +679,10 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         curve_labels: &["AMOUNT", "DIVISION", "ATTACK_FADE", "TARGET_PHASE", "MIX"],
         supports_sidechain: false,
         wants_sidechain:    false,
-        panel_widget: Some(crate::editor::rhythm_panel::render),
+        // Rhythm's Arpeggiator grid is rendered inline in the editor's
+        // Dynamics-panel row instead of via panel_widget so it doesn't
+        // push the rest of the UI down (2026-05-08 fix).
+        panel_widget: None,
         writes_bin_physics: false,
         needs_instantaneous_freq: false,
         needs_cepstrum: false,

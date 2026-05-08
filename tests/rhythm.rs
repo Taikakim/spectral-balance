@@ -9,8 +9,11 @@ fn rhythm_module_spec_basic() {
     assert!(!spec.supports_sidechain);
     assert!(!spec.wants_sidechain);
     assert_eq!(spec.display_name, "Rhythm");
-    assert!(spec.panel_widget.is_some(),
-        "rhythm needs a panel widget for arpeggiator step grid");
+    // 2026-05-08: rhythm's Arpeggiator grid moved into the editor's
+    // Dynamics-panel row inline so it doesn't push the rest of the UI
+    // down. The module-spec panel_widget hook is no longer set.
+    assert!(spec.panel_widget.is_none(),
+        "rhythm grid is rendered inline now, not via panel_widget");
 }
 
 #[test]

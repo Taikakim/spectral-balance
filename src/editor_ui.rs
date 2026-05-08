@@ -1286,6 +1286,7 @@ pub fn create_editor(
 
                     let is_dynamics = editing_type == crate::dsp::modules::ModuleType::Dynamics;
                     let is_contrast = editing_type == crate::dsp::modules::ModuleType::Contrast;
+                    let is_rhythm   = editing_type == crate::dsp::modules::ModuleType::Rhythm;
                     // Show the Atk/Rel/Sens/Width group for both Dynamics and
                     // Contrast — Contrast uses the same envelope-follower
                     // params internally. Group label changes per module so
@@ -1312,6 +1313,18 @@ pub fn create_editor(
                                 lbl_pos, egui::Align2::LEFT_TOP, group_label,
                                 egui::FontId::proportional(th::scaled(th::FONT_SIZE_TINY, scale)), th::LABEL_DIM,
                             );
+
+                            // Rhythm Arpeggiator grid (E-2 follow-up, 2026-05-08).
+                            // Shares the same row as the Dynamics group so it
+                            // doesn't push other UI down. Renders inline only
+                            // for Rhythm + Arpeggiator mode; otherwise the
+                            // space is empty (other modes don't use the grid).
+                            if is_rhythm {
+                                ui.add_space(8.0);
+                                crate::editor::rhythm_panel::render(
+                                    ui, params.as_ref(), setter, editing_slot,
+                                );
+                            }
                         });
                     });
 

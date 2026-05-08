@@ -137,13 +137,16 @@ fn freeze_config(i: usize) -> CurveDisplayConfig {
             offset_fn: off_freeze_thresh,
             natural_at_max: false,
         },
-        // PORTAMENTO: gain=1.0 → 200 ms; multiplicative with factor = 1000/200 = 5.0
-        // y_min matches off_portamento(1.0, -1.0) * 200 = 40 ms
+        // PORTAMENTO: matches D-1b DSP range (`curve * 150 ms` clamped to 1..750 ms).
+        // Asymmetric log-axis so the slider hits 1 ms at v=-1 and 750 ms at v=+1
+        // from the 150 ms neutral; uses off_freeze_length (ratio-from-anchors)
+        // because the simpler off_portamento (fixed 5× ratio both sides) would
+        // floor at 30 ms instead of 1 ms.
         2 => CurveDisplayConfig {
-            y_label: "ms", y_min: 40.0, y_max: 1000.0, y_log: true,
-            grid_lines: &[(40.0, "40ms"), (100.0, "100ms"), (500.0, "500ms"), (1000.0, "1s")],
-            y_natural: 200.0,
-            offset_fn: off_portamento,
+            y_label: "ms", y_min: 1.0, y_max: 750.0, y_log: true,
+            grid_lines: &[(5.0, "5ms"), (50.0, "50ms"), (200.0, "200ms"), (500.0, "500ms")],
+            y_natural: 150.0,
+            offset_fn: off_freeze_length,
             natural_at_max: false,
         },
         // RESISTANCE: gain=1.0 → 1.0 (dimensionless); linear 0–2; additive, pos_span=1.0, neg_span=1.0

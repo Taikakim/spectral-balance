@@ -29,10 +29,13 @@ fn all_shipped_modules_have_panel_widget_none() {
 }
 
 #[test]
-fn rhythm_has_panel_widget_some() {
+fn rhythm_has_panel_widget_none_post_2026_05_08() {
+    // Rhythm's Arpeggiator grid moved into the editor's Dynamics-panel
+    // row inline (so it doesn't push the rest of the UI down). The
+    // module-spec panel_widget hook is no longer used.
     assert!(
-        module_spec(ModuleType::Rhythm).panel_widget.is_some(),
-        "Rhythm should set panel_widget = Some(rhythm_panel::render) after Phase 2d.7",
+        module_spec(ModuleType::Rhythm).panel_widget.is_none(),
+        "Rhythm's Arpeggiator grid is rendered inline now, not via panel_widget",
     );
 }
 

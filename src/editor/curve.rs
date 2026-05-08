@@ -271,7 +271,7 @@ pub fn display_curve_idx(module_type: ModuleType, curve_idx: usize, gain_mode: G
         ModuleType::Freeze => match curve_idx {
             0 => 8,             // LENGTH → ms (log, 10–4000)
             1 => 9,             // THRESHOLD → dBFS
-            2 => 10,            // PORTAMENTO → ms (log, 1–1000)
+            2 => 15,            // PORTAMENTO → ms (D-1b: log 1–750, neutral 150)
             3 => 11,            // RESISTANCE → dimensionless 0–2
             4 => 6,             // MIX → %
             _ => curve_idx,
@@ -676,7 +676,7 @@ pub fn gain_to_display(
             let v = if t_db <= 0.0 { -20.0 + slope_neg * t_db } else { -20.0 + slope_pos * t_db };
             v.max(db_min)
         }
-        10 => (gain * 200.0).max(0.0),                       // Portamento/SC Smooth: ms (top unbounded for headroom)
+        10 => (gain * 200.0).max(0.0),                       // SC Smooth / legacy Portamento: ms (top unbounded for headroom)
         11 => gain.max(0.0),                                  // Resistance: 0-2 (top unbounded for headroom)
         13 => (gain * total_history_seconds).max(0.0),
         // PEAK HOLD ms — matches the DSP-side `peak_hold_curve_to_ms` helper
@@ -685,6 +685,11 @@ pub fn gain_to_display(
         // misuse of idx 10 which mapped neutral gain to 200 ms when the
         // helper actually returns 50 ms.
         14 => crate::dsp::modules::peak_hold_curve_to_ms(gain),
+        // Freeze portamento — D-1b DSP uses `curve * 150` clamped 1..750 ms.
+        // Idx 10 still maps to the legacy `gain * 200` for SC Smooth and
+        // Punch/4 callers; this idx 15 is for the new freeze portamento
+        // calibration with neutral 150 ms.
+        15 => (gain * 150.0).max(1.0),
         _ => gain,
     }
 }
