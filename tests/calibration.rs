@@ -151,9 +151,11 @@ fn threshold_idx9_dsp_matches_display_log_formula() {
     use spectral_forge::dsp::modules::freeze::curve_to_threshold_db;
     use spectral_forge::editor::curve::gain_to_display;
 
+    // Production db_min is -160 (matches the freeze.rs hardcoded slope_neg = 140/18).
+    // Earlier this test pinned db_min=-60 which doesn't match production and so always failed.
     for &g in &[0.126_f32, 0.25, 0.5, 1.0, 2.0] {
         let dsp = curve_to_threshold_db(g);
-        let ui  = gain_to_display(9, g, 0.0, 0.0, -60.0, 0.0, 0.0);
+        let ui  = gain_to_display(9, g, 0.0, 0.0, -160.0, 0.0, 0.0);
         assert!((dsp - ui).abs() < 1e-3,
             "DSP {dsp} ≠ UI {ui} at gain={g}");
     }

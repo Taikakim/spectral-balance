@@ -918,23 +918,23 @@ pub fn apply_curve_transform(
     // offset_fn(g, 0.0) == g for all calibrations, so offset=0 is also a no-op.
     if tilt.abs() < 1e-6 && offset.abs() < 1e-6 { return; }
     const LOG_20: f32 = 1.301_030;
-    // Compute log range and pivot from sample_rate so the tilt shape is correct at any Nyquist.
-    // See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §2.
+    const LOG_2:  f32 = 0.301_030;
     let nyquist   = sample_rate * 0.5;
-    let log_range = (nyquist / 20.0).log10(); // 3.0 at 20 kHz Nyquist (40 kHz SR)
+    let log_range = (nyquist / 20.0).log10();
     let pivot     = (1000.0_f32 / 20.0).log10() / log_range;
-    // Smoothstep value at the pivot — used to zero the sigmoid shape there.
     let s_pivot   = 3.0 * pivot * pivot - 2.0 * pivot * pivot * pivot;
+    let oct_per_shape = log_range / LOG_2;
     for (k, g) in gains.iter_mut().enumerate() {
         let freq_hz = (k as f32 * sample_rate / fft_size as f32).max(20.0);
         let norm = ((freq_hz.log10() - LOG_20) / log_range).clamp(0.0, 1.0);
         let linear_shape  = norm - pivot;
-        let s             = 3.0 * norm * norm - 2.0 * norm * norm * norm; // smoothstep(norm)
+        let s             = 3.0 * norm * norm - 2.0 * norm * norm * norm;
         let sigmoid_shape = s - s_pivot;
         let shape = linear_shape + curvature * (sigmoid_shape - linear_shape);
-        let t = tilt * shape;
+        let octaves = shape * oct_per_shape;
+        let db_shift = tilt * octaves;
         let g_off = offset_fn(*g, offset, anchors);
-        *g = (g_off * (1.0 + t)).max(0.0);
+        *g = (g_off * 10f32.powf(db_shift / 20.0)).max(0.0);
     }
 }
 

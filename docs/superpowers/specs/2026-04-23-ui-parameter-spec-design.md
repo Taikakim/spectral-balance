@@ -124,15 +124,20 @@ without the TILT_MAX multiplier, so the visible curve was 1/N of the audible
 slope (commit `bd00a2a`). At `curvature = 0` the tilt is linear in normalized
 log-frequency.
 
-**Display-vs-physical interpretation note (2026-05-08):** the
-multiplicative `g * (1 + t)` form makes tilt look visually different on
-log-display curves (Threshold dBFS, Ratio, Attack/Release ms) vs linear-
-display curves (Resistance 0..2, Mix 0..100 %, etc.). On log-displayed
-curves, heavy negative tilt drives the value to the y_min floor as a
-visible cliff — that cliff is the *correct* DSP behaviour (the threshold
-is genuinely at floor for those frequencies). On linear-displayed curves
-the same tilt looks like a clean diagonal slope. The math is internally
-consistent; the visual difference is purely the y-axis scaling.
+**Tilt formula (2026-05-08, spec-literal):** tilt is applied as
+`g * 10^(tilt_dB_per_oct * octaves_from_pivot / 20)`, i.e. multiplicative
+in dB-space. `tilt_dB_per_oct = tilt_norm * TILT_MAX`, `octaves_from_pivot
+= log2(freq / 1000)` warped by the curvature blend. This guarantees:
+- Symmetric behaviour: positive and negative tilt are exact inverses.
+- No saturation: gain never collapses to zero from tilt alone.
+- Honest "dB/oct" semantics: a tilt of ±TILT_MAX dB/oct shifts the
+  curve by exactly that many dB per octave away from 1 kHz.
+
+The earlier `g * (1 + t)` form had a hard cliff when `(1 + t) < 0` on
+one side at large `|tilt|`, producing visibly broken behaviour at
+`TILT_MAX = 4` (commit replacing this notes "doesn't fire threshold
+check at high tilt"). The dB-space form removes the cliff while keeping
+the visible slope similar at moderate tilt.
 
 ### Curvature
 
@@ -149,7 +154,8 @@ let x_norm = log10(freq_hz / 20.0) / log10(nyquist / 20.0);  // 0..1 in log-freq
 let linear  = x_norm - 0.5;
 let sigmoid = smoothstep(x_norm) - 0.5;  // smoothstep = 3x²-2x³
 let shape   = lerp(linear, sigmoid, curvature);
-let tilt_gain = 1.0 + tilt * shape * tilt_scale; // tilt_scale sets the ±45° mapping
+let octaves   = shape * (log10(nyquist / 20.0) / log10(2.0));
+let tilt_gain = 10f32.powf(tilt_norm * TILT_MAX * octaves / 20.0);
 ```
 
 ### Storage migration

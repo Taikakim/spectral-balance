@@ -568,21 +568,21 @@ pub fn apply_curve_adjustments(
     // curvature only shapes the tilt; if tilt=0, curvature has no effect.
     // offset_fn(g, 0.0) == g for all calibrations, so offset=0 is also a no-op.
     if tilt.abs() < 1e-6 && offset.abs() < 1e-6 { return gain; }
-    // Map freq to log-normalised [0, 1] (20 Hz → nyquist).
-    // Pivot at 1 kHz — computed dynamically so it stays centred at 1 kHz across sample rates.
-    const LOG_20: f32 = 1.301_030; // log10(20.0)
-    let log_range  = (nyquist / 20.0).log10(); // e.g. 3.0 at 20 kHz Nyquist (40 kHz SR)
+    const LOG_20: f32 = 1.301_030;
+    const LOG_2:  f32 = 0.301_030;
+    let log_range  = (nyquist / 20.0).log10();
     let pivot      = (1000.0_f32 / 20.0).log10() / log_range;
-    // Smoothstep value at the pivot — centres the sigmoid shape there.
     let s_pivot    = 3.0 * pivot * pivot - 2.0 * pivot * pivot * pivot;
+    let oct_per_shape = log_range / LOG_2;
     let norm = ((freq_hz.max(20.0).log10() - LOG_20) / log_range).clamp(0.0, 1.0);
     let linear_shape  = norm - pivot;
-    let s             = 3.0 * norm * norm - 2.0 * norm * norm * norm; // smoothstep(norm)
+    let s             = 3.0 * norm * norm - 2.0 * norm * norm * norm;
     let sigmoid_shape = s - s_pivot;
     let shape = linear_shape + curvature * (sigmoid_shape - linear_shape);
-    let t = tilt * shape;
+    let octaves = shape * oct_per_shape;
+    let db_shift = tilt * octaves;
     let g_off = offset_fn(gain, offset, anchors);
-    (g_off * (1.0 + t)).max(0.0)
+    (g_off * 10f32.powf(db_shift / 20.0)).max(0.0)
 }
 
 /// Resolve a `CurveDisplayConfig`'s declared anchors `(y_min, y_natural, y_max)`
