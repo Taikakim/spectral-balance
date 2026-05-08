@@ -897,6 +897,25 @@ impl Pipeline {
             self.fx_matrix.set_past_scalars(&past_scalars);
         }
 
+        // Propagate Life scalars each block.
+        {
+            let mut life_scalars: [crate::dsp::modules::life::LifeScalars; 9] =
+                std::array::from_fn(|_| crate::dsp::modules::life::LifeScalars::safe_default());
+            for s in 0..9 {
+                life_scalars[s] = crate::dsp::modules::life::LifeScalars {
+                    viscosity_scale:        params.life_viscosity_scale_param(s).map(|p| p.smoothed.next()).unwrap_or(1.0),
+                    surface_tension_scale:  params.life_surface_tension_scale_param(s).map(|p| p.smoothed.next()).unwrap_or(1.0),
+                    non_newtonian_scale:    params.life_non_newtonian_scale_param(s).map(|p| p.smoothed.next()).unwrap_or(1.0),
+                    stiction_scale:         params.life_stiction_scale_param(s).map(|p| p.smoothed.next()).unwrap_or(1.0),
+                    yield_scale:            params.life_yield_scale_param(s).map(|p| p.smoothed.next()).unwrap_or(1.0),
+                    capillary_scale:        params.life_capillary_scale_param(s).map(|p| p.smoothed.next()).unwrap_or(1.0),
+                    sandpaper_scale:        params.life_sandpaper_scale_param(s).map(|p| p.smoothed.next()).unwrap_or(1.0),
+                    brownian_scale:         params.life_brownian_scale_param(s).map(|p| p.smoothed.next()).unwrap_or(1.0),
+                };
+            }
+            self.fx_matrix.set_life_scalars(&life_scalars);
+        }
+
         // Propagate kinetics modes + sources each block (try_lock is non-blocking; skipped if GUI holds lock).
         if let Some(modes) = params.slot_kinetics_mode.try_lock() {
             self.fx_matrix.set_kinetics_modes(&*modes);

@@ -760,6 +760,62 @@ impl SpectralForgeParams {
         Some(past_soft_clip_dispatch!(self, slot))
     }
 
+    /// Per-slot Life Viscosity scale multiplier.
+    pub fn life_viscosity_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_viscosity_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Surface Tension scale multiplier.
+    pub fn life_surface_tension_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_surface_tension_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Non-Newtonian scale multiplier.
+    pub fn life_non_newtonian_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_non_newtonian_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Stiction scale multiplier.
+    pub fn life_stiction_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_stiction_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Yield scale multiplier.
+    pub fn life_yield_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_yield_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Capillary scale multiplier.
+    pub fn life_capillary_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_capillary_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Sandpaper scale multiplier.
+    pub fn life_sandpaper_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_sandpaper_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Brownian scale multiplier.
+    pub fn life_brownian_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_brownian_scale_dispatch!(self, slot))
+    }
+
     /// Reset every automatable Param to its nih-plug default via the ParamSetter.
     ///
     /// Iterates `param_map()` using the raw GuiContext API so host automation is properly

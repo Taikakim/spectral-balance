@@ -60,6 +60,7 @@ fn main() {
     emit_curvature_fields(&mut f);
     emit_matrix_fields(&mut f);
     emit_past_scalar_fields(&mut f);
+    emit_life_scalar_fields(&mut f);
     writeln!(f, "}}").unwrap();
     writeln!(f).unwrap();
 
@@ -72,6 +73,7 @@ fn main() {
     emit_curvature_inits(&mut f);
     emit_matrix_inits(&mut f);
     emit_past_scalar_inits(&mut f);
+    emit_life_scalar_inits(&mut f);
     writeln!(f, "        }}").unwrap();
     writeln!(f, "    }}").unwrap();
     writeln!(f, "}}").unwrap();
@@ -94,6 +96,7 @@ fn main() {
     emit_curvature_map_entries(&mut f);
     emit_matrix_map_entries(&mut f);
     emit_past_scalar_map_entries(&mut f);
+    emit_life_scalar_map_entries(&mut f);
     writeln!(f, "    }}").unwrap();
     writeln!(f, "}}").unwrap();
 
@@ -110,6 +113,8 @@ fn main() {
     emit_matrix_dispatch(&mut f);
     writeln!(f).unwrap();
     emit_past_scalar_dispatch(&mut f);
+    writeln!(f).unwrap();
+    emit_life_scalar_dispatch(&mut f);
 }
 
 // ── Field declarations (bare, no initializers) ──────────────────────────────
@@ -525,6 +530,82 @@ fn emit_past_scalar_dispatch(f: &mut File) {
         writeln!(f, "        match $s {{").unwrap();
         for s in 0..NUM_SLOTS {
             writeln!(f, "            {s} => &$self.generated.s{s}_past_{suffix},").unwrap();
+        }
+        writeln!(f, "            _ => unreachable!(),").unwrap();
+        writeln!(f, "        }}").unwrap();
+        writeln!(f, "    }};").unwrap();
+        writeln!(f, "}}").unwrap();
+        writeln!(f).unwrap();
+    }
+}
+
+// ── Life Scalars: per-slot per-mode multiplier params ──────────────────────
+//
+// Eight new per-slot params for Life mode-specific multipliers (8 × 9 = 72 fields):
+//   - life_viscosity_scale       Linear 0..2, default 1.0
+//   - life_surface_tension_scale Linear 0..2, default 1.0
+//   - life_non_newtonian_scale   Linear 0..2, default 1.0
+//   - life_stiction_scale        Linear 0..2, default 1.0
+//   - life_yield_scale           Linear 0..2, default 1.0
+//   - life_capillary_scale       Linear 0..2, default 1.0
+//   - life_sandpaper_scale       Linear 0..2, default 1.0
+//   - life_brownian_scale        Linear 0..2, default 1.0
+//
+// See docs/superpowers/specs/2026-05-09-prototyping-exposable-scalars-design.md §1.
+
+const LIFE_SCALAR_SUFFIXES: &[&str] = &[
+    "viscosity_scale",
+    "surface_tension_scale",
+    "non_newtonian_scale",
+    "stiction_scale",
+    "yield_scale",
+    "capillary_scale",
+    "sandpaper_scale",
+    "brownian_scale",
+];
+
+fn emit_life_scalar_fields(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for suffix in LIFE_SCALAR_SUFFIXES {
+            writeln!(f, "    pub s{s}_life_{suffix}: FloatParam,").unwrap();
+        }
+    }
+}
+
+fn emit_life_scalar_inits(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for suffix in LIFE_SCALAR_SUFFIXES {
+            writeln!(
+                f,
+                "            s{s}_life_{suffix}: FloatParam::new(\"s{s}life_{suffix}\", 1.0f32, \
+                 FloatRange::Linear {{ min: 0.0f32, max: 2.0f32 }})\
+                 .with_smoother(SmoothingStyle::Linear(50.0))\
+                 .hide_in_generic_ui(),"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_life_scalar_map_entries(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for suffix in LIFE_SCALAR_SUFFIXES {
+            let id = format!("s{s}life_{suffix}");
+            let rust_name = format!("s{s}_life_{suffix}");
+            writeln!(
+                f,
+                "        out.push(({id:?}.to_string(), self.{rust_name}.as_ptr(), String::new()));"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_life_scalar_dispatch(f: &mut File) {
+    for suffix in LIFE_SCALAR_SUFFIXES {
+        writeln!(f, "macro_rules! life_{suffix}_dispatch {{").unwrap();
+        writeln!(f, "    ($self:expr, $s:expr) => {{").unwrap();
+        writeln!(f, "        match $s {{").unwrap();
+        for s in 0..NUM_SLOTS {
+            writeln!(f, "            {s} => &$self.generated.s{s}_life_{suffix},").unwrap();
         }
         writeln!(f, "            _ => unreachable!(),").unwrap();
         writeln!(f, "        }}").unwrap();

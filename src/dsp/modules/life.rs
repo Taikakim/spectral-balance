@@ -138,6 +138,43 @@ impl Default for LifeMode {
     }
 }
 
+// ── LifeScalars ────────────────────────────────────────────────────────────
+
+/// Per-mode hardcoded-scale multipliers exposed for prototyping. Each field's
+/// safe_default = 1.0 reproduces the current hardcoded behaviour exactly.
+/// At 0.0 the corresponding mode goes inert; at 2.0 it runs at twice the
+/// hardcoded scale. See docs/superpowers/specs/2026-05-09-prototyping-exposable-scalars-design.md §1.
+#[derive(Clone, Copy, Debug)]
+pub struct LifeScalars {
+    pub viscosity_scale:        f32,
+    pub surface_tension_scale:  f32,
+    pub non_newtonian_scale:    f32,
+    pub stiction_scale:         f32,
+    pub yield_scale:            f32,
+    pub capillary_scale:        f32,
+    pub sandpaper_scale:        f32,
+    pub brownian_scale:         f32,
+}
+
+impl LifeScalars {
+    pub fn safe_default() -> Self {
+        Self {
+            viscosity_scale:        1.0,
+            surface_tension_scale:  1.0,
+            non_newtonian_scale:    1.0,
+            stiction_scale:         1.0,
+            yield_scale:            1.0,
+            capillary_scale:        1.0,
+            sandpaper_scale:        1.0,
+            brownian_scale:         1.0,
+        }
+    }
+}
+
+impl Default for LifeScalars {
+    fn default() -> Self { Self::safe_default() }
+}
+
 // ── PRNG helpers ───────────────────────────────────────────────────────────
 
 /// Xorshift32 PRNG step — returns the raw state value.
@@ -164,6 +201,7 @@ fn xorshift32_signed_unit(state: &mut u32) -> f32 {
 
 pub struct LifeModule {
     mode: LifeMode,
+    scalars: LifeScalars,
     /// Per-channel per-bin power envelope — Viscosity, Archimedes, NonNewtonian, Stiction, Yield.
     scratch_power: [Vec<f32>; 2],
     /// Per-channel per-bin magnitude scratch — SurfaceTension, Sandpaper.
@@ -186,6 +224,7 @@ impl LifeModule {
     pub fn new() -> Self {
         Self {
             mode: LifeMode::default(),
+            scalars: LifeScalars::safe_default(),
             scratch_power:    [Vec::new(), Vec::new()],
             scratch_mag:      [Vec::new(), Vec::new()],
             sustain_envelope: [Vec::new(), Vec::new()],
@@ -216,6 +255,7 @@ fn apply_viscosity(
     scratch_power: &mut [f32],
     scratch_mag: &mut [f32],
     curves: &[&[f32]],
+    viscosity_scale: f32,
 ) {
     const EPS: f32 = 1e-12;
 
@@ -223,6 +263,7 @@ fn apply_viscosity(
     let mix_c    = curves[4];
 
     let num_bins = bins.len();
+    let d_max = VISCOSITY_D_MAX * viscosity_scale;
 
     for k in 0..num_bins {
         let mag = bins[k].norm();
@@ -233,9 +274,9 @@ fn apply_viscosity(
     // Power diffusion reads from `scratch_power` (pre-hop snapshot); `bins` is
     // written only at index k, so in-place phasor scaling is safe.
     for k in 1..num_bins - 1 {
-        let d_k     = (amount_c[k]     * VISCOSITY_D_MAX).clamp(0.0, VISCOSITY_D_MAX);
-        let d_kp1   = (amount_c[k + 1] * VISCOSITY_D_MAX).clamp(0.0, VISCOSITY_D_MAX);
-        let d_km1   = (amount_c[k - 1] * VISCOSITY_D_MAX).clamp(0.0, VISCOSITY_D_MAX);
+        let d_k     = (amount_c[k]     * d_max).clamp(0.0, d_max);
+        let d_kp1   = (amount_c[k + 1] * d_max).clamp(0.0, d_max);
+        let d_km1   = (amount_c[k - 1] * d_max).clamp(0.0, d_max);
         let d_face_right = 2.0 * d_k * d_kp1 / (d_k + d_kp1 + EPS);
         let d_face_left  = 2.0 * d_k * d_km1 / (d_k + d_km1 + EPS);
         let p_new = scratch_power[k]
@@ -265,6 +306,7 @@ fn apply_surface_tension(
     bins: &mut [Complex<f32>],
     scratch_mag: &mut [f32],
     curves: &[&[f32]],
+    surface_tension_scale: f32,
 ) {
     let amount_c = curves[0];
     let thresh_c = curves[1];
@@ -289,7 +331,7 @@ fn apply_surface_tension(
             continue;
         }
 
-        let amt_max = SURFACE_TENSION_AMT_MAX;
+        let amt_max = SURFACE_TENSION_AMT_MAX * surface_tension_scale;
         let amt = (amount_c[k] * amt_max).clamp(0.0, amt_max);
         let reach_max = SURFACE_TENSION_REACH_MAX;
         let reach_bins = ((reach_c[k] * (reach_max as f32 * 0.5)) as i32).clamp(1, reach_max);
@@ -440,6 +482,7 @@ fn apply_non_newtonian(
     velocity: Option<&[f32]>,
     physics_out: Option<&mut crate::dsp::bin_physics::BinPhysics>,
     num_bins: usize,
+    non_newtonian_scale: f32,
 ) {
     let amount_c = curves[0];
     let thresh_c = curves[1];
@@ -466,7 +509,8 @@ fn apply_non_newtonian(
         bins[k]     = dry * (1.0 - mix) + wet * mix;
 
         if let Some(p) = physics_out.as_deref_mut() {
-            p.displacement[k] = (p.displacement[k] + excess).min(NON_NEWTONIAN_DISPLACEMENT_CAP);
+            let cap = NON_NEWTONIAN_DISPLACEMENT_CAP * non_newtonian_scale;
+            p.displacement[k] = (p.displacement[k] + excess).min(cap);
         }
     }
 }
@@ -482,6 +526,7 @@ fn apply_stiction(
     velocity: Option<&[f32]>,
     physics_out: Option<&mut crate::dsp::bin_physics::BinPhysics>,
     num_bins: usize,
+    stiction_scale: f32,
 ) {
     let amount_c = curves[0];
     let thresh_c = curves[1];
@@ -498,7 +543,7 @@ fn apply_stiction(
         if v > thresh {
             is_moving[k] = 1.0;
         } else {
-            let decay = STICTION_DECAY_MIN + speed * STICTION_DECAY_RANGE;
+            let decay = STICTION_DECAY_MIN + speed * STICTION_DECAY_RANGE * stiction_scale;
             is_moving[k] = (is_moving[k] - decay).max(0.0);
         }
 
@@ -538,6 +583,7 @@ fn apply_yield(
     curves: &[&[f32]],
     physics_out: Option<&mut crate::dsp::bin_physics::BinPhysics>,
     num_bins: usize,
+    yield_scale: f32,
 ) {
     let amount_c = curves[0];
     let thresh_c = curves[1];
@@ -550,7 +596,7 @@ fn apply_yield(
         let thresh = (thresh_c[k] * 0.5).clamp(0.0, 1.0);
         let amt    = (amount_c[k] * 0.5).clamp(0.0, 1.0);
         let speed  = (speed_c[k]  * 0.5).clamp(0.0, 1.0);
-        let heal_rate = YIELD_HEAL_MIN + speed * YIELD_HEAL_RANGE;
+        let heal_rate = YIELD_HEAL_MIN + speed * YIELD_HEAL_RANGE * yield_scale;
 
         if mag > thresh {
             tear_state[k] = 1.0;
@@ -601,6 +647,7 @@ fn apply_capillary(
     scratch_mag: &mut [f32],
     curves: &[&[f32]],
     num_bins: usize,
+    capillary_scale: f32,
 ) {
     let amount_c = curves[0];
     let thresh_c = curves[1];
@@ -620,7 +667,7 @@ fn apply_capillary(
 
     // Pass 2: drain at source, accumulate at target.
     for k in 0..num_bins {
-        let amt = (amount_c[k] * CAPILLARY_AMOUNT_SCALE).clamp(0.0, CAPILLARY_AMOUNT_MAX);
+        let amt = (amount_c[k] * CAPILLARY_AMOUNT_SCALE * capillary_scale).clamp(0.0, CAPILLARY_AMOUNT_MAX * capillary_scale);
         let reach_bins = ((reach_c[k] * CAPILLARY_REACH_SCALE) as i32)
             .clamp(CAPILLARY_REACH_MIN, CAPILLARY_REACH_MAX);
         let drain = scratch_mag[k] * amt * sustain_envelope[k];
@@ -656,6 +703,7 @@ fn apply_sandpaper(
     scratch_mag: &mut [f32],
     curves: &[&[f32]],
     num_bins: usize,
+    sandpaper_scale: f32,
 ) {
     use std::f32::consts::PI;
 
@@ -683,7 +731,7 @@ fn apply_sandpaper(
         let thresh = (thresh_c[k] * PI * 0.5).clamp(0.0, PI);
         if diff <= thresh { continue; }
 
-        let amt = (amount_c[k] * SANDPAPER_AMOUNT_SCALE).clamp(0.0, SANDPAPER_AMOUNT_MAX);
+        let amt = (amount_c[k] * SANDPAPER_AMOUNT_SCALE * sandpaper_scale).clamp(0.0, SANDPAPER_AMOUNT_MAX * sandpaper_scale);
         let mag_avg = 0.5 * (m_left + m_right);
         let spark = mag_avg * amt * (diff / PI);
 
@@ -718,6 +766,7 @@ fn apply_brownian(
     curves: &[&[f32]],
     temperature: Option<&[f32]>,
     num_bins: usize,
+    brownian_scale: f32,
 ) {
     let amount_c = curves[0];
     let mix_c    = curves[4];
@@ -725,7 +774,7 @@ fn apply_brownian(
     for k in 0..num_bins {
         let t = temperature.map(|ts| ts[k]).unwrap_or(0.0);
         if t <= BROWNIAN_TEMP_FLOOR { continue; }
-        let amt = (amount_c[k] * BROWNIAN_AMOUNT_SCALE).clamp(0.0, BROWNIAN_AMOUNT_MAX);
+        let amt = (amount_c[k] * BROWNIAN_AMOUNT_SCALE * brownian_scale).clamp(0.0, BROWNIAN_AMOUNT_MAX);
         let drift_re = xorshift32_signed_unit(rng_state) * amt * t * BROWNIAN_DRIFT_SCALE;
         let drift_im = xorshift32_signed_unit(rng_state) * amt * t * BROWNIAN_DRIFT_SCALE;
         let mix = mix_c[k].clamp(0.0, 1.0);
@@ -754,14 +803,15 @@ impl SpectralModule for LifeModule {
         let scratch_power = &mut self.scratch_power[channel];
         let scratch_mag   = &mut self.scratch_mag[channel];
 
+        let sc = self.scalars;
         match self.mode {
             LifeMode::Viscosity => {
                 let _ = physics;
-                apply_viscosity(bins, scratch_power, scratch_mag, curves);
+                apply_viscosity(bins, scratch_power, scratch_mag, curves, sc.viscosity_scale);
             }
             LifeMode::SurfaceTension => {
                 let _ = physics;
-                apply_surface_tension(bins, scratch_mag, curves);
+                apply_surface_tension(bins, scratch_mag, curves, sc.surface_tension_scale);
             }
             LifeMode::Crystallization => {
                 let sustain = &mut self.sustain_envelope[channel];
@@ -773,33 +823,33 @@ impl SpectralModule for LifeModule {
             }
             LifeMode::NonNewtonian => {
                 let velocity = ctx.bin_physics.map(|bp| &bp.velocity[..ctx.num_bins]);
-                apply_non_newtonian(bins, curves, velocity, physics, ctx.num_bins);
+                apply_non_newtonian(bins, curves, velocity, physics, ctx.num_bins, sc.non_newtonian_scale);
             }
             LifeMode::Stiction => {
                 let velocity = ctx.bin_physics.map(|bp| &bp.velocity[..ctx.num_bins]);
                 let is_moving = &mut self.is_moving[channel];
-                apply_stiction(bins, is_moving, curves, velocity, physics, ctx.num_bins);
+                apply_stiction(bins, is_moving, curves, velocity, physics, ctx.num_bins, sc.stiction_scale);
             }
             LifeMode::Yield => {
                 let tear = &mut self.tear_state[channel];
                 let rng  = &mut self.rng_state[channel];
-                apply_yield(bins, tear, rng, curves, physics, ctx.num_bins);
+                apply_yield(bins, tear, rng, curves, physics, ctx.num_bins, sc.yield_scale);
             }
             LifeMode::Capillary => {
                 let _ = physics;
                 let sustain = &mut self.sustain_envelope[channel];
                 let wick    = &mut self.wick_carry[channel];
-                apply_capillary(bins, sustain, wick, scratch_mag, curves, ctx.num_bins);
+                apply_capillary(bins, sustain, wick, scratch_mag, curves, ctx.num_bins, sc.capillary_scale);
             }
             LifeMode::Sandpaper => {
                 let _ = physics;
-                apply_sandpaper(bins, scratch_mag, curves, ctx.num_bins);
+                apply_sandpaper(bins, scratch_mag, curves, ctx.num_bins, sc.sandpaper_scale);
             }
             LifeMode::Brownian => {
                 let _ = physics;
                 let temp = ctx.bin_physics.map(|bp| &bp.temperature[..ctx.num_bins]);
                 let rng  = &mut self.rng_state[channel];
-                apply_brownian(bins, rng, curves, temp, ctx.num_bins);
+                apply_brownian(bins, rng, curves, temp, ctx.num_bins, sc.brownian_scale);
             }
         }
 
@@ -840,6 +890,15 @@ impl SpectralModule for LifeModule {
 
     fn set_life_mode(&mut self, mode: LifeMode) {
         self.set_mode(mode);
+    }
+
+    fn set_life_scalars(&mut self, scalars: crate::dsp::modules::life::LifeScalars) {
+        self.scalars = scalars;
+    }
+
+    #[cfg(any(test, feature = "probe"))]
+    fn test_life_scalars(&self) -> Option<crate::dsp::modules::life::LifeScalars> {
+        Some(self.scalars)
     }
 }
 
