@@ -259,48 +259,44 @@ pub fn draw(ui: &mut Ui, params: &SpectralForgeParams, scale: f32) {
         .stroke(Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::HELP_BOX_BORDER))
         .inner_margin(egui::Margin { left: pad, right: pad, top: pad, bottom: pad })
         .show(ui, |ui| {
-            ui.set_width(inner_w);
-            // Heading. The exact pattern that has reliably wrapped here
-            // for months: RichText + Label::wrap(). DON'T touch this.
-            ui.add(
-                egui::Label::new(
-                    RichText::new(head.as_ref())
-                        .color(th::HELP_BOX_HEAD)
-                        .font(FontId::proportional(th::scaled(th::FONT_SIZE_HELP_HEAD, scale))),
-                ).wrap(),
-            );
-            ui.add_space(4.0);
-            // Yellow "Feedback" prefix, when present, on its own row above
-            // the body. Inline coloured prefix attempts via LayoutJob /
-            // horizontal_wrapped have been unreliable in this egui — a
-            // separate Label is the boring-but-works approach.
-            let body_font = FontId::proportional(th::scaled(th::FONT_SIZE_HELP_BODY, scale));
-            if let Some(prefix) = yellow_prefix {
-                let yellow = egui::Color32::from_rgb(0xff, 0xc8, 0x40);
+            // The parent ui is `horizontal_top` (the matrix area sits beside
+            // the help-box), so the Frame's inner ui inherits horizontal
+            // layout — labels would render SIDE BY SIDE and the body wraps
+            // per-character into the leftover. Wrap everything in a
+            // `ui.vertical` so labels stack top-down and word-wrap to the
+            // full help-box width.
+            ui.vertical(|ui| {
+                ui.set_width(inner_w);
                 ui.add(
                     egui::Label::new(
-                        RichText::new(prefix.as_str())
-                            .color(yellow)
-                            .strong()
-                            .font(body_font.clone()),
+                        RichText::new(head.as_ref())
+                            .color(th::HELP_BOX_HEAD)
+                            .font(FontId::proportional(th::scaled(th::FONT_SIZE_HELP_HEAD, scale))),
                     ).wrap(),
                 );
-                ui.add_space(2.0);
-            }
-            // Body — same RichText + Label::wrap() pattern as the heading.
-            // This is the pattern that has wrapped reliably in this code
-            // base for months; previous attempts to swap it for LayoutJob
-            // broke wrapping at every character, then again as a single
-            // unwrapped line. Stop trying to be clever here.
-            ui.add(
-                egui::Label::new(
-                    RichText::new(body.as_ref())
-                        .color(th::HELP_BOX_BODY)
-                        .font(body_font),
-                ).wrap(),
-            );
-            // Quiet the unused-variable hint when no inner_w consumer.
-            let _ = inner_w;
+                ui.add_space(4.0);
+                // Yellow "Feedback" prefix on its own short row above the body.
+                let body_font = FontId::proportional(th::scaled(th::FONT_SIZE_HELP_BODY, scale));
+                if let Some(prefix) = yellow_prefix {
+                    let yellow = egui::Color32::from_rgb(0xff, 0xc8, 0x40);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(prefix.as_str())
+                                .color(yellow)
+                                .strong()
+                                .font(body_font.clone()),
+                        ).wrap(),
+                    );
+                    ui.add_space(2.0);
+                }
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(body.as_ref())
+                            .color(th::HELP_BOX_BODY)
+                            .font(body_font),
+                    ).wrap(),
+                );
+            });
         });
 }
 
