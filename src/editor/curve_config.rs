@@ -180,18 +180,15 @@ fn phase_smear_config(i: usize) -> CurveDisplayConfig {
             offset_fn: off_amount_200,
             natural_at_max: false,
         },
-        // PEAK HOLD: driven by shared `peak_hold_curve_to_ms` helper (log-piecewise,
-        // clamps curve input to 0..=2 and maps to 1..50..500 ms). With
-        // off_portamento(g, o) = g * 5^o, offset=-1 yields input 0.2 → ≈2.19 ms;
-        // offset=0 yields 50 ms; offset=+1 yields input 5.0 (clamped to 2) → 500 ms.
-        // y_natural stays at 50 ms (the helper's neutral output for gain=1.0).
-        // The helper is shared with Gain's PEAK HOLD (T5's territory) — narrowing
-        // the config here matches the real DSP range without touching the helper.
+        // PEAK HOLD: driven by shared `peak_hold_curve_to_ms` helper
+        // (log-piecewise: gain 0 → 1 ms, 1 → 50 ms, 2 → 500 ms). The
+        // `off_peak_hold` offset_fn (G-1, 2026-05-08) is the asymmetric
+        // inverse-compose so the slider matches the graph at every v.
         1 => CurveDisplayConfig {
             y_label: "ms", y_min: 2.0, y_max: 500.0, y_log: true,
             grid_lines: &[(5.0, "5ms"), (50.0, "50ms"), (200.0, "200ms"), (500.0, "500ms")],
             y_natural: 50.0,
-            offset_fn: off_portamento,
+            offset_fn: off_peak_hold,
             natural_at_max: false,
         },
         // MIX: same as dynamics mix
@@ -275,17 +272,14 @@ fn gain_config(i: usize, gain_mode: GainMode) -> CurveDisplayConfig {
                 natural_at_max: false,
             },
         },
-        // PEAK HOLD: same as phase smear peak hold — driven by shared
-        // `peak_hold_curve_to_ms` helper (log-piecewise, clamps curve input to
-        // 0..=2 and maps to 1..50..500 ms). With off_portamento(g, o) = g * 5^o,
-        // offset=-1 yields input 0.2 → ≈2.19 ms; offset=0 yields 50 ms;
-        // offset=+1 yields input 5.0 (clamped to 2) → 500 ms. The config range
-        // matches the real DSP output range.
+        // PEAK HOLD: same as phase smear peak hold — uses the shared
+        // `peak_hold_curve_to_ms` helper composed with `off_peak_hold`
+        // (G-1, 2026-05-08) for slider WYSIWYG at every v.
         1 => CurveDisplayConfig {
             y_label: "ms", y_min: 2.0, y_max: 500.0, y_log: true,
             grid_lines: &[(5.0, "5ms"), (50.0, "50ms"), (200.0, "200ms"), (500.0, "500ms")],
             y_natural: 50.0,
-            offset_fn: off_portamento,
+            offset_fn: off_peak_hold,
             natural_at_max: false,
         },
         _ => default_config(),
@@ -739,11 +733,16 @@ fn default_config() -> CurveDisplayConfig {
     g * factor
 }
 
-/// Freeze/Past THRESHOLD dBFS: multiplicative log-dBFS, range -80..0, neutral -20.
-///   v ≥ 0:  display = -20 + 20·v  → factor 10^(0.3·v)
-///   v < 0:  display = -20 + 60·v  → factor 10^(0.9·v)
+/// Freeze/Past THRESHOLD dBFS: matches `off_thresh` (Dynamics) — the
+/// Freeze/Past axis is also y_min=-160..y_max=0 with neutral -20, and the
+/// `gain_to_display` idx 9 mapping uses the same piecewise slopes anchored
+/// to (db_min, -20, db_max) as idx 0. Symmetric `10^(0.9·v)` reaches both
+/// endpoints from neutral curve gain (G-2, 2026-05-08).
+///
+/// Previous calibration used asymmetric `0.3 / 0.9` exponents which only
+/// reached display ~-13 dBFS at v=+1 and ~-113 at v=-1.
 #[inline] pub fn off_freeze_thresh(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
-    if o >= 0.0 { g * 10f32.powf(0.3 * o) } else { g * 10f32.powf(0.9 * o) }
+    g * 10f32.powf(0.9 * o)
 }
 
 /// Portamento/SC-smooth ms: multiplicative, factor = 1000/200 = 5.0.
@@ -756,6 +755,30 @@ fn default_config() -> CurveDisplayConfig {
 /// off=+1 → g=2.0 → 2.0; off=-1 → g=0.0 → 0.0.
 #[inline] pub fn off_resistance(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
     g + o
+}
+
+/// PEAK HOLD ms with the asymmetric log-piecewise mapping in
+/// `peak_hold_curve_to_ms` (gain 0 → 1 ms, 1 → 50 ms, 2 → 500 ms).
+///
+/// Composed with `gain_to_display(idx 14)`, this offset_fn must produce
+/// curve gains such that the slider's `axis_aware_lerp` value equals the
+/// displayed graph value at every v ∈ [-1, +1].
+///
+/// On the positive side `peak_hold_curve_to_ms` is linear in c (c→ms over
+/// log10(50..500)=log10(10) per unit); on the negative side it's
+/// compressed (c→ms over log10(2..50) per unit). Offset adds a delta to
+/// the curve gain that's symmetric on positive and compressed on negative
+/// by `log10(25)/log10(50) ≈ 0.8225` so the inverse-compose chain is
+/// WYSIWYG.
+///
+/// G-1 (2026-05-08): replaces the prior misuse of `off_portamento` (fixed
+/// 5× geometric ratio) which only matched the slider at v=±1; mid-range
+/// drifted by ±5 ms.
+#[inline] pub fn off_peak_hold(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
+    // log10(25) / log10(50). Hardcoded so we don't pay log10 per call.
+    const NEG_COMPRESSION: f32 = 0.822_535_4;
+    let delta = if o >= 0.0 { o } else { o * NEG_COMPRESSION };
+    (g + delta).max(0.0)
 }
 
 /// Threshold % with neutral at 50 % on a 0..100 % axis. Pairs with

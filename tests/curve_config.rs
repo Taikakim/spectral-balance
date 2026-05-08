@@ -137,10 +137,11 @@ fn past_config_returns_calibrated_display_per_curve() {
         approx(f(0.5, -0.3, sentinel), 0.2) && approx(f(0.5, 0.3, sentinel), 0.8) && approx(f(2.0, 0.5, sentinel), 1.0)
     };
     let is_freeze_thresh = |f: fn(f32, f32, (f32, f32, f32)) -> f32| {
-        // Asymmetric: g * 10^(0.9*o) for o<0, g * 10^(0.3*o) for o≥0
+        // G-2 (2026-05-08): symmetric `g * 10^(0.9 * o)` for both signs so
+        // the slider sweeps the full y_min=-160..y_max=0 axis.
         approx(f(0.5, -0.3, sentinel), 0.5 * 10f32.powf(0.9 * -0.3))
-            && approx(f(0.5, 0.3, sentinel), 0.5 * 10f32.powf(0.3 * 0.3))
-            && approx(f(2.0, 0.5, sentinel), 2.0 * 10f32.powf(0.3 * 0.5))
+            && approx(f(0.5, 0.3, sentinel), 0.5 * 10f32.powf(0.9 * 0.3))
+            && approx(f(2.0, 0.5, sentinel), 2.0 * 10f32.powf(0.9 * 0.5))
     };
     let is_identity = |f: fn(f32, f32, (f32, f32, f32)) -> f32| {
         approx(f(0.5, -0.3, sentinel), 0.5) && approx(f(0.5, 0.3, sentinel), 0.5) && approx(f(2.0, 0.5, sentinel), 2.0)
