@@ -6,6 +6,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use crate::editor::curve::CurveNode;
 use crate::dsp::modules::{GainMode, ModuleType, RouteMatrix};
+use crate::dsp::modules::future::FutureMode;
+use crate::dsp::modules::geometry::GeometryMode;
+use crate::dsp::modules::circuit::CircuitMode;
+use crate::dsp::modules::life::LifeMode;
+use crate::dsp::modules::past::{PastMode, SortKey};
+use crate::dsp::modules::modulate::ModulateMode;
+use crate::dsp::modules::punch::PunchMode;
+use crate::dsp::modules::rhythm::{ArpGrid, ArpTriggerSource, RhythmMode};
 
 // Pulls in `pub struct GeneratedParams { ... }` (1404 FloatParam fields),
 // its `Default` impl, and `impl GeneratedParams { fn extend_param_map(...) }`
@@ -41,6 +49,40 @@ pub fn fft_size_from_choice(c: FftSizeChoice) -> usize {
         FftSizeChoice::S4096  => 4096,
         FftSizeChoice::S8192  => 8192,
         FftSizeChoice::S16384 => 16384,
+    }
+}
+
+/// History Buffer capacity choice. Frames-per-second is derived from
+/// `sample_rate / hop` where hop = fft_size / OVERLAP. Memory cost = `seconds *
+/// sample_rate / hop * MAX_NUM_BINS * 8 bytes` per channel; at default 4 s,
+/// 48 kHz, fft 2048 → 375 frames × 8193 bins × 8 B ≈ 24 MB per channel.
+#[derive(nih_plug::prelude::Enum, Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum HistoryBufferDepthChoice {
+    #[id = "sec1"]   #[name = "1 s"]  Sec1,
+    #[id = "sec2"]   #[name = "2 s"]  Sec2,
+    #[default]
+    #[id = "sec4"]   #[name = "4 s"]  Sec4,
+    #[id = "sec8"]   #[name = "8 s"]  Sec8,
+    #[id = "sec16"]  #[name = "16 s"] Sec16,
+}
+
+impl HistoryBufferDepthChoice {
+    pub fn seconds(self) -> f32 {
+        match self {
+            Self::Sec1 => 1.0,
+            Self::Sec2 => 2.0,
+            Self::Sec4 => 4.0,
+            Self::Sec8 => 8.0,
+            Self::Sec16 => 16.0,
+        }
+    }
+
+    /// Round-up to the number of hop frames needed to cover `seconds()` at the
+    /// given (sample_rate, fft_size). Hop = fft_size / OVERLAP (4).
+    pub fn max_frames(self, sample_rate: f32, fft_size: usize) -> usize {
+        let hop = (fft_size / crate::dsp::pipeline::OVERLAP).max(1) as f32;
+        let frames = (self.seconds() * sample_rate / hop).ceil() as usize;
+        frames.max(1)
     }
 }
 
@@ -134,6 +176,75 @@ pub struct SpectralForgeParams {
     /// GainMode per slot (only meaningful for Gain module slots).
     pub slot_gain_mode: Arc<Mutex<[GainMode; 9]>>,
 
+    /// Per-slot Print-Through ↔ Pre-Echo selector for `FutureModule`. Single mutex over
+    /// the array (matches `slot_gain_mode`) so audio thread takes one lock per block.
+    pub slot_future_mode: Arc<Mutex<[FutureMode; 9]>>,
+
+    /// Per-slot Direct ↔ Inverse selector for `PunchModule`. Single mutex over the
+    /// array (matches `slot_future_mode`) so audio thread takes one lock per block.
+    pub slot_punch_mode: Arc<Mutex<[PunchMode; 9]>>,
+
+    /// Per-slot Euclidean / Arpeggiator / PhaseReset selector for `RhythmModule`. Single mutex over
+    /// the array (matches `slot_punch_mode`) so audio thread takes one lock per block.
+    pub slot_rhythm_mode: Arc<Mutex<[RhythmMode; 9]>>,
+
+    /// Per-slot Chladni / Helmholtz selector for `GeometryModule`. Single mutex over
+    /// the array (matches `slot_rhythm_mode`) so audio thread takes one lock per block.
+    pub slot_geometry_mode: Arc<Mutex<[GeometryMode; 9]>>,
+
+    /// Per-slot PhasePhaser / BinSwapper / RmFmMatrix / DiodeRm / GroundLoop selector
+    /// for `ModulateModule`. Single mutex over the array so audio thread takes one lock per block.
+    pub slot_modulate_mode: Arc<Mutex<[ModulateMode; 9]>>,
+
+    /// Per-slot Repel toggle for Modulate.GravityPhaser (false = pull, true = push).
+    /// Single mutex over the array (matches `slot_modulate_mode`) so audio thread takes one lock per block.
+    pub slot_modulate_repel: Arc<Mutex<[bool; 9]>>,
+
+    /// Per-slot SidechainPositioned toggle for Modulate.GravityPhaser
+    /// (sidechain peaks act as gravity wells when enabled).
+    /// Single mutex over the array (matches `slot_modulate_repel`) so audio thread takes one lock per block.
+    pub slot_modulate_sc_positioned: Arc<Mutex<[bool; 9]>>,
+
+    /// Per-slot BbdBins / SpectralSchmitt / CrossoverDistortion selector for `CircuitModule`.
+    /// Single mutex over the array (matches `slot_modulate_mode`) so audio thread takes one lock per block.
+    pub slot_circuit_mode: Arc<Mutex<[CircuitMode; 9]>>,
+
+    /// Per-slot Viscosity / SurfaceTension / … selector for `LifeModule`.
+    /// Single mutex over the array (matches `slot_circuit_mode`) so audio thread takes one lock per block.
+    pub slot_life_mode: Arc<Mutex<[LifeMode; 9]>>,
+
+    /// Per-slot Granular / DecaySorter / Convolution / Reverse / Stretch selector for `PastModule`.
+    /// Single mutex over the array (matches `slot_life_mode`) so audio thread takes one lock per block.
+    pub slot_past_mode:     Arc<Mutex<[PastMode; 9]>>,
+
+    /// Per-slot Decay / Stability / Area sort key for `PastModule`'s DecaySorter sub-mode.
+    /// Single mutex over the array so audio thread takes one lock per block.
+    pub slot_past_sort_key: Arc<Mutex<[SortKey; 9]>>,
+
+    /// KineticsMode per slot (only meaningful for Kinetics module slots).
+    /// Single mutex over the array (matches `slot_past_mode`) so audio thread takes one lock per block.
+    pub slot_kinetics_mode: Arc<Mutex<[crate::dsp::modules::kinetics::KineticsMode; 9]>>,
+    /// WellSource per slot (only meaningful for Kinetics-GravityWell slots).
+    /// Single mutex over the array so audio thread takes one lock per block.
+    pub slot_kinetics_well_source: Arc<Mutex<[crate::dsp::modules::kinetics::WellSource; 9]>>,
+    /// MassSource per slot (only meaningful for Kinetics-InertialMass slots).
+    /// Single mutex over the array so audio thread takes one lock per block.
+    pub slot_kinetics_mass_source: Arc<Mutex<[crate::dsp::modules::kinetics::MassSource; 9]>>,
+
+    /// Per-slot HarmonyMode (only meaningful for Harmony module slots).
+    /// Single mutex over the array so audio thread takes one lock per block.
+    pub slot_harmony_mode: Arc<Mutex<[crate::dsp::modules::harmony::HarmonyMode; 9]>>,
+    /// Per-slot Stiffness/Bessel/Prime sub-mode for Harmony's Inharmonic mode.
+    pub slot_harmony_inharmonic_submode: Arc<Mutex<[crate::dsp::modules::harmony::HarmonyInharmonicSubmode; 9]>>,
+
+    /// Per-slot 8-voice × 8-step grid for `RhythmModule`'s Arpeggiator mode. One mutex over the
+    /// array; UI panel writes, audio thread reads each block.
+    pub slot_arp_grid: Arc<Mutex<[ArpGrid; 9]>>,
+
+    /// Per-slot trigger source for the Arpeggiator (Bpm = BPM-clocked, NoteIn = MIDI-driven).
+    /// Single mutex over the array so audio thread takes one lock per block.
+    pub slot_arp_trigger_source: Arc<Mutex<[ArpTriggerSource; 9]>>,
+
     /// Per-slot SC input gain in dB. Range [-90.0, 18.0]; values <= -90.0 treated as "-∞" (SC disabled for slot).
     pub slot_sc_gain_db: Arc<Mutex<[f32; 9]>>,
 
@@ -164,7 +275,6 @@ pub struct SpectralForgeParams {
     pub fx_route_matrix: Arc<Mutex<[[f32; 8]; 8]>>,
 
     // GUI display state — not audio parameters, not sent to audio thread
-    pub graph_db_min: Arc<Mutex<f32>>,      // dBFS floor of spectrum display, default -100
     pub graph_db_max: Arc<Mutex<f32>>,      // dBFS ceiling of spectrum display, default 0
     pub peak_falloff_ms: Arc<Mutex<f32>>,   // spectrum peak hold decay time 0–5000 ms
     pub ui_scale: Arc<Mutex<f32>>,          // GUI scale factor: 1.0 / 1.25 / 1.5 / 1.75 / 2.0
@@ -213,6 +323,8 @@ pub struct SpectralForgeParams {
 
     pub fft_size: EnumParam<FftSizeChoice>,
 
+    pub history_depth: EnumParam<HistoryBufferDepthChoice>,
+
     pub threshold_mode: EnumParam<ThresholdMode>,
 
     pub sensitivity: FloatParam,
@@ -224,6 +336,38 @@ pub struct SpectralForgeParams {
     pub auto_makeup: BoolParam,
 
     pub delta_monitor: BoolParam,
+
+    pub enable_heavy_modules: BoolParam,
+
+    pub plpv_enable: BoolParam,
+
+    pub plpv_dynamics_enable: BoolParam,
+
+    pub plpv_phase_smear_enable: BoolParam,
+
+    pub plpv_freeze_enable: BoolParam,
+
+    pub plpv_midside_enable: BoolParam,
+
+    /// Master output soft clipper toggle. Default true (safety-on-by-default).
+    /// See docs/superpowers/specs/2026-05-06-stabilization-sweep.md §4.4.
+    pub master_clip_enabled: BoolParam,
+
+    /// Master soft clip threshold (dBFS). Bins below the linear-equivalent
+    /// magnitude pass through untouched; bins above get a soft asymptotic
+    /// approach toward 4× threshold. 0 dB = least clipping, -24 dB = most.
+    pub master_clip_threshold_db: FloatParam,
+
+    /// Show context-sensitive help in the help box next to the routing
+    /// matrix. Default true. When false, the help box renders a small
+    /// placeholder so the layout doesn't shift.
+    pub help_enabled: BoolParam,
+
+    pub plpv_phase_noise_floor_db: FloatParam,
+
+    pub plpv_max_peaks: IntParam,
+
+    pub plpv_peak_threshold_db: FloatParam,
 
     pub effect_mode: EnumParam<EffectMode>,
 
@@ -276,14 +420,13 @@ impl Default for SpectralForgeParams {
             slot_module_types: Arc::new(Mutex::new({
                 let mut t = [ModuleType::Empty; 9];
                 t[0] = ModuleType::Dynamics;
-                t[1] = ModuleType::Dynamics;
-                t[2] = ModuleType::Gain;
+                t[1] = ModuleType::Gain;
                 t[8] = ModuleType::Master;
                 t
             })),
             slot_names: Arc::new(Mutex::new({
                 let mut names = [[0u8; 32]; 9];
-                let labels: &[&str] = &["Dynamics", "Dynamics 2", "Gain", "Slot 4", "Slot 5",
+                let labels: &[&str] = &["Dynamics", "Gain", "Slot 3", "Slot 4", "Slot 5",
                                          "Slot 6", "Slot 7", "Slot 8", "Master"];
                 for (i, label) in labels.iter().enumerate() {
                     let b = label.as_bytes();
@@ -294,6 +437,24 @@ impl Default for SpectralForgeParams {
             })),
             slot_targets:   Arc::new(Mutex::new([FxChannelTarget::All; 9])),
             slot_gain_mode: Arc::new(Mutex::new([GainMode::Add; 9])),
+            slot_future_mode: Arc::new(Mutex::new([FutureMode::PrintThrough; 9])),
+            slot_punch_mode: Arc::new(Mutex::new([PunchMode::Direct; 9])),
+            slot_rhythm_mode: Arc::new(Mutex::new([RhythmMode::default(); 9])),
+            slot_geometry_mode: Arc::new(Mutex::new([GeometryMode::default(); 9])),
+            slot_modulate_mode: Arc::new(Mutex::new([ModulateMode::default(); 9])),
+            slot_modulate_repel: Arc::new(Mutex::new([false; 9])),
+            slot_modulate_sc_positioned: Arc::new(Mutex::new([false; 9])),
+            slot_circuit_mode: Arc::new(Mutex::new([CircuitMode::default(); 9])),
+            slot_life_mode:    Arc::new(Mutex::new([LifeMode::default();    9])),
+            slot_past_mode:     Arc::new(Mutex::new([PastMode::default(); 9])),
+            slot_past_sort_key: Arc::new(Mutex::new([SortKey::default();  9])),
+            slot_kinetics_mode:        Arc::new(Mutex::new([crate::dsp::modules::kinetics::KineticsMode::default(); 9])),
+            slot_kinetics_well_source: Arc::new(Mutex::new([crate::dsp::modules::kinetics::WellSource::default();   9])),
+            slot_kinetics_mass_source: Arc::new(Mutex::new([crate::dsp::modules::kinetics::MassSource::default();   9])),
+            slot_harmony_mode:                Arc::new(Mutex::new([crate::dsp::modules::harmony::HarmonyMode::default(); 9])),
+            slot_harmony_inharmonic_submode:  Arc::new(Mutex::new([crate::dsp::modules::harmony::HarmonyInharmonicSubmode::default(); 9])),
+            slot_arp_grid:    Arc::new(Mutex::new([ArpGrid::default();    9])),
+            slot_arp_trigger_source: Arc::new(Mutex::new([ArpTriggerSource::Bpm; 9])),
             slot_sc_gain_db: Arc::new(Mutex::new([0.0f32; 9])),
             slot_sc_channel: Arc::new(Mutex::new([ScChannel::Follow; 9])),
             slot_curve_nodes: Arc::new(Mutex::new(
@@ -325,7 +486,6 @@ impl Default for SpectralForgeParams {
 
             fx_route_matrix: Arc::new(Mutex::new([[0.0f32; 8]; 8])),
 
-            graph_db_min:    Arc::new(Mutex::new(-100.0)),
             graph_db_max:    Arc::new(Mutex::new(0.0)),
             peak_falloff_ms: Arc::new(Mutex::new(300.0)),
             ui_scale:        Arc::new(Mutex::new(1.0)),
@@ -406,6 +566,7 @@ impl Default for SpectralForgeParams {
 
             stereo_link: EnumParam::new("Stereo Link", StereoLink::Linked),
             fft_size: EnumParam::new("FFT Size", FftSizeChoice::S2048),
+            history_depth: EnumParam::new("History Depth", HistoryBufferDepthChoice::default()),
             threshold_mode: EnumParam::new("Threshold Mode", ThresholdMode::Absolute),
 
             sensitivity: FloatParam::new(
@@ -416,13 +577,61 @@ impl Default for SpectralForgeParams {
 
             suppression_width: FloatParam::new(
                 "Suppression Width", 0.05,
-                FloatRange::Linear { min: 0.0, max: 0.5 },
+                // Widened from 0..0.5 to 0..12 st on 2026-05-06: original
+                // range was below the engine's < 0.01 st no-smoothing
+                // cutoff for almost the whole travel, so the slider had
+                // no audible effect at any setting. 12 st = one octave
+                // each side, the standard upper bound for spectral GR
+                // smoothing in this class of plugin. Default kept low
+                // (0.05) to match the prior surgical default.
+                FloatRange::Linear { min: 0.0, max: 12.0 },
             ).with_smoother(SmoothingStyle::Linear(50.0))
              .with_step_size(0.01)
              .with_unit(" st"),
 
             auto_makeup: BoolParam::new("Auto Makeup", false),
             delta_monitor: BoolParam::new("Delta Monitor", false),
+            enable_heavy_modules: BoolParam::new("Enable Heavy Modules", true),
+            master_clip_enabled: BoolParam::new("Master Clip", true),
+            master_clip_threshold_db: FloatParam::new(
+                "Master Clip Threshold",
+                0.0,
+                FloatRange::Linear { min: -24.0, max: 0.0 },
+            )
+            .with_unit(" dB")
+            .with_step_size(0.5),
+            help_enabled: BoolParam::new("Help Tooltips", true),
+            plpv_enable: BoolParam::new("PLPV Enable", true),
+
+            plpv_dynamics_enable: BoolParam::new("Dynamics PLPV", true),
+
+            plpv_phase_smear_enable: BoolParam::new("PhaseSmear PLPV", true),
+
+            plpv_freeze_enable: BoolParam::new("Freeze PLPV", true),
+
+            plpv_midside_enable: BoolParam::new("MidSide PLPV", true),
+
+            plpv_phase_noise_floor_db: FloatParam::new(
+                "PLPV Phase Noise Floor",
+                -60.0,
+                FloatRange::Linear { min: -90.0, max: -20.0 },
+            )
+            .with_unit(" dB")
+            .with_step_size(1.0),
+
+            plpv_max_peaks: IntParam::new(
+                "PLPV Max Peaks",
+                64,
+                IntRange::Linear { min: 16, max: 256 },
+            ),
+
+            plpv_peak_threshold_db: FloatParam::new(
+                "PLPV Peak Threshold",
+                -40.0,
+                FloatRange::Linear { min: -80.0, max: -10.0 },
+            )
+            .with_unit(" dB")
+            .with_step_size(1.0),
 
             effect_mode: EnumParam::new("Effect Mode", EffectMode::Bypass),
 
@@ -507,11 +716,70 @@ impl SpectralForgeParams {
     /// Returns a reference to the matrix-cell FloatParam for the given row/col.
     /// Returns `None` if any index is out of range.
     pub fn matrix_cell(&self, row: usize, col: usize) -> Option<&FloatParam> {
-        use crate::param_ids::{NUM_MATRIX_ROWS, NUM_SLOTS};
-        if row >= NUM_MATRIX_ROWS || col >= NUM_SLOTS {
+        use crate::param_ids::{NUM_MATRIX_ROWS, NUM_MATRIX_SOURCES};
+        // row = destination slot (0..9); col = source matrix-row, 0..13
+        // (9 real slots + 4 T/S Split virtual rows).
+        if row >= NUM_MATRIX_ROWS || col >= NUM_MATRIX_SOURCES {
             return None;
         }
         Some(matrix_dispatch!(self, row, col))
+    }
+
+    /// Per-slot Past Floor (Hz). See spec 2026-05-04-past-module-ux-design.md §2.
+    pub fn past_floor_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(past_floor_hz_dispatch!(self, slot))
+    }
+
+    /// Per-slot Past Reverse Window (s).
+    pub fn past_reverse_window_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(past_reverse_window_s_dispatch!(self, slot))
+    }
+
+    /// Per-slot Past Stretch Rate (x).
+    pub fn past_stretch_rate_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(past_stretch_rate_dispatch!(self, slot))
+    }
+
+    /// Per-slot Past Stretch Dither (0..1).
+    pub fn past_stretch_dither_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(past_stretch_dither_dispatch!(self, slot))
+    }
+
+    /// Per-slot Past Soft Clip toggle.
+    pub fn past_soft_clip_param(&self, slot: usize) -> Option<&BoolParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(past_soft_clip_dispatch!(self, slot))
+    }
+
+    /// Reset every automatable Param to its nih-plug default via the ParamSetter.
+    ///
+    /// Iterates `param_map()` using the raw GuiContext API so host automation is properly
+    /// notified. This covers all standard FloatParam / BoolParam / EnumParam fields but
+    /// does NOT touch `#[persist]` fields (curve node graphs, route matrix, slot assignments).
+    /// The audio-side `Pipeline::reset()` is triggered separately via `SharedState::reset_requested`.
+    ///
+    /// Must be called from the GUI thread (inside an egui frame, where `setter` is valid).
+    pub fn reset_to_defaults(&self, setter: &nih_plug::prelude::ParamSetter<'_>) {
+        let map = self.param_map();
+        for (_id, ptr, _group) in &map {
+            // SAFETY: `self` is held in an Arc<SpectralForgeParams> for the plugin's lifetime,
+            // so the ParamPtrs returned by param_map() are valid here.
+            unsafe {
+                let default_normalized = ptr.default_normalized_value();
+                setter.raw_context.raw_begin_set_parameter(*ptr);
+                setter.raw_context.raw_set_parameter_normalized(*ptr, default_normalized);
+                setter.raw_context.raw_end_set_parameter(*ptr);
+            }
+        }
     }
 
     /// One-shot migration: copies legacy `#[persist]` data (curve nodes, tilt, route matrix)
@@ -554,10 +822,11 @@ impl SpectralForgeParams {
         // ── Matrix: route_matrix.send[src][dst] → matrix_cell(dst, src) ─────
         // The pipeline reads `matrix_cell(r, col).smoothed.next()` and writes
         // `route_matrix_snap.send[col][r]`. So matrix_cell(dst, src) ↔ send[src][dst].
+        // Virtual rows (col 9..12) need MAX_MATRIX_SOURCES width.
         {
             let legacy_matrix = self.route_matrix.lock();
-            for r in 0..crate::param_ids::NUM_MATRIX_ROWS {    // r = dst
-                for col in 0..crate::param_ids::NUM_SLOTS {     // col = src
+            for r in 0..crate::param_ids::NUM_MATRIX_ROWS {        // r = dst (0..9)
+                for col in 0..crate::param_ids::NUM_MATRIX_SOURCES { // col = src (0..13)
                     if let Some(p) = self.matrix_cell(r, col) {
                         // send[col][r] = send[src][dst]
                         p.smoothed.reset(legacy_matrix.send[col][r]);
@@ -606,8 +875,11 @@ mod accessor_tests {
         assert!(p.offset_param(9, 0).is_none());
         assert!(p.curvature_param(0, 7).is_none());
         assert!(p.curvature_param(9, 0).is_none());
-        assert!(p.matrix_cell(9, 0).is_none());
-        assert!(p.matrix_cell(0, 9).is_none());
+        // 2026-05-08: matrix_cell(row=dst, col=src). Dest stays 0..NUM_MATRIX_ROWS=9
+        // (only slots receive sends). Src extends to NUM_MATRIX_SOURCES=13
+        // (9 slots + 4 T/S virtual rows).
+        assert!(p.matrix_cell(9,  0).is_none());   // dst out of range
+        assert!(p.matrix_cell(0, 13).is_none());   // src out of range
     }
 
     #[test]
@@ -619,6 +891,9 @@ mod accessor_tests {
         assert!(p.curvature_param(8, 6).is_some());
         assert!(p.matrix_cell(0, 0).is_some());
         assert!(p.matrix_cell(8, 8).is_some());
+        // Virtual-row sources now addressable too (col 9..12).
+        assert!(p.matrix_cell(0,  9).is_some());
+        assert!(p.matrix_cell(8, 12).is_some());
     }
 }
 
@@ -662,6 +937,7 @@ unsafe impl Params for SpectralForgeParams {
 
         params.push(("stereo_link".to_string(),    self.stereo_link.as_ptr(),    String::new()));
         params.push(("fft_size".to_string(),       self.fft_size.as_ptr(),       String::new()));
+        params.push(("history_depth".to_string(),  self.history_depth.as_ptr(),  String::new()));
         params.push(("threshold_mode".to_string(), self.threshold_mode.as_ptr(), String::new()));
 
         params.push(("sensitivity".to_string(),       self.sensitivity.as_ptr(),       String::new()));
@@ -669,6 +945,18 @@ unsafe impl Params for SpectralForgeParams {
 
         params.push(("auto_makeup".to_string(),   self.auto_makeup.as_ptr(),   String::new()));
         params.push(("delta_monitor".to_string(), self.delta_monitor.as_ptr(), String::new()));
+        params.push(("master_clip_enabled".to_string(), self.master_clip_enabled.as_ptr(), String::new()));
+        params.push(("master_clip_threshold_db".to_string(), self.master_clip_threshold_db.as_ptr(), String::new()));
+        params.push(("help_enabled".to_string(),         self.help_enabled.as_ptr(),         String::new()));
+        params.push(("enable_heavy_modules".to_string(), self.enable_heavy_modules.as_ptr(), String::new()));
+        params.push(("plpv_enable".to_string(), self.plpv_enable.as_ptr(), String::new()));
+        params.push(("plpv_dynamics_enable".to_string(), self.plpv_dynamics_enable.as_ptr(), String::new()));
+        params.push(("plpv_phase_smear_enable".to_string(), self.plpv_phase_smear_enable.as_ptr(), String::new()));
+        params.push(("plpv_freeze_enable".to_string(), self.plpv_freeze_enable.as_ptr(), String::new()));
+        params.push(("plpv_midside_enable".to_string(), self.plpv_midside_enable.as_ptr(), String::new()));
+        params.push(("plpv_phase_noise_floor_db".to_string(), self.plpv_phase_noise_floor_db.as_ptr(), String::new()));
+        params.push(("plpv_max_peaks".to_string(), self.plpv_max_peaks.as_ptr(), String::new()));
+        params.push(("plpv_peak_threshold_db".to_string(), self.plpv_peak_threshold_db.as_ptr(), String::new()));
 
         params.push(("effect_mode".to_string(),          self.effect_mode.as_ptr(),          String::new()));
         params.push(("phase_rand_amount".to_string(),    self.phase_rand_amount.as_ptr(),    String::new()));
@@ -713,13 +1001,30 @@ unsafe impl Params for SpectralForgeParams {
         persist_out!("slot_names",         slot_names);
         persist_out!("slot_targets",       slot_targets);
         persist_out!("slot_gain_mode",     slot_gain_mode);
+        persist_out!("slot_future_mode",   slot_future_mode);
+        persist_out!("slot_punch_mode",    slot_punch_mode);
+        persist_out!("slot_rhythm_mode",   slot_rhythm_mode);
+        persist_out!("slot_geometry_mode", slot_geometry_mode);
+        persist_out!("slot_modulate_mode", slot_modulate_mode);
+        persist_out!("slot_modulate_repel", slot_modulate_repel);
+        persist_out!("slot_modulate_sc_positioned", slot_modulate_sc_positioned);
+        persist_out!("slot_circuit_mode",  slot_circuit_mode);
+        persist_out!("slot_life_mode",     slot_life_mode);
+        persist_out!("slot_past_mode",     slot_past_mode);
+        persist_out!("slot_past_sort_key", slot_past_sort_key);
+        persist_out!("slot_kinetics_mode",         slot_kinetics_mode);
+        persist_out!("slot_kinetics_well_source",  slot_kinetics_well_source);
+        persist_out!("slot_kinetics_mass_source",  slot_kinetics_mass_source);
+        persist_out!("slot_harmony_mode",                slot_harmony_mode);
+        persist_out!("slot_harmony_inharmonic_submode",  slot_harmony_inharmonic_submode);
+        persist_out!("slot_arp_grid",      slot_arp_grid);
+        persist_out!("slot_arp_trigger_source", slot_arp_trigger_source);
         persist_out!("slot_curve_nodes",   slot_curve_nodes);
         persist_out!("editing_curve",      editing_curve);
         persist_out!("route_matrix",       route_matrix);
         persist_out!("fx_module_names",    fx_module_names);
         persist_out!("fx_module_targets",  fx_module_targets);
         persist_out!("fx_route_matrix",    fx_route_matrix);
-        persist_out!("graph_db_min",       graph_db_min);
         persist_out!("graph_db_max",       graph_db_max);
         persist_out!("peak_falloff_ms",    peak_falloff_ms);
         persist_out!("ui_scale",           ui_scale);
@@ -761,13 +1066,31 @@ unsafe impl Params for SpectralForgeParams {
                 "slot_names"          => persist_in!("slot_names",         slot_names,         data),
                 "slot_targets"        => persist_in!("slot_targets",       slot_targets,       data),
                 "slot_gain_mode"      => persist_in!("slot_gain_mode",     slot_gain_mode,     data),
+                "slot_future_mode"    => persist_in!("slot_future_mode",   slot_future_mode,   data),
+                "slot_punch_mode"     => persist_in!("slot_punch_mode",    slot_punch_mode,    data),
+                "slot_rhythm_mode"    => persist_in!("slot_rhythm_mode",    slot_rhythm_mode,    data),
+                "slot_geometry_mode"  => persist_in!("slot_geometry_mode",  slot_geometry_mode,  data),
+                "slot_modulate_mode"  => persist_in!("slot_modulate_mode",  slot_modulate_mode,  data),
+                "slot_modulate_repel" => persist_in!("slot_modulate_repel", slot_modulate_repel, data),
+                "slot_modulate_sc_positioned" => persist_in!("slot_modulate_sc_positioned", slot_modulate_sc_positioned, data),
+                "slot_circuit_mode"   => persist_in!("slot_circuit_mode",   slot_circuit_mode,   data),
+                "slot_life_mode"      => persist_in!("slot_life_mode",      slot_life_mode,      data),
+                "slot_past_mode"      => persist_in!("slot_past_mode",      slot_past_mode,      data),
+                "slot_past_sort_key"  => persist_in!("slot_past_sort_key",  slot_past_sort_key,  data),
+                "slot_kinetics_mode"         => persist_in!("slot_kinetics_mode",         slot_kinetics_mode,         data),
+                "slot_kinetics_well_source"  => persist_in!("slot_kinetics_well_source",  slot_kinetics_well_source,  data),
+                "slot_kinetics_mass_source"  => persist_in!("slot_kinetics_mass_source",  slot_kinetics_mass_source,  data),
+                "slot_harmony_mode"                => persist_in!("slot_harmony_mode",                slot_harmony_mode,                data),
+                "slot_harmony_inharmonic_submode"  => persist_in!("slot_harmony_inharmonic_submode",  slot_harmony_inharmonic_submode,  data),
+                "slot_arp_grid"       => persist_in!("slot_arp_grid",       slot_arp_grid,       data),
+                "slot_arp_trigger_source" => persist_in!("slot_arp_trigger_source", slot_arp_trigger_source, data),
                 "slot_curve_nodes"    => persist_in!("slot_curve_nodes",   slot_curve_nodes,   data),
                 "editing_curve"       => persist_in!("editing_curve",      editing_curve,      data),
                 "route_matrix"        => persist_in!("route_matrix",       route_matrix,       data),
                 "fx_module_names"     => persist_in!("fx_module_names",    fx_module_names,    data),
                 "fx_module_targets"   => persist_in!("fx_module_targets", fx_module_targets, data),
                 "fx_route_matrix"     => persist_in!("fx_route_matrix",    fx_route_matrix,    data),
-                "graph_db_min"        => persist_in!("graph_db_min",       graph_db_min,       data),
+                "graph_db_min"        => { /* removed — ignore legacy data */ }
                 "graph_db_max"        => persist_in!("graph_db_max",       graph_db_max,       data),
                 "peak_falloff_ms"     => persist_in!("peak_falloff_ms",    peak_falloff_ms,    data),
                 "ui_scale"            => persist_in!("ui_scale",           ui_scale,           data),

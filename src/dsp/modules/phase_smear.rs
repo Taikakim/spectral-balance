@@ -9,6 +9,12 @@ pub struct PhaseSmearModule {
     peak_env: Vec<f32>,
     sample_rate: f32,
     fft_size: usize,
+    /// Phase 4.3b — per-module PLPV unwrapped-phase randomization enable. Mirrors
+    /// `params.plpv_phase_smear_enable`; written each audio block by the Pipeline
+    /// via `FxMatrix::set_plpv_phase_smear_enable`. Default `true` matches the
+    /// param default so a freshly-constructed module behaves identically to one
+    /// with the param applied.
+    plpv_enabled: bool,
     #[cfg(any(test, feature = "probe"))]
     last_probe: crate::dsp::modules::ProbeSnapshot,
 }
@@ -20,6 +26,7 @@ impl PhaseSmearModule {
             peak_env: vec![0.0f32; MAX_NUM_BINS],
             sample_rate: 44100.0,
             fft_size: 2048,
+            plpv_enabled: true,
             #[cfg(any(test, feature = "probe"))]
             last_probe: Default::default(),
         }
@@ -38,6 +45,10 @@ impl SpectralModule for PhaseSmearModule {
         for v in &mut self.peak_env { *v = 0.0; }
     }
 
+    fn clear_state(&mut self) {
+        self.peak_env.fill(0.0);
+    }
+
     fn process(
         &mut self,
         _channel: usize,
@@ -47,7 +58,8 @@ impl SpectralModule for PhaseSmearModule {
         sidechain: Option<&[f32]>,
         curves: &[&[f32]],
         suppression_out: &mut [f32],
-        _ctx: &ModuleContext,
+        _physics: Option<&mut crate::dsp::bin_physics::BinPhysics>,
+        ctx: &ModuleContext<'_>,
     ) {
         if bins.is_empty() { suppression_out.fill(0.0); return; }
         let last = bins.len() - 1;
@@ -62,13 +74,22 @@ impl SpectralModule for PhaseSmearModule {
         #[cfg(any(test, feature = "probe"))]
         let mut probe_mix_pct:     f32 = 0.0;
 
+        // Phase 4.3b — bind the PLPV trajectory once. When this is `Some`, the
+        // Pipeline's re-wrap stage afterwards recomputes
+        //   bins[k] = polar(|bins[k]|, principal_arg(unwrapped[k]))
+        // so on that path we MUST NOT write bins[k] (it would be discarded);
+        // instead we mutate the unwrapped trajectory directly. When `None`, we
+        // fall through to the legacy wrapped-phase + complex-space mix.
+        // LLVM hoists the per-iteration `match` into a single ptr-or-null check.
+        let plpv = if self.plpv_enabled { ctx.unwrapped_phase } else { None };
+
         for k in 0..bins.len() {
-            let dry = bins[k];
             // Always advance PRNG to keep the sequence independent of skipping.
             let rand = xorshift64(&mut self.rng_state);
             // DC (k=0) and Nyquist (k=last) must stay real for IFFT correctness.
             if k == 0 || k == last { continue; }
 
+            // ── Per-bin compute (shared) ────────────────────────────────────
             let sc_raw = sidechain.and_then(|s| s.get(k)).copied().unwrap_or(0.0).max(0.0);
             let hold_c = curves.get(1).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
             let hold_ms = super::peak_hold_curve_to_ms(hold_c);
@@ -82,18 +103,42 @@ impl SpectralModule for PhaseSmearModule {
 
             let amount_curve = curves.get(0).and_then(|c| c.get(k))
                                .copied().unwrap_or(1.0).clamp(0.0, 2.0);
-            let per_bin = (amount_curve * (1.0 + sc_mod)).clamp(0.0, 2.0);
-
+            let per_bin    = (amount_curve * (1.0 + sc_mod)).clamp(0.0, 2.0);
             let scale      = per_bin * std::f32::consts::PI;
             let rand_phase = (rand as f32 / u64::MAX as f32 * 2.0 - 1.0) * scale;
-            let (mag, phase) = (bins[k].norm(), bins[k].arg());
-            let wet = Complex::from_polar(mag, phase + rand_phase);
-            let mix = curves.get(2).and_then(|c| c.get(k)).copied().unwrap_or(1.0).clamp(0.0, 1.0);
-            bins[k] = Complex::new(
-                dry.re * (1.0 - mix) + wet.re * mix,
-                dry.im * (1.0 - mix) + wet.im * mix,
-            );
+            let mix = curves.get(2).and_then(|c| c.get(k))
+                            .copied().unwrap_or(1.0).clamp(0.0, 1.0);
 
+            // ── Write site (PLPV vs. legacy) ────────────────────────────────
+            // PLPV path uses a phase-space lerp:
+            //   out_phase = (1 - mix)·unwrapped[k] + mix·(unwrapped[k] + rand_phase)
+            //             = unwrapped[k] + mix·rand_phase
+            // The legacy path uses a complex-space lerp on (re, im). These are
+            // intentionally different audible algorithms — the phase-space lerp
+            // preserves magnitude exactly and keeps future hops continuing from
+            // the modified phase.
+            match plpv {
+                Some(unwrapped) => {
+                    // Only modify the global phase accumulator when the bin has signal.
+                    // With zero-magnitude bins (no routing to this slot), writing a random
+                    // phase delta would corrupt the pipeline's unwrapped_phase buffer and
+                    // apply phase smear to the master output regardless of routing.
+                    if bins[k].norm_sqr() > 1e-20 {
+                        unwrapped[k].set(unwrapped[k].get() + rand_phase * mix);
+                    }
+                }
+                None => {
+                    let dry = bins[k];
+                    let (mag, phase) = (dry.norm(), dry.arg());
+                    let wet = Complex::from_polar(mag, phase + rand_phase);
+                    bins[k] = Complex::new(
+                        dry.re * (1.0 - mix) + wet.re * mix,
+                        dry.im * (1.0 - mix) + wet.im * mix,
+                    );
+                }
+            }
+
+            // ── Probe (shared) ──────────────────────────────────────────────
             #[cfg(any(test, feature = "probe"))]
             if k == probe_k {
                 probe_amount_pct   = amount_curve * 100.0;
@@ -117,6 +162,11 @@ impl SpectralModule for PhaseSmearModule {
 
     fn module_type(&self) -> ModuleType { ModuleType::PhaseSmear }
     fn num_curves(&self) -> usize { 3 }
+
+    /// Phase 4.3b — propagated each block by `FxMatrix::set_plpv_phase_smear_enable`.
+    fn set_plpv_phase_smear_enabled(&mut self, enabled: bool) {
+        self.plpv_enabled = enabled;
+    }
 
     #[cfg(any(test, feature = "probe"))]
     fn last_probe(&self) -> crate::dsp::modules::ProbeSnapshot { self.last_probe }

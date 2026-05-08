@@ -51,6 +51,12 @@ impl SpectralModule for GainModule {
         for v in &mut self.peak_env { *v = 0.0; }
     }
 
+    fn clear_state(&mut self) {
+        self.peak_env.fill(0.0);
+        self.cum_main_log.fill(0.0);
+        self.cum_sc_log.fill(0.0);
+    }
+
     fn process(
         &mut self,
         _channel: usize,
@@ -60,7 +66,8 @@ impl SpectralModule for GainModule {
         sidechain: Option<&[f32]>,
         curves: &[&[f32]],
         suppression_out: &mut [f32],
-        _ctx: &ModuleContext,
+        _physics: Option<&mut crate::dsp::bin_physics::BinPhysics>,
+        _ctx: &ModuleContext<'_>,
     ) {
         let n = bins.len();
         #[cfg(any(test, feature = "probe"))]

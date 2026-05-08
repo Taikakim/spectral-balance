@@ -16,6 +16,12 @@ pub struct DynamicsModule {
     bp_mix:       Vec<f32>,
     num_bins:     usize,
     sample_rate:  f32,
+    /// Phase 4.3a — per-module PLPV peak-locked ducking enable. Mirrors
+    /// `params.plpv_dynamics_enable`; written each audio block by the Pipeline
+    /// via `FxMatrix::set_plpv_dynamics_enable`. Default `true` matches the
+    /// param default so a freshly-constructed module behaves identically to
+    /// one with the param applied.
+    plpv_enabled: bool,
     #[cfg(any(test, feature = "probe"))]
     last_probe: crate::dsp::modules::ProbeSnapshot,
 }
@@ -34,6 +40,7 @@ impl DynamicsModule {
             bp_mix:       Vec::new(),
             num_bins:     0,
             sample_rate:  44100.0,
+            plpv_enabled: true,
             #[cfg(any(test, feature = "probe"))]
             last_probe: Default::default(),
         }
@@ -69,7 +76,8 @@ impl SpectralModule for DynamicsModule {
         sidechain: Option<&[f32]>,
         curves: &[&[f32]],
         suppression_out: &mut [f32],
-        ctx: &ModuleContext,
+        _physics: Option<&mut crate::dsp::bin_physics::BinPhysics>,
+        ctx: &ModuleContext<'_>,
     ) {
         // Channel gating: skip if this slot's target doesn't match channel/mode.
         let skip = match (target, stereo_link, channel) {
@@ -98,7 +106,24 @@ impl SpectralModule for DynamicsModule {
             //         [4]=knee, [5]=mix
             let t    = curves.get(0).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
             let t_db = linear_to_db(t);
-            self.bp_threshold[k] = (-20.0 + t_db * (60.0 / 18.0)).clamp(-60.0, 0.0);
+            // Widened from the original (-60, 0) clamp on 2026-05-06: the
+            // upper bound at 0 dBFS meant "threshold-at-max" still
+            // compressed any 0-dBFS-peak signal (no bypass headroom),
+            // and the lower bound at -60 dBFS desynced from the
+            // display formula at curve.rs:618 which clamps to the
+            // user's graph axis (often -100..0). Slider reading -100
+            // dBFS but DSP running at -60 dBFS — see the 2026-05-06
+            // stabilization-backlog "Width / Threshold scaling" entry.
+            // (-120, 24) covers "compress everything" through "true
+            // bypass for any sane signal" while bounding pathological
+            // values.
+            // Piecewise anchors: y=-1 (t_db=-18) → -160 dBFS, y=0 → -20 dBFS, y=+1 → 0 dBFS.
+            // Matches gain_to_display idx=0 so curve display is WYSIWYG.
+            self.bp_threshold[k] = if t_db <= 0.0 {
+                -20.0 + (140.0 / 18.0) * t_db
+            } else {
+                -20.0 + (20.0 / 18.0) * t_db
+            }.clamp(-160.0, 24.0);
 
             let r = curves.get(1).and_then(|c| c.get(k)).copied().unwrap_or(1.0);
             self.bp_ratio[k] = r.clamp(1.0, 20.0);
@@ -127,6 +152,12 @@ impl SpectralModule for DynamicsModule {
             sensitivity:         ctx.sensitivity,
             auto_makeup:         ctx.auto_makeup,
             smoothing_semitones: ctx.suppression_width,
+            // Phase 4.3a — peak-locked ducking. ctx.peaks is populated by the
+            // Pipeline only when global plpv_enable is true; the per-module flag
+            // (self.plpv_enabled) is set per-block via set_plpv_dynamics_enabled().
+            // Engine ignores both unless plpv_dynamics_enabled && peaks.is_some().
+            peaks:                 ctx.peaks,
+            plpv_dynamics_enabled: self.plpv_enabled,
         };
 
         let eng: &mut Box<dyn SpectralEngine> = match stereo_link {
@@ -150,8 +181,25 @@ impl SpectralModule for DynamicsModule {
         }
     }
 
+    fn clear_state(&mut self) {
+        self.engine.clear_state();
+        self.engine_r.clear_state();
+        self.bp_threshold.fill(-20.0);
+        self.bp_ratio.fill(1.0);
+        self.bp_attack.fill(10.0);
+        self.bp_release.fill(100.0);
+        self.bp_knee.fill(6.0);
+        self.bp_makeup.fill(0.0);
+        self.bp_mix.fill(1.0);
+    }
+
     fn module_type(&self) -> ModuleType { ModuleType::Dynamics }
     fn num_curves(&self) -> usize { 6 }
+
+    /// Phase 4.3a — propagated each block by `FxMatrix::set_plpv_dynamics_enable`.
+    fn set_plpv_dynamics_enabled(&mut self, enabled: bool) {
+        self.plpv_enabled = enabled;
+    }
 
     #[cfg(any(test, feature = "probe"))]
     fn last_probe(&self) -> crate::dsp::modules::ProbeSnapshot { self.last_probe }

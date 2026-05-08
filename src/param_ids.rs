@@ -8,12 +8,19 @@ pub const NUM_SLOTS: usize = 9;
 pub const NUM_CURVES: usize = 7;
 pub const NUM_NODES: usize = 6;
 
-/// Number of rows in the automation-exposed matrix grid.
-/// NOTE: This is 9 (real slots only). The DSP-layer
-/// `dsp::modules::MAX_MATRIX_ROWS` = 13 includes T/S Split virtual rows.
-/// These are intentionally different; exposing virtual rows as automation
-/// targets is a separate design decision not in this plan's scope.
+/// Number of rows in the automation-exposed matrix grid. Rows are
+/// DESTINATIONS in the routing-matrix semantic (param `mr{dst}c{src}`),
+/// so this stays at 9 (only slots can receive sends; virtual rows are
+/// sources, not destinations).
 pub const NUM_MATRIX_ROWS: usize = 9;
+
+/// Number of source columns in the automation-exposed matrix grid (param
+/// `mr{dst}c{src}`). 9 real slots + 4 T/S Split virtual rows
+/// (transient + sustained for up to 2 active T/S Splits, matching
+/// `dsp::modules::MAX_SPLIT_VIRTUAL_ROWS`). Aligned with
+/// `dsp::modules::MAX_MATRIX_ROWS` so virtual-row send levels are
+/// persisted and host-automatable (2026-05-08).
+pub const NUM_MATRIX_SOURCES: usize = 13;
 
 pub fn graph_node_id(slot: usize, curve: usize, node: usize, field: char) -> String {
     debug_assert!(matches!(field, 'x' | 'y' | 'q'));
@@ -64,6 +71,7 @@ mod tests {
         assert_eq!(NUM_SLOTS * NUM_CURVES * NUM_NODES * 3, 1134);
         assert_eq!(NUM_SLOTS * NUM_CURVES * 2, 126);  // tilt + offset
         assert_eq!(NUM_SLOTS * NUM_CURVES * 3, 189);  // tilt + offset + curvature
-        assert_eq!(NUM_MATRIX_ROWS * NUM_SLOTS, 81);
+        // 9 dest rows × 13 source cols = 117 (9 real slot sources + 4 virtual).
+        assert_eq!(NUM_MATRIX_ROWS * NUM_MATRIX_SOURCES, 117);
     }
 }

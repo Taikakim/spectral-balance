@@ -85,6 +85,18 @@ pub const LABEL_DIM:     Color32 = Color32::from_rgb(0x44, 0x88, 0x80);
 pub const MODULE_COLOR_LIT: Color32 = Color32::from_rgb(0x50, 0xc0, 0xc4);
 /// Dim module slot color (Dynamics, unselected).
 pub const MODULE_COLOR_DIM: Color32 = Color32::from_rgb(0x20, 0x40, 0x41);
+/// Geometry module dot color (teal/green, matches ModuleSpec color_lit).
+pub const GEOMETRY_DOT_COLOR: Color32 = Color32::from_rgb(0x50, 0xb4, 0xa0);
+/// Modulate module dot color (purple-magenta, matches ModuleSpec color_lit).
+pub const MODULATE_DOT_COLOR: Color32 = Color32::from_rgb(180, 100, 200);
+/// Circuit module — copper/orange for "analog component" feel.
+pub const CIRCUIT_DOT_COLOR: Color32 = Color32::from_rgb(200, 140, 80);
+/// Life module — warm green for "biology / fluid life" feel.
+pub const LIFE_DOT_COLOR: Color32 = Color32::from_rgb(110, 185, 100);
+/// Past module — muted violet for "temporal memory / echo" feel.
+pub const PAST_DOT_COLOR: Color32 = Color32::from_rgb(0xa0, 0x80, 0xb0);
+/// Kinetics module — warm orange for "force / momentum" feel.
+pub const KINETICS_DOT_COLOR: Color32 = Color32::from_rgb(0xc8, 0x80, 0x40);
 
 // ─── Freeze curve colours (4 equidistant, 30°, 120°, 210°, 300°) ─────────────
 
@@ -135,6 +147,15 @@ pub const STROKE_CURVE:    f32 = 1.0;
 pub const STROKE_MEDIUM:   f32 = 1.5;
 pub const NODE_RADIUS:     f32 = 5.0;
 
+/// Visual headroom strip above the 0 dB / y_max grid line in the curve area.
+/// All db→y mappings shrink the active rect from the top by this many pixels
+/// (scaled), so loud bins above unity and dragged-up nodes have somewhere to
+/// live without clipping into the top edge. Virtual node range and red
+/// off-rect triangles still use the FULL rect so dragging up a node still
+/// goes into and beyond the headroom strip with the existing indicator.
+/// See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §3.
+pub const HEADROOM_PX: f32 = 50.0;
+
 // ─── Font size base values (at 1× scale) ─────────────────────────────────────
 
 /// Grid axis labels (Hz / value markers).
@@ -158,6 +179,21 @@ pub const FONT_SIZE_MATRIX_CELL:  f32 = 8.0;
 /// FX matrix T/S virtual-row icon and self-send markers.
 pub const FONT_SIZE_MATRIX_VROW:  f32 = 7.0;
 
+// ─── Off-rect node indicator ──────────────────────────────────────────────────
+
+/// Off-rect node indicator (drawn when |node.y| > 1).
+pub const NODE_OFFRECT_COLOR:      Color32 = Color32::from_rgb(220, 60, 60); // red
+pub const NODE_OFFRECT_SIZE_PX:    f32     = 6.0;
+pub const NODE_OFFRECT_OFFSET_PX:  f32     = 3.0; // distance outside the rect edge
+
+// ─── Modulation Ring overlay ──────────────────────────────────────────────────
+
+pub const MOD_RING_RADIUS:     f32     = 16.0;
+pub const MOD_RING_DOT_RADIUS: f32     = 4.0;
+pub const MOD_RING_LIT:      Color32 = Color32::from_rgb(0xff, 0xc8, 0x40);
+pub const MOD_RING_DIM:      Color32 = Color32::from_rgb(0x60, 0x40, 0x18);
+pub const MOD_RING_DISABLED: Color32 = Color32::from_rgb(0x30, 0x30, 0x30);
+
 // ─── Scaling helpers ──────────────────────────────────────────────────────────
 
 /// Scale a layout measurement by the UI scale factor.
@@ -171,3 +207,26 @@ pub fn scaled(base: f32, scale: f32) -> f32 { base * scale }
 pub fn scaled_stroke(base: f32, scale: f32) -> f32 {
     if scale >= 1.75 { base * 2.0 } else { base * scale }
 }
+
+/// Amp-mode indicator dot colours, indexed by `AmpMode as usize`.
+/// Linear is transparent (no dot drawn).
+pub const AMP_DOT_COLORS: [Color32; 5] = [
+    Color32::TRANSPARENT,                         // Linear
+    Color32::from_rgb(0xff, 0xa6, 0x3d),          // Vactrol  — warm orange
+    Color32::from_rgb(0x6d, 0xc7, 0xff),          // Schmitt  — cool blue
+    Color32::from_rgb(0xa3, 0xff, 0x9d),          // Slew     — pale green
+    Color32::from_rgb(0xb3, 0x8d, 0xff),          // Stiction — violet
+];
+
+pub const AMP_DOT_RADIUS: f32 = 2.5;
+
+// ─── Help-box panel (right of FX matrix) ─────────────────────────────────────
+
+pub const HELP_BOX_WIDTH:        f32     = 240.0;
+pub const HELP_BOX_PADDING:      f32     = 8.0;
+pub const FONT_SIZE_HELP_HEAD:   f32     = 12.0;
+pub const FONT_SIZE_HELP_BODY:   f32     = 10.0;
+pub const HELP_BOX_BG:           Color32 = Color32::from_rgb(20, 20, 24);
+pub const HELP_BOX_BORDER:       Color32 = Color32::from_rgb(60, 60, 68);
+pub const HELP_BOX_BODY:         Color32 = Color32::from_rgb(190, 190, 196);
+pub const HELP_BOX_HEAD:         Color32 = Color32::from_rgb(230, 230, 236);

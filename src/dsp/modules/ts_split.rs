@@ -49,16 +49,24 @@ impl SpectralModule for TsSplitModule {
         _sidechain: Option<&[f32]>,
         curves: &[&[f32]],
         suppression_out: &mut [f32],
-        _ctx: &ModuleContext,
+        _physics: Option<&mut crate::dsp::bin_physics::BinPhysics>,
+        _ctx: &ModuleContext<'_>,
     ) {
         let n = bins.len();
-        let slow_coeff: f32 = 0.98;
         #[cfg(any(test, feature = "probe"))]
         let probe_k = if n == 0 { 0 } else { n / 2 };
         #[cfg(any(test, feature = "probe"))]
         let mut probe_sensitivity_pct: Option<f32> = None;
         for k in 0..n {
             let mag = bins[k].norm();
+            // SMOOTHNESS curve (curve 1, 2026-05-08 prototyping pass) — was
+            // hardcoded slow_coeff = 0.98. Curve gain in [0, 2] maps to
+            // slow_coeff ∈ [0.90, 0.999] via a centred remap so neutral
+            // (gain=1) reproduces the prior 0.98. Per-bin so high vs low
+            // freqs can react at different rates.
+            let smoothness_g = curves.get(1).and_then(|c| c.get(k))
+                                     .copied().unwrap_or(1.0).clamp(0.0, 2.0);
+            let slow_coeff = (0.96_f32 + 0.02 * smoothness_g).clamp(0.90, 0.999);
             self.avg_mag[k] = slow_coeff * self.avg_mag[k] + (1.0 - slow_coeff) * mag;
             let sensitivity = curves.get(0).and_then(|c| c.get(k))
                                      .copied().unwrap_or(1.0).clamp(0.0, 2.0);
@@ -84,9 +92,15 @@ impl SpectralModule for TsSplitModule {
         suppression_out.fill(0.0);
     }
 
+    fn clear_state(&mut self) {
+        self.avg_mag.fill(0.0);
+        for b in self.transient_out.iter_mut() { *b = num_complex::Complex::new(0.0, 0.0); }
+        for b in self.sustained_out.iter_mut()  { *b = num_complex::Complex::new(0.0, 0.0); }
+    }
+
     fn tail_length(&self) -> u32 { self.fft_size as u32 }
     fn module_type(&self) -> ModuleType { ModuleType::TransientSustainedSplit }
-    fn num_curves(&self) -> usize { 1 }
+    fn num_curves(&self) -> usize { 2 }
     fn num_outputs(&self) -> Option<usize> { Some(2) }
 
     fn virtual_outputs(&self) -> Option<[&[Complex<f32>]; 2]> {

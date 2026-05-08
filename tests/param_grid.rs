@@ -79,7 +79,11 @@ fn param_ids_constants_match_expected_dimensions() {
     assert_eq!(spectral_forge::param_ids::NUM_SLOTS,       9);
     assert_eq!(spectral_forge::param_ids::NUM_CURVES,      7);
     assert_eq!(spectral_forge::param_ids::NUM_NODES,       6);
+    // 2026-05-08: NUM_MATRIX_ROWS stays 9 (destinations are slots only).
+    // NUM_MATRIX_SOURCES = 13 (9 slots + 4 T/S Split virtual rows) is the
+    // new constant for matrix source columns.
     assert_eq!(spectral_forge::param_ids::NUM_MATRIX_ROWS, 9);
+    assert_eq!(spectral_forge::param_ids::NUM_MATRIX_SOURCES, 13);
     // Derived counts must produce the numbers the param_map test checks.
     let expected_graph  = spectral_forge::param_ids::NUM_SLOTS
         * spectral_forge::param_ids::NUM_CURVES
@@ -94,8 +98,9 @@ fn param_ids_constants_match_expected_dimensions() {
         * spectral_forge::param_ids::NUM_CURVES;  // 63
     assert_eq!(expected_curv, 63);
     let expected_matrix = spectral_forge::param_ids::NUM_MATRIX_ROWS
-        * spectral_forge::param_ids::NUM_SLOTS;
-    assert_eq!(expected_matrix, 81);
+        * spectral_forge::param_ids::NUM_MATRIX_SOURCES;
+    // 9 dst × 13 src = 117 (9 real slot sources + 4 T/S virtual).
+    assert_eq!(expected_matrix, 117);
 }
 
 #[test]
@@ -115,8 +120,8 @@ fn param_map_contains_expected_count() {
     assert_eq!(to_count, 126, "tilt/offset ID count mismatch");
     // Curvature: 9 × 7 = 63
     assert_eq!(curv_count, 63, "curvature ID count mismatch");
-    // Matrix: 9 × 9 = 81
-    assert_eq!(matrix_count, 81, "matrix ID count mismatch");
+    // Matrix: 13 × 9 = 117 (9 real rows + 4 T/S Split virtual rows).
+    assert_eq!(matrix_count, 117, "matrix ID count mismatch");
 }
 
 #[test]
@@ -138,35 +143,44 @@ fn specific_ids_are_present() {
 // ── Matrix default-value tests (Task 8) ──────────────────────────────────────
 
 #[test]
-fn matrix_serial_chain_defaults() {
-    // build.rs encodes a full linear chain using the rule: default = 1.0 when col + 1 == r.
-    // This means: mr1c0=1.0 (0→1), mr2c1=1.0 (1→2), mr3c2=1.0 (2→3), ..., mr8c7=1.0 (7→Master).
+fn matrix_default_chain_defaults() {
+    // build.rs encodes the default chain to match the default slot loadup
+    // (Dynamics in slot 0, Gain in slot 1, Master in slot 8):
+    //   mr1c0 = 1.0  (slot 0 → 1, Dynamics → Gain)
+    //   mr8c1 = 1.0  (slot 1 → 8, Gain → Master)
+    //   everything else 0.0
     let p = SpectralForgeParams::default();
 
     let v_1_0 = p.matrix_cell(1, 0).expect("mr1c0 should exist").value();
     assert!(
         (v_1_0 - 1.0).abs() < 1e-6,
-        "mr1c0 (slot 0→1 send) should default to 1.0, got {v_1_0}"
+        "mr1c0 (slot 0→1 send, Dynamics → Gain) should default to 1.0, got {v_1_0}"
     );
 
+    let v_8_1 = p.matrix_cell(8, 1).expect("mr8c1 should exist").value();
+    assert!(
+        (v_8_1 - 1.0).abs() < 1e-6,
+        "mr8c1 (slot 1→Master send, Gain → Master) should default to 1.0, got {v_8_1}"
+    );
+
+    // Cells that were 1.0 under the old serial chain default but are 0.0 now.
     let v_2_1 = p.matrix_cell(2, 1).expect("mr2c1 should exist").value();
     assert!(
-        (v_2_1 - 1.0).abs() < 1e-6,
-        "mr2c1 (slot 1→2 send) should default to 1.0, got {v_2_1}"
+        v_2_1.abs() < 1e-6,
+        "mr2c1 (slot 1→2 send, no longer in default chain) should be 0.0, got {v_2_1}"
     );
 
-    // mr8c7: slot 7 → Master (slot 8), the last link in the full chain.
     let v_8_7 = p.matrix_cell(8, 7).expect("mr8c7 should exist").value();
     assert!(
-        (v_8_7 - 1.0).abs() < 1e-6,
-        "mr8c7 (slot 7→Master send) should default to 1.0, got {v_8_7}"
+        v_8_7.abs() < 1e-6,
+        "mr8c7 (slot 7→Master, no longer in default chain) should be 0.0, got {v_8_7}"
     );
 
-    // A non-serial cell should be zero.
+    // A non-serial cell should still be zero.
     let v_8_2 = p.matrix_cell(8, 2).expect("mr8c2 should exist").value();
     assert!(
         v_8_2.abs() < 1e-6,
-        "mr8c2 (slot 2→Master direct, not in serial chain) should default to 0.0, got {v_8_2}"
+        "mr8c2 (slot 2→Master direct) should default to 0.0, got {v_8_2}"
     );
 }
 

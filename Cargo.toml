@@ -22,14 +22,32 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 directories = "5.0"
 opener = "0.7"
+smallvec = "1"
 
 [features]
 # Enables probe infrastructure for calibration integration tests.
 # Zero cost in normal builds (neither debug nor release).
 probe = []
 
+# Builds a side-by-side "dev" copy of the plugin with a different display name,
+# CLAP ID, and VST3 class ID, so it can coexist in the host with the main build.
+# No behavioural difference — purely identity overrides in src/lib.rs.
+dev-build = []
+
 [[test]]
 name = "calibration_roundtrip"
+required-features = ["probe"]
+
+[[test]]
+name = "bin_physics_pipeline"
+required-features = ["probe"]
+
+[[test]]
+name = "calibration"
+required-features = ["probe"]
+
+[[test]]
+name = "circuit"
 required-features = ["probe"]
 
 [dev-dependencies]

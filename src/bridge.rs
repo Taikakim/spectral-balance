@@ -1,6 +1,7 @@
 use parking_lot::Mutex;
 use std::sync::{Arc, atomic::{AtomicBool, AtomicUsize}};
 use triple_buffer::{TripleBuffer, Input as TbInput, Output as TbOutput};
+use crate::dsp::modulation_ring::RingStateBank;
 
 pub const NUM_CURVES: usize = 7;
 pub const CURVE_THRESHOLD: usize = 0;
@@ -28,6 +29,10 @@ pub struct SharedState {
     /// Whether any aux sidechain input is carrying signal.
     pub sidechain_active: Arc<AtomicBool>,
 
+    /// Set by the GUI (Reset to Default confirm) to request a Pipeline::reset()
+    /// on the next audio block. Cleared by the audio thread after handling.
+    pub reset_requested: Arc<std::sync::atomic::AtomicBool>,
+
     // Audio → GUI
     pub spectrum_tx:      TbInput<Vec<f32>>,
     pub spectrum_rx:      Arc<Mutex<TbOutput<Vec<f32>>>>,
@@ -38,6 +43,10 @@ pub struct SharedState {
     pub sc_envelope_rx:   Arc<Mutex<TbOutput<Vec<f32>>>>,
 
     pub sample_rate: Arc<AtomicF32>,
+
+    /// Per-node modulation ring state. GUI writes on click; audio thread may
+    /// clone for RT-safe read (378-byte copy, no heap).
+    pub ring_states: Arc<Mutex<RingStateBank>>,
 }
 
 /// Wait-free f32 atomic using bit-casting.
@@ -89,6 +98,7 @@ impl SharedState {
             curve_tx,
             curve_rx,
             sidechain_active: Arc::new(AtomicBool::new(false)),
+            reset_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             spectrum_tx,
             spectrum_rx: Arc::new(Mutex::new(spectrum_rx)),
             suppression_tx,
@@ -96,6 +106,7 @@ impl SharedState {
             sc_envelope_tx,
             sc_envelope_rx: Arc::new(Mutex::new(sc_envelope_rx)),
             sample_rate: Arc::new(AtomicF32::new(sample_rate)),
+            ring_states: Arc::new(Mutex::new(RingStateBank::default())),
         }
     }
 }

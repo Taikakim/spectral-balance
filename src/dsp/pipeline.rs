@@ -2,6 +2,8 @@ use num_complex::Complex;
 use realfft::RealFftPlanner;
 use nih_plug::util::StftHelper;
 use crate::bridge::SharedState;
+use crate::dsp::modulation_ring::{RingTransformState, RING_KEY_COUNT};
+use crate::dsp::modules::PeakInfo;
 use crate::params::{FxChannelTarget, ScChannel, StereoLink};
 
 /// Which of the five derived SC magnitude streams a slot should key off.
@@ -41,6 +43,11 @@ pub const OVERLAP: usize = 4; // 75% overlap → hop = 512
 pub const MAX_FFT_SIZE: usize = 16384;
 pub const MAX_NUM_BINS: usize = MAX_FFT_SIZE / 2 + 1;
 
+/// Maximum capacity for the per-channel peak buffer used by Phase 4.2 PLPV
+/// peak detection. The runtime `plpv_max_peaks` parameter is clamped to this
+/// when written into `peak_buf`.
+pub const MAX_PEAKS: usize = 256;
+
 /// Maximum block size assumed for the delta monitor dry-delay ring buffer.
 /// nih-plug typically processes in blocks of ≤ 8192 samples.
 const MAX_BLOCK_SIZE: usize = 8192;
@@ -78,11 +85,85 @@ pub struct Pipeline {
     sc_stft: StftHelper,
     /// Per-channel, per-slot SC magnitude slice; slot_sc_input[channel][slot][bin]. Pre-allocated.
     slot_sc_input: Vec<Vec<Vec<f32>>>,
+    /// PLPV: previous wrapped phase per channel. [channel][bin]
+    prev_phase: Vec<Vec<f32>>,
+    /// PLPV: previous unwrapped phase per channel. [channel][bin]
+    prev_unwrapped_phase: Vec<Vec<f32>>,
+    /// PLPV: current unwrapped phase per channel. Exposed to modules via ctx.unwrapped_phase.
+    unwrapped_phase: Vec<Vec<f32>>,
+    /// PLPV: per-channel re-wrap workspace used before iFFT. [channel][bin]
+    rewrap_buf: Vec<Vec<f32>>,
+    /// PLPV: mono scratch for the current hop's wrapped phase (filled per closure invocation).
+    scratch_curr_phase: Vec<f32>,
+    /// PLPV: mono scratch for per-bin magnitudes used by low-energy phase damping.
+    scratch_mags: Vec<f32>,
+    /// PLPV: per-channel pre-allocated peak buffer (Phase 4.2). Capacity MAX_PEAKS;
+    /// `detect_peaks` writes only the first `n_peaks` entries each hop.
+    peak_buf: Vec<Vec<PeakInfo>>,
+    /// PLPV: per-channel, per-bin expected-phase accumulator. Wrapped to
+    /// `(-π, π]` after every hop to keep f32 precision indefinitely. The
+    /// previous design recomputed this from a hop counter `2π·k·hop/N · n`
+    /// each frame, which lost f32 fractional precision after as little as
+    /// ~50 sec at fft=2048/sr=96k for the highest bins. A periodic reset to
+    /// zero used to compensate, but that introduced a phase discontinuity
+    /// on every reset → audible spectral spreading. Wrapping every hop
+    /// avoids both problems: phase is musically defined modulo 2π, so the
+    /// wrap is a no-op for downstream consumers (re-wrap before iFFT, or
+    /// modules that compare in modulo space).
+    expected_phase_acc: Vec<Vec<f32>>,
+    /// Per-channel rolling complex-spectrum history. Sized at construction from the
+    /// History Depth param (in seconds). Reallocated by `reset()` if the requested
+    /// capacity changes (allocation OK there — reset is not on the audio thread).
+    history: crate::dsp::history_buffer::HistoryBuffer,
+    history_depth_seconds: f32,
+    /// Scratch pad for one hop's per-channel complex spectrum, copied out of
+    /// the StftHelper closure and drained into `history` after the closure.
+    pending_hop_frames: Vec<Vec<Complex<f32>>>,
+    /// Per-bin |IF − f_centre| / f_centre cache, filled at the start of every
+    /// process() call from the prior block's analysis FFT. Sized at
+    /// MAX_NUM_BINS; only `[0..num_bins]` is meaningful for the active FFT.
+    /// v1 always fills with zeros (IF == centre); replaced once Phase 4's
+    /// per-channel IF lookup is plumbed in.
+    if_offset_buf: Vec<f32>,
+    /// Per-channel scratch output for `compute_instantaneous_freq`. Sized at MAX_NUM_BINS.
+    /// Only populated when `any_needs_if` is true for the current block.
+    if_buffer: Vec<Vec<f32>>,
+    /// Previous-frame wrapped phase used by `compute_instantaneous_freq`. Independent of
+    /// PLPV's `prev_phase`. Sized at MAX_NUM_BINS. Zeroed by both `clear_state()` and `reset()`.
+    if_prev_phase: Vec<Vec<f32>>,
+    /// Per-channel cepstrum scratch + output. Allocated at construction;
+    /// resized on `reset()` if the FFT size changed. Only `compute_from_bins`-d
+    /// inside the hop closure when at least one active slot declares
+    /// `needs_cepstrum`. Phase 6.4 lazy infra.
+    cepstrum_buf: Vec<crate::dsp::cepstrum::CepstrumBuf>,
+    /// Per-channel chromagram (12 pitch-class energy accumulators). Allocated at
+    /// construction; resized on `reset()`. Only computed when at least one active
+    /// slot declares `needs_chromagram`. Phase 6.2 lazy infra.
+    chromagram_buf: Vec<[f32; crate::dsp::chromagram::NUM_PITCH_CLASSES]>,
+    /// Per-channel harmonic-group detector output. Allocated at construction;
+    /// resized on `reset()`. Only `detect()`-d when at least one active slot
+    /// declares `needs_harmonic_groups`. Phase 6.2 lazy infra.
+    harmonic_groups: Vec<crate::dsp::harmonic_groups::HarmonicGroupBuf>,
+    /// MIDI state mirrored from `lib.rs::process()`. Updated before each block,
+    /// read inside the hop closure to populate ModuleContext.
+    held_notes:         [bool; crate::dsp::midi::NUM_MIDI_NOTES],
+    held_pitch_classes: [bool; crate::dsp::midi::NUM_PITCH_CLASSES],
+    /// Per-(slot, curve, node) audio-thread ring transform state.
+    /// Fixed array of 378 entries (9 × 7 × 6); indexed via `RingStateBank::key_index`.
+    /// No heap allocation. Reset to sentinel defaults by both `new()` and `reset()`.
+    ring_transforms: [RingTransformState; RING_KEY_COUNT],
     sample_rate: f32,
+    num_channels: usize,
 }
 
 impl Pipeline {
-    pub fn new(sample_rate: f32, num_channels: usize, fft_size: usize, slot_types: &[crate::dsp::modules::ModuleType; 9]) -> Self {
+    pub fn new(
+        sample_rate: f32,
+        num_channels: usize,
+        fft_size: usize,
+        slot_types: &[crate::dsp::modules::ModuleType; 9],
+        history_depth_seconds: f32,
+    ) -> Self {
         let num_bins = fft_size / 2 + 1;
         let mut planner = RealFftPlanner::<f32>::new();
         let fft_plan  = planner.plan_fft_forward(fft_size);
@@ -115,6 +196,50 @@ impl Pipeline {
             .map(|_| (0..9).map(|_| vec![0.0f32; MAX_NUM_BINS]).collect())
             .collect();
 
+        // PLPV per-channel phase buffers (2 channels × MAX_NUM_BINS each).
+        let prev_phase:           Vec<Vec<f32>> = (0..2).map(|_| vec![0.0f32; MAX_NUM_BINS]).collect();
+        let prev_unwrapped_phase: Vec<Vec<f32>> = (0..2).map(|_| vec![0.0f32; MAX_NUM_BINS]).collect();
+        let unwrapped_phase:      Vec<Vec<f32>> = (0..2).map(|_| vec![0.0f32; MAX_NUM_BINS]).collect();
+        let expected_phase_acc:   Vec<Vec<f32>> = (0..2).map(|_| vec![0.0f32; MAX_NUM_BINS]).collect();
+        let rewrap_buf:           Vec<Vec<f32>> = (0..2).map(|_| vec![0.0f32; MAX_NUM_BINS]).collect();
+        let scratch_curr_phase:   Vec<f32>      = vec![0.0f32; MAX_NUM_BINS];
+        let scratch_mags:         Vec<f32>      = vec![0.0f32; MAX_NUM_BINS];
+        let peak_buf: Vec<Vec<PeakInfo>> = (0..2)
+            .map(|_| vec![PeakInfo { k: 0, mag: 0.0, low_k: 0, high_k: 0 }; MAX_PEAKS])
+            .collect();
+
+        let history_capacity = {
+            let hop = (fft_size / OVERLAP).max(1) as f32;
+            ((history_depth_seconds * sample_rate) / hop).ceil() as usize
+        }.max(1);
+        let history = crate::dsp::history_buffer::HistoryBuffer::new(
+            num_channels.max(1),
+            history_capacity,
+            num_bins,
+        );
+        let pending_hop_frames: Vec<Vec<Complex<f32>>> = (0..2)
+            .map(|_| vec![Complex::new(0.0, 0.0); MAX_NUM_BINS])
+            .collect();
+        let if_offset_buf: Vec<f32> = vec![0.0; MAX_NUM_BINS];
+
+        // IF (instantaneous frequency) per-channel scratch buffers. Independent of PLPV.
+        let if_buffer:     Vec<Vec<f32>> = (0..2).map(|_| vec![0.0f32; MAX_NUM_BINS]).collect();
+        let if_prev_phase: Vec<Vec<f32>> = (0..2).map(|_| vec![0.0f32; MAX_NUM_BINS]).collect();
+
+        let cepstrum_buf: Vec<crate::dsp::cepstrum::CepstrumBuf> =
+            (0..num_channels)
+                .map(|_| crate::dsp::cepstrum::CepstrumBuf::new(fft_size))
+                .collect();
+
+        let chromagram_buf: Vec<[f32; crate::dsp::chromagram::NUM_PITCH_CLASSES]> =
+            (0..num_channels)
+                .map(|_| [0.0_f32; crate::dsp::chromagram::NUM_PITCH_CLASSES])
+                .collect();
+        let harmonic_groups: Vec<crate::dsp::harmonic_groups::HarmonicGroupBuf> =
+            (0..num_channels)
+                .map(|_| crate::dsp::harmonic_groups::HarmonicGroupBuf::new())
+                .collect();
+
         Self {
             stft: StftHelper::new(num_channels, fft_size, 0),
             fft_plan,
@@ -133,15 +258,87 @@ impl Pipeline {
             sc_complex_bufs,
             sc_stft,
             slot_sc_input,
+            prev_phase,
+            prev_unwrapped_phase,
+            unwrapped_phase,
+            rewrap_buf,
+            scratch_curr_phase,
+            scratch_mags,
+            peak_buf,
+            expected_phase_acc,
+            history,
+            history_depth_seconds,
+            pending_hop_frames,
+            if_offset_buf,
+            if_buffer,
+            if_prev_phase,
+            cepstrum_buf,
+            chromagram_buf,
+            harmonic_groups,
+            held_notes:         [false; crate::dsp::midi::NUM_MIDI_NOTES],
+            held_pitch_classes: [false; crate::dsp::midi::NUM_PITCH_CLASSES],
+            ring_transforms: [RingTransformState::default(); RING_KEY_COUNT],
             sample_rate,
             fft_size,
+            num_channels,
         }
     }
 
-    pub fn reset(&mut self, sample_rate: f32, num_channels: usize) {
+    /// Zero out DSP runtime state without touching FFT infrastructure.
+    ///
+    /// This is the **audio-thread path** for the GUI Reset button. It must not
+    /// call `Pipeline::reset()` or any module `reset()` impl because those
+    /// heap-allocate (RealFftPlanner, vec!, StftHelper::new, etc.).
+    ///
+    /// What this does:
+    /// - Zeros every stateful f32/complex pre-allocated buffer in Pipeline and FxMatrix.
+    /// - Resets the dry-delay write head to 0.
+    /// - Zeros `pending_hop_frames` and `if_offset_buf`, and calls `HistoryBuffer::reset()`
+    ///   (rewinds the ring write head + frame count + summary cache; allocation-free —
+    ///   same Vec slots, just `fill(Complex::ZERO)`).
+    /// - Does NOT reset StftHelper overlap-add ring buffers — those are private to
+    ///   nih-plug and cannot be zeroed here. The result is a brief one-hop click, which
+    ///   is acceptable for a user-initiated hard reset.
+    /// - Does NOT call module.reset() — module envelope/state will be stale for one
+    ///   FFT window then naturally overwritten by process(). This matches the behaviour
+    ///   of any other parameter change.
+    ///
+    /// RT-safe: no allocation, no locking, no I/O.
+    pub fn clear_state(&mut self) {
+        self.dry_delay.fill(0.0);
+        self.dry_delay_write = 0;
+        for sc in &mut self.sc_envelopes  { sc.fill(0.0); }
+        for sc in &mut self.sc_env_states { sc.fill(0.0); }
+        for ch in &mut self.slot_sc_input {
+            for slot_buf in ch.iter_mut() { slot_buf.fill(0.0); }
+        }
+        for ch_bufs in &mut self.sc_complex_bufs {
+            ch_bufs.fill(Complex::new(0.0, 0.0));
+        }
+        for v in &mut self.prev_phase           { v.fill(0.0); }
+        for v in &mut self.prev_unwrapped_phase { v.fill(0.0); }
+        for v in &mut self.unwrapped_phase      { v.fill(0.0); }
+        for v in &mut self.rewrap_buf           { v.fill(0.0); }
+        self.scratch_curr_phase.fill(0.0);
+        self.scratch_mags.fill(0.0);
+        for ch in &mut self.peak_buf {
+            ch.fill(PeakInfo { k: 0, mag: 0.0, low_k: 0, high_k: 0 });
+        }
+        for v in &mut self.expected_phase_acc { v.fill(0.0); }
+        for v in &mut self.pending_hop_frames { for c in v { *c = Complex::new(0.0, 0.0); } }
+        for v in &mut self.if_offset_buf { *v = 0.0; }
+        for v in &mut self.if_buffer     { v.fill(0.0); }
+        for v in &mut self.if_prev_phase { v.fill(0.0); }
+        crate::dsp::midi::clear_midi_state(&mut self.held_notes, &mut self.held_pitch_classes);
+        self.history.reset();
+        self.fx_matrix.clear_state();
+    }
+
+    pub fn reset(&mut self, sample_rate: f32, num_channels: usize, history_depth_seconds: f32) {
         let fft_size = self.fft_size;
         let num_bins = fft_size / 2 + 1;
         self.sample_rate = sample_rate;
+        self.num_channels = num_channels;
 
         let mut planner = RealFftPlanner::<f32>::new();
         self.fft_plan  = planner.plan_fft_forward(fft_size);
@@ -168,6 +365,56 @@ impl Pipeline {
                 slot_buf.fill(0.0);
             }
         }
+        for v in &mut self.prev_phase           { v.fill(0.0); }
+        for v in &mut self.prev_unwrapped_phase { v.fill(0.0); }
+        for v in &mut self.unwrapped_phase      { v.fill(0.0); }
+        for v in &mut self.rewrap_buf           { v.fill(0.0); }
+        self.scratch_curr_phase.fill(0.0);
+        self.scratch_mags.fill(0.0);
+        for ch in &mut self.peak_buf {
+            ch.fill(PeakInfo { k: 0, mag: 0.0, low_k: 0, high_k: 0 });
+        }
+        for v in &mut self.expected_phase_acc { v.fill(0.0); }
+        for v in &mut self.pending_hop_frames { for c in v { *c = Complex::new(0.0, 0.0); } }
+        for v in &mut self.if_offset_buf { *v = 0.0; }
+        for v in &mut self.if_buffer     { v.fill(0.0); }
+        for v in &mut self.if_prev_phase { v.fill(0.0); }
+        // FFT size or channel count may have changed — match num_channels and resize each.
+        self.cepstrum_buf.resize_with(
+            num_channels,
+            || crate::dsp::cepstrum::CepstrumBuf::new(self.fft_size),
+        );
+        for cb in self.cepstrum_buf.iter_mut() {
+            cb.resize(self.fft_size);
+        }
+        self.chromagram_buf.resize(num_channels, [0.0; crate::dsp::chromagram::NUM_PITCH_CLASSES]);
+        for c in self.chromagram_buf.iter_mut() {
+            *c = [0.0; crate::dsp::chromagram::NUM_PITCH_CLASSES];
+        }
+        self.harmonic_groups.resize_with(num_channels,
+            || crate::dsp::harmonic_groups::HarmonicGroupBuf::new());
+        crate::dsp::midi::clear_midi_state(&mut self.held_notes, &mut self.held_pitch_classes);
+        // History Buffer: rebuild if the depth changed; otherwise reset in place.
+        let new_capacity = {
+            let hop = (fft_size / OVERLAP).max(1) as f32;
+            ((history_depth_seconds * sample_rate) / hop).ceil() as usize
+        }.max(1);
+        let needs_realloc = self.history_depth_seconds != history_depth_seconds
+            || self.history.capacity_frames() != new_capacity
+            || self.history.num_channels() != num_channels.max(1);
+        if needs_realloc {
+            self.history = crate::dsp::history_buffer::HistoryBuffer::new(
+                num_channels.max(1),
+                new_capacity,
+                num_bins,
+            );
+            self.history_depth_seconds = history_depth_seconds;
+        } else {
+            self.history.reset();
+        }
+        // Reset all ring-transform state back to sentinel defaults (no latch, no prev output).
+        self.ring_transforms = [RingTransformState::default(); RING_KEY_COUNT];
+        // Reset clears all amp-node state — preset load + FFT-size change both warm up from zero.
         self.fx_matrix.reset(sample_rate, fft_size);
     }
 
@@ -177,18 +424,34 @@ impl Pipeline {
         aux: &mut nih_plug::prelude::AuxiliaryBuffers,
         shared: &mut SharedState,
         params: &crate::params::SpectralForgeParams,
+        transport: &nih_plug::context::process::Transport,
     ) {
         use crate::dsp::modules::{apply_curve_transform, ModuleContext, TILT_MAX};
         use crate::editor::curve_config::curve_display_config;
 
+        // Drain the GUI-side reset request flag. The swap is lock-free.
+        // clear_state() zeros pre-allocated buffers only — no FFT planner, no
+        // StftHelper construction, no module reset() calls that heap-allocate.
+        if shared.reset_requested.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            self.clear_state();
+        }
+
         let fft_size = self.fft_size;
         let num_bins = fft_size / 2 + 1;
+        // History summary stats are valid only within one block. Modules
+        // reading them get a cache-miss-then-cache-hit pattern; cleared here.
+        self.history.clear_summary_cache();
         let block_size = buffer.samples() as u32;
         let attack_ms_base    = params.attack_ms.smoothed.next_step(block_size);
         let release_ms_base   = params.release_ms.smoothed.next_step(block_size);
         let input_gain_db     = params.input_gain.smoothed.next_step(block_size);
         let output_gain_db    = params.output_gain.smoothed.next_step(block_size);
         let global_mix        = params.mix.smoothed.next_step(block_size).clamp(0.0, 1.0);
+
+        // Snapshot graph dBFS range — needed for runtime_anchors (display_idx 0 = Dynamics
+        // threshold substitutes db_min/db_max). db_min is fixed at -160 dBFS.
+        let db_min = -160.0_f32;
+        let db_max = params.graph_db_max.try_lock().map(|g| *g).unwrap_or(0.0);
 
         // Snapshot slot module types and gain modes early — needed for offset_fn lookup below.
         // Uses try_lock with fallback so we never block on the audio thread.
@@ -214,21 +477,90 @@ impl Pipeline {
                 let curvature = params.curvature_param(s, c)
                     .map(|p| p.smoothed.next_step(block_size))
                     .unwrap_or(0.0);
-                // Look up per-curve calibrated offset function (no allocation).
-                let offset_fn = curve_display_config(
-                    slot_types_snap[s],
-                    c,
-                    slot_gain_mode_snap[s],
-                ).offset_fn;
+                // Look up per-curve calibrated offset function and runtime anchors (no allocation).
+                let display_idx = crate::editor::curve::display_curve_idx(
+                    slot_types_snap[s], c, slot_gain_mode_snap[s],
+                );
+                let cfg = curve_display_config(
+                    slot_types_snap[s], c, slot_gain_mode_snap[s],
+                );
+                let anchors = crate::editor::curve::runtime_anchors(
+                    &cfg, display_idx,
+                    /* total_history_seconds */ 0.0,
+                    db_min, db_max,
+                    attack_ms_base, release_ms_base,
+                );
+                let offset_fn = cfg.offset_fn;
                 apply_curve_transform(
                     &mut self.slot_curve_cache[s][c],
                     tilt_norm * TILT_MAX,
                     offset,
                     curvature,
                     offset_fn,
+                    anchors,
                     self.sample_rate,
                     self.fft_size,
                 );
+            }
+        }
+
+        // ── Apply modulation ring transforms to slot_curve_cache ──
+        // Snap the GUI-side ring state bank (a 378-byte memcpy — RT-safe).
+        // If the lock is contended this block, we skip gracefully (no transform applied).
+        let ring_snapshot = shared.ring_states
+            .try_lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+
+        // Only pay the per-key cost if any ring is active.
+        // Snap node Y values once per block (single 4536-byte memcpy — RT-safe).
+        // A per-key try_lock could succeed for some keys and fail for others within
+        // one block, scaling slot_curve_cache asymmetrically. One snapshot keeps
+        // every key consistent. If the lock contends, skip the ring entirely this
+        // block — the cache stays at its un-scaled values, audio continues normally.
+        if ring_snapshot.entry_count() > 0 {
+            if let Some(nodes_guard) = params.slot_curve_nodes.try_lock() {
+                let nodes = *nodes_guard;
+                drop(nodes_guard);
+
+                let current_beat = transport.pos_beats().unwrap_or(0.0) as f32;
+                let block_samples_usize = buffer.samples().max(1).min(256);
+                let mut ring_out = [0.0_f32; 256];
+
+                for (key, ring_state) in ring_snapshot.iter() {
+                    let s = key.slot  as usize;
+                    let c = key.curve as usize;
+                    let n = key.node  as usize;
+                    if s >= 9 || c >= 7 || n >= 6 { continue; }
+
+                    let live_y = nodes[s][c][n].y;
+
+                    // If live_y is near zero the ring has no meaningful scale effect — skip.
+                    if live_y.abs() < 0.05 { continue; }
+
+                    let tf_state = &mut self.ring_transforms[
+                        crate::dsp::modulation_ring::RingStateBank::key_index(key)
+                    ];
+                    crate::dsp::modulation_ring::apply_ring(
+                        tf_state,
+                        crate::dsp::modulation_ring::RingApplyArgs {
+                            ring:          ring_state,
+                            input_value:   live_y,
+                            current_beat,
+                            block_samples: block_samples_usize,
+                        },
+                        &mut ring_out[..block_samples_usize],
+                    );
+
+                    // Use the final sample as the "target" scaled Y for this block.
+                    let latched_y = ring_out[block_samples_usize - 1];
+                    let scale = (latched_y / live_y).clamp(0.1, 10.0);
+                    if (scale - 1.0).abs() < 1e-6 { continue; }
+
+                    for v in self.slot_curve_cache[s][c].iter_mut() {
+                        *v *= scale;
+                    }
+                }
             }
         }
 
@@ -303,6 +635,18 @@ impl Pipeline {
 
         // ── Read feature flags and stereo link ──
         let delta_monitor = params.delta_monitor.value();
+        let enable_heavy_modules = params.enable_heavy_modules.value();
+        let plpv_enable = params.plpv_enable.value();
+        let plpv_dynamics_enable = params.plpv_dynamics_enable.value();
+        let plpv_phase_smear_enable = params.plpv_phase_smear_enable.value();
+        let plpv_freeze_enable = params.plpv_freeze_enable.value();
+        let plpv_midside_enable = params.plpv_midside_enable.value();
+        let master_clip_enabled = params.master_clip_enabled.value();
+        let master_clip_threshold_db = params.master_clip_threshold_db.value();
+        let plpv_phase_noise_floor_db = params.plpv_phase_noise_floor_db.smoothed.next_step(block_size);
+        // Phase 4.2: control-rate peak-detection params. Read once per block.
+        let max_peaks_capped: usize = (params.plpv_max_peaks.value() as usize).min(MAX_PEAKS);
+        let peak_threshold_db: f32 = params.plpv_peak_threshold_db.smoothed.next_step(block_size);
         let stereo_link = params.stereo_link.value();
         let is_mid_side = stereo_link == StereoLink::MidSide;
 
@@ -317,18 +661,52 @@ impl Pipeline {
             params.sensitivity.smoothed.next_step(block_size)
         };
 
-        // Build ModuleContext (all Copy fields, no borrows)
-        let ctx = ModuleContext {
-            sample_rate:       self.sample_rate,
+        // Derive if_offset from the previous block's last analysis FFT. One-block
+        // latency is acceptable for Past consumers and avoids a per-hop borrow
+        // conflict with the StftHelper closure. v1 stub: all zeros (IF == centre).
+        // Phase 4's per-channel IF lookup will replace `let inst = centre;` below.
+        let inv_fft = 1.0_f32 / fft_size as f32;
+        for k in 1..num_bins {
+            let centre = k as f32 * self.sample_rate * inv_fft;
+            let inst = centre; // TODO Phase 4 wiring: pull from per-channel IF cache.
+            self.if_offset_buf[k] = (inst - centre) / centre.max(1e-6);
+        }
+        self.if_offset_buf[0] = 0.0;
+
+        // Immutable borrow of history for ctx — captures the prior block's state.
+        // The mutable write path (pending_hop_frames → history) happens after the
+        // closure via the separate pending_hop_frames field.
+        let history_ref: &crate::dsp::history_buffer::HistoryBuffer = &self.history;
+        // MIDI state borrows — captured before the closure to avoid overlapping
+        // &self / &mut self borrows inside the STFT closure (Phase 6.3 Task 5).
+        let held_notes_ref: &[bool; crate::dsp::midi::NUM_MIDI_NOTES] = &self.held_notes;
+        let held_pcs_ref:   &[bool; crate::dsp::midi::NUM_PITCH_CLASSES] = &self.held_pitch_classes;
+
+        // Build ModuleContext
+        let mut ctx = ModuleContext::new(
+            self.sample_rate,
             fft_size,
             num_bins,
-            attack_ms:         attack_ms_base,
-            release_ms:        release_ms_base,
+            attack_ms_base,
+            release_ms_base,
             sensitivity,
-            suppression_width: params.suppression_width.smoothed.next_step(block_size),
-            auto_makeup:       params.auto_makeup.value(),
+            params.suppression_width.smoothed.next_step(block_size),
+            params.auto_makeup.value(),
             delta_monitor,
-        };
+        );
+        // Phase 1 stub: BPM/beat read from host transport when present.
+        // Modules consuming these don't ship until Phase 2 (Rhythm), so a 0.0
+        // default is currently equivalent to "no BPM info available".
+        ctx.bpm = transport.tempo.unwrap_or(0.0) as f32;
+        ctx.beat_position = transport.pos_beats().unwrap_or(0.0);
+        // Attach history as the *prior* block's snapshot — readers always look back.
+        ctx.history = Some(history_ref);
+        // Modules that read instantaneous-frequency offset (e.g. Past Stretch)
+        // see the prior-block snapshot. None == not yet wired (we always wire
+        // it now that the cache exists).
+        ctx.if_offset = Some(&self.if_offset_buf[..num_bins]);
+        ctx.midi_notes         = Some(held_notes_ref);
+        ctx.held_pitch_classes = Some(held_pcs_ref);
 
         // Snapshot of slot targets (needed for SC channel resolution in MidSide mode).
         let slot_targets_snap: [FxChannelTarget; 9] = params.slot_targets.try_lock()
@@ -422,24 +800,212 @@ impl Pipeline {
             self.fx_matrix.set_gain_modes(&*modes);
         }
 
+        // Propagate future modes each block (try_lock is non-blocking; skipped if GUI holds lock).
+        if let Some(modes) = params.slot_future_mode.try_lock() {
+            self.fx_matrix.set_future_modes(&*modes);
+        }
+
+        // Propagate punch modes each block (try_lock is non-blocking; skipped if GUI holds lock).
+        if let Some(modes) = params.slot_punch_mode.try_lock() {
+            self.fx_matrix.set_punch_modes(&*modes);
+        }
+
+        // Propagate geometry modes each block (try_lock is non-blocking; skipped if GUI holds lock).
+        if let Some(modes) = params.slot_geometry_mode.try_lock() {
+            self.fx_matrix.set_geometry_modes(&*modes);
+        }
+
+        // Propagate modulate modes each block (try_lock is non-blocking; skipped if GUI holds lock).
+        if let Some(modes) = params.slot_modulate_mode.try_lock() {
+            self.fx_matrix.set_modulate_modes(&*modes);
+        }
+        if let Some(repels) = params.slot_modulate_repel.try_lock() {
+            self.fx_matrix.set_modulate_repels(&*repels);
+        }
+        if let Some(sc_pos) = params.slot_modulate_sc_positioned.try_lock() {
+            self.fx_matrix.set_modulate_sc_positioneds(&*sc_pos);
+        }
+
+        // Propagate circuit modes each block (try_lock is non-blocking; skipped if GUI holds lock).
+        if let Some(modes) = params.slot_circuit_mode.try_lock() {
+            self.fx_matrix.set_circuit_modes(&*modes);
+        }
+
+        // Propagate life modes each block (try_lock is non-blocking; skipped if GUI holds lock).
+        if let Some(modes) = params.slot_life_mode.try_lock() {
+            self.fx_matrix.set_life_modes(&*modes);
+        }
+
+        // Propagate past modes each block (try_lock is non-blocking; skipped if GUI holds lock).
+        if let Some(modes) = params.slot_past_mode.try_lock() {
+            self.fx_matrix.set_past_modes(&*modes);
+        }
+        if let Some(keys) = params.slot_past_sort_key.try_lock() {
+            self.fx_matrix.set_past_sort_keys(&*keys);
+        }
+
+        // Snap per-slot Past scalar params and convert units (Hz → bin, s → frames,
+        // % → 0..1). See docs/superpowers/specs/2026-05-04-past-module-ux-design.md §2 + §3.
+        // Called per-block because params can be host-automated.
+        {
+            use crate::dsp::modules::past::{PastScalars, MAX_SORT_BINS_PUB};
+            let num_bins = self.fft_size / 2 + 1;
+            let hop_size_samples = (self.fft_size / OVERLAP).max(1) as f32;
+            let hop_seconds = hop_size_samples / self.sample_rate.max(1.0);
+            let capacity_frames = self.history.capacity_frames() as u32;
+
+            let mut past_scalars: [PastScalars; 9] =
+                std::array::from_fn(|_| PastScalars::safe_default());
+            for s in 0..9 {
+                let floor_hz = params
+                    .past_floor_param(s)
+                    .map(|p| p.smoothed.next())
+                    .unwrap_or(230.0);
+                let floor_bin =
+                    ((floor_hz / self.sample_rate.max(1.0)) * self.fft_size as f32).round() as usize;
+                let max_floor = num_bins.saturating_sub(MAX_SORT_BINS_PUB).max(1);
+                let floor_bin_clamped = floor_bin.clamp(1, max_floor);
+
+                let window_s = params
+                    .past_reverse_window_param(s)
+                    .map(|p| p.smoothed.next())
+                    .unwrap_or(1.0);
+                let window_frames =
+                    ((window_s / hop_seconds.max(1e-9)).round() as u32).max(1);
+                let window_frames_clamped = window_frames.min(capacity_frames.max(1)).max(1);
+
+                let rate = params
+                    .past_stretch_rate_param(s)
+                    .map(|p| p.smoothed.next())
+                    .unwrap_or(1.0);
+                // Dither param is stored as 0..100 with "%" unit; rescale to 0..1 for DSP.
+                let dither_pct = params
+                    .past_stretch_dither_param(s)
+                    .map(|p| p.smoothed.next())
+                    .unwrap_or(0.0);
+                let dither = dither_pct / 100.0;
+                // soft_clip moved to master output stage 2026-05-06; no
+                // longer a per-PAST scalar.
+
+                past_scalars[s] = PastScalars {
+                    floor_bin:     floor_bin_clamped,
+                    window_frames: window_frames_clamped,
+                    rate,
+                    dither,
+                };
+            }
+            self.fx_matrix.set_past_scalars(&past_scalars);
+        }
+
+        // Propagate kinetics modes + sources each block (try_lock is non-blocking; skipped if GUI holds lock).
+        if let Some(modes) = params.slot_kinetics_mode.try_lock() {
+            self.fx_matrix.set_kinetics_modes(&*modes);
+        }
+        if let Some(well_srcs) = params.slot_kinetics_well_source.try_lock() {
+            self.fx_matrix.set_kinetics_well_sources(&*well_srcs);
+        }
+        if let Some(mass_srcs) = params.slot_kinetics_mass_source.try_lock() {
+            self.fx_matrix.set_kinetics_mass_sources(&*mass_srcs);
+        }
+
+        // Propagate harmony modes + sub-modes each block (try_lock is non-blocking; skipped if GUI holds lock).
+        if let Some(modes) = params.slot_harmony_mode.try_lock() {
+            self.fx_matrix.set_harmony_modes(&*modes);
+        }
+        if let Some(subs) = params.slot_harmony_inharmonic_submode.try_lock() {
+            self.fx_matrix.set_harmony_inharmonic_submodes(&*subs);
+        }
+
+        // Propagate rhythm modes + grids each block (try_lock is non-blocking; skipped if GUI holds lock).
+        // The two locks are independent — if either is held by GUI, skip dispatch this block;
+        // the next block will pick up the GUI-side write.
+        if let (Some(modes), Some(grids)) = (
+            params.slot_rhythm_mode.try_lock(),
+            params.slot_arp_grid.try_lock(),
+        ) {
+            self.fx_matrix.set_rhythm_modes_and_grids(&*modes, &*grids);
+        }
+
+        // Propagate arp trigger source each block (try_lock is non-blocking; skipped if GUI holds lock).
+        if let Some(sources) = params.slot_arp_trigger_source.try_lock() {
+            self.fx_matrix.set_arp_trigger_sources(&*sources);
+        }
+
+        // Phase 4.3a — propagate the Dynamics-PLPV enable flag each block. Lock-free
+        // BoolParam read above; this just walks the 9 slots and pokes the trait method
+        // (no-op for everything except DynamicsModule).
+        self.fx_matrix.set_plpv_dynamics_enable(plpv_dynamics_enable);
+
+        // Phase 4.3b — propagate the PhaseSmear-PLPV enable flag each block. Same
+        // pattern as 4.3a; trait default is a no-op for non-PhaseSmear modules.
+        self.fx_matrix.set_plpv_phase_smear_enable(plpv_phase_smear_enable);
+
+        // Phase 4.3c — propagate the Freeze-PLPV enable flag each block. Same
+        // pattern as 4.3a/b; trait default is a no-op for non-Freeze modules.
+        self.fx_matrix.set_plpv_freeze_enable(plpv_freeze_enable);
+
+        // Phase 4.3d — propagate the MidSide-PLPV enable flag each block. Same
+        // pattern; trait default is a no-op for non-MidSide modules.
+        self.fx_matrix.set_plpv_midside_enable(plpv_midside_enable);
+
+        // Propagate master clipper enable flag each block. Only MasterModule (slot 8)
+        // overrides the trait default; all others are no-ops.
+        self.fx_matrix.set_master_clip_enabled(master_clip_enabled);
+        self.fx_matrix.set_master_clip_threshold_db(master_clip_threshold_db);
+
         // Build route matrix from automatable params each block.
-        // virtual_rows (T/S Split bindings) are not exposed as automation targets,
-        // so we still read them from the Mutex — but never block waiting for it.
-        let virt = params.route_matrix.try_lock()
-            .map(|g| g.virtual_rows)
-            .unwrap_or_default();
+        // virtual_rows + amp_mode + amp_params are not exposed as automation
+        // targets, so we read them from the Mutex — but never block waiting for it.
+        let (virt, amp_mode, amp_params) = params.route_matrix.try_lock()
+            .map(|g| (g.virtual_rows, g.amp_mode, g.amp_params))
+            .unwrap_or_else(|| (
+                Default::default(),
+                crate::dsp::modules::default_amp_modes(),
+                crate::dsp::modules::default_amp_params(),
+            ));
         let mut route_matrix_snap = crate::dsp::modules::RouteMatrix {
             send: [[0.0f32; crate::dsp::modules::MAX_SLOTS]; crate::dsp::modules::MAX_MATRIX_ROWS],
             virtual_rows: virt,
+            amp_mode,
+            amp_params,
         };
+        // r = destination slot (0..NUM_MATRIX_ROWS=9), col = source matrix-row
+        // (0..NUM_MATRIX_SOURCES=13). Param naming convention: mr{dst}c{src}.
+        // The audio-side `send[src][dst]` reads outer=src=col, inner=dst=r,
+        // matching the struct dims `[[f32; MAX_SLOTS]; MAX_MATRIX_ROWS]`
+        // (outer 0..MAX_MATRIX_ROWS=13, inner 0..MAX_SLOTS=9). Virtual rows
+        // are sources at col=9..12.
         for r in 0..crate::param_ids::NUM_MATRIX_ROWS {
-            for col in 0..crate::param_ids::NUM_SLOTS {
+            for col in 0..crate::param_ids::NUM_MATRIX_SOURCES {
                 if r == col { continue; } // skip diagonal to prevent self-feedback
                 if let Some(p) = params.matrix_cell(r, col) {
-                    route_matrix_snap.send[col][r] = p.smoothed.next();
+                    route_matrix_snap.send[col][r] = p.smoothed.next_step(block_size);
                 }
             }
         }
+
+        // Sync amp state to the route matrix once per audio block, before any hop.
+        // permit_alloc: sync_amp_modes may allocate if mode changed (user action).
+        self.fx_matrix.sync_amp_modes(&route_matrix_snap, num_bins);
+
+        // Phase 6.1: scan active slot types for IF demand. Uses the slot_types_snap
+        // already captured at the top of process() — no extra lock, no allocation.
+        let mut any_needs_if = slot_types_snap.iter()
+            .any(|&ty| crate::dsp::modules::module_spec(ty).needs_instantaneous_freq);
+
+        // Phase 6.4: same lazy-gate pattern as 6.1 IF — only run the extra
+        // inverse-FFT when at least one active slot's spec opts in.
+        let any_needs_cepstrum = slot_types_snap.iter()
+            .any(|&ty| crate::dsp::modules::module_spec(ty).needs_cepstrum);
+
+        // Phase 6.2: chromagram + harmonic-group gates. Harmonic-group detection
+        // requires IF (it uses the IF buffer), so force IF compute on if any slot
+        // needs groups. Cost when no slot opts in: two bool checks per block.
+        let any_needs_chromagram = slot_types_snap.iter()
+            .any(|&ty| crate::dsp::modules::module_spec(ty).needs_chromagram);
+        let any_needs_groups = slot_types_snap.iter()
+            .any(|&ty| crate::dsp::modules::module_spec(ty).needs_harmonic_groups);
+        if any_needs_groups { any_needs_if = true; }
 
         // Reborrow fields as locals so the closure can capture them without
         // conflicting with the &mut self.stft borrow inside process_overlap_add.
@@ -453,12 +1019,37 @@ impl Pipeline {
         let channel_supp_buf  = &mut self.channel_supp_buf;
         let slot_curve_cache_ref = &self.slot_curve_cache;
         let slot_sc_input_ref = &self.slot_sc_input;
-        // Reset peak-hold accumulators.
-        for v in spectrum_buf.iter_mut()   { *v = 0.0; }
-        for v in suppression_buf.iter_mut() { *v = 0.0; }
+        // PLPV per-channel buffers + mono scratch (rebound here so the closure can borrow them
+        // without taking a second &mut self alongside &mut self.stft).
+        let prev_phase_ref           = &mut self.prev_phase;
+        let prev_unwrapped_phase_ref = &mut self.prev_unwrapped_phase;
+        let unwrapped_phase_ref      = &mut self.unwrapped_phase;
+        let rewrap_buf_ref           = &mut self.rewrap_buf;
+        let scratch_curr_phase_ref   = &mut self.scratch_curr_phase;
+        let scratch_mags_ref         = &mut self.scratch_mags;
+        let peak_buf_ref             = &mut self.peak_buf;
+        let expected_phase_acc_ref   = &mut self.expected_phase_acc;
+        let if_buffer_ref            = &mut self.if_buffer;
+        let if_prev_phase_ref        = &mut self.if_prev_phase;
+        let cepstrum_buf_ref         = &mut self.cepstrum_buf;
+        let chromagram_buf_ref       = &mut self.chromagram_buf;
+        let harmonic_groups_ref      = &mut self.harmonic_groups;
+        let sample_rate              = self.sample_rate;
+        let pending_hop_frames       = &mut self.pending_hop_frames;
+        let mut pending_hops: usize  = 0;
+        let stft_num_channels        = self.stft.num_channels();
+        // NOTE: do NOT pre-zero spectrum_buf / suppression_buf at block start.
+        // At small host buffer sizes, blocks frequently contain zero hops
+        // (e.g. 128-sample buffer with hop=512 hops only every ~4 blocks).
+        // Zeroing here + unconditionally publishing below would push all-zero
+        // frames to the GUI on hop-less blocks, manifesting as a strobe
+        // when peak-hold falloff is short. Instead we accumulate across
+        // blocks until at least one hop has run, then publish + zero (see
+        // the gated publish below).
         // IFFT gives fft_size gain; Hann^2 OLA at 75% overlap gives 1.5 gain.
         // Combined normalization: 1 / (fft_size * 1.5) = 2 / (3 * fft_size)
         let norm = 2.0_f32 / (3.0 * fft_size as f32);
+        let hop_size = fft_size / OVERLAP;
 
         self.stft.process_overlap_add(buffer, OVERLAP, |channel, block| {
             // Analysis window + input gain
@@ -476,6 +1067,14 @@ impl Pipeline {
                 if mag > spectrum_buf[i] { spectrum_buf[i] = mag; }
             }
 
+            // Copy this hop's complex spectrum into the pending pad. Drained into
+            // `history` after the closure completes — the closure cannot mutate
+            // `self.history` while StftHelper holds the &mut on the buffer.
+            pending_hop_frames[channel.min(1)][..num_bins].copy_from_slice(&complex_buf[..num_bins]);
+            if channel + 1 == stft_num_channels {
+                pending_hops += 1;
+            }
+
             // Build this hop's per-slot sc_args from the pre-gained slot_sc_input.
             // Clamp channel index to 0..=1 for potential mono cases (slot_sc_input only has 2 channels).
             let sc_ch = channel.min(1);
@@ -490,6 +1089,148 @@ impl Pipeline {
                 }
             });
 
+            // PLPV: compute per-bin unwrapped phase trajectory before module dispatch.
+            // Defensively clamp ch index to the 2 channels we pre-allocated for.
+            let ch = channel.min(1);
+            let mut hop_ctx = ctx;
+            if plpv_enable {
+                for k in 0..num_bins {
+                    scratch_curr_phase_ref[k] = complex_buf[k].arg();
+                }
+                crate::dsp::plpv::unwrap_phase(
+                    &scratch_curr_phase_ref[..num_bins],
+                    &prev_phase_ref[ch][..num_bins],
+                    &mut prev_unwrapped_phase_ref[ch][..num_bins],
+                    &mut unwrapped_phase_ref[ch][..num_bins],
+                    fft_size,
+                    hop_size,
+                    num_bins,
+                );
+                // Roll prev_phase forward for the next hop.
+                prev_phase_ref[ch][..num_bins]
+                    .copy_from_slice(&scratch_curr_phase_ref[..num_bins]);
+
+                // Wrap prev_unwrapped to (-π, π] so subsequent hops start
+                // from a bounded value. Phase is musically defined modulo
+                // 2π — the absolute accumulated value is irrelevant to the
+                // iFFT (which re-wraps anyway) and to downstream consumers
+                // that compare in modulo space. Without this, the high-bin
+                // accumulator grows by 2π·k·hop/N each hop and crosses the
+                // f32 precision floor in ~50 sec at fft=2048/sr=96k.
+                for k in 0..num_bins {
+                    prev_unwrapped_phase_ref[ch][k] =
+                        crate::dsp::plpv::principal_arg(prev_unwrapped_phase_ref[ch][k]);
+                    unwrapped_phase_ref[ch][k] =
+                        crate::dsp::plpv::principal_arg(unwrapped_phase_ref[ch][k]);
+                }
+
+                // Phase 4.1.5: damp low-energy bins toward expected cumulative advance.
+                // The expected-phase accumulator is incremented by `2π·k·hop/N`
+                // each hop and wrapped to (-π, π] in the same modulo space as
+                // unwrapped_phase, so the linear blend in damp_low_energy_bins
+                // stays numerically stable indefinitely.
+                let two_pi_hop_over_n = 2.0 * std::f32::consts::PI
+                    * (hop_size as f32) / (fft_size as f32);
+                for k in 0..num_bins {
+                    expected_phase_acc_ref[ch][k] = crate::dsp::plpv::principal_arg(
+                        expected_phase_acc_ref[ch][k] + two_pi_hop_over_n * (k as f32)
+                    );
+                }
+                for k in 0..num_bins {
+                    scratch_mags_ref[k] = complex_buf[k].norm();
+                }
+                crate::dsp::plpv::damp_low_energy_bins(
+                    &mut unwrapped_phase_ref[ch][..num_bins],
+                    &scratch_mags_ref[..num_bins],
+                    &expected_phase_acc_ref[ch][..num_bins],
+                    plpv_phase_noise_floor_db,
+                    num_bins,
+                );
+
+                // Phase 4.2: detect spectral peaks + assign Voronoi skirts.
+                // Operates on the raw FFT magnitudes already in scratch_mags_ref
+                // (filled above for damping; identical input).
+                let n_peaks = crate::dsp::plpv::detect_peaks(
+                    &scratch_mags_ref[..num_bins],
+                    num_bins,
+                    peak_threshold_db,
+                    max_peaks_capped,
+                    &mut peak_buf_ref[ch][..],
+                );
+                crate::dsp::plpv::assign_voronoi_skirts(
+                    &mut peak_buf_ref[ch][..n_peaks],
+                    num_bins,
+                );
+                hop_ctx.peaks = Some(&peak_buf_ref[ch][..n_peaks]);
+
+                // Expose unwrapped phase to modules. Phase 4.3b: hand out a slice of
+                // `Cell<f32>` (alloc-free, unsafe-free) so PLPV-aware modules can both
+                // read AND write through the same field while ModuleContext stays Copy.
+                // The Pipeline's re-wrap stage below reads `unwrapped_phase_ref` directly
+                // as `&[f32]`, which sees the same memory the Cell-slice writes through.
+                hop_ctx.unwrapped_phase = Some(
+                    std::cell::Cell::from_mut(&mut unwrapped_phase_ref[ch][..num_bins])
+                        .as_slice_of_cells(),
+                );
+            }
+
+            // Phase 6.1: per-hop instantaneous-frequency populate.
+            // Skip when no active module needs it — saves ~1 wrap + 4 FLOPs/bin/hop.
+            if any_needs_if {
+                // Extract current wrapped phase. Always overwrite — safe whether PLPV
+                // already filled this scratch or not (PLPV writes the same values).
+                for k in 0..num_bins {
+                    scratch_curr_phase_ref[k] = complex_buf[k].arg();
+                }
+                crate::dsp::instantaneous_freq::compute_instantaneous_freq(
+                    &if_prev_phase_ref[ch][..num_bins],
+                    &scratch_curr_phase_ref[..num_bins],
+                    &mut if_buffer_ref[ch][..num_bins],
+                    sample_rate,
+                    hop_size,
+                    fft_size,
+                );
+                // Roll IF prev phase forward for the next hop on this channel.
+                if_prev_phase_ref[ch][..num_bins]
+                    .copy_from_slice(&scratch_curr_phase_ref[..num_bins]);
+                hop_ctx.instantaneous_freq = Some(&if_buffer_ref[ch][..num_bins]);
+            }
+
+            // Phase 6.4: per-hop cepstrum populate. Reads the FFT half-spectrum
+            // already in complex_buf, runs an inverse-real-FFT into per-channel
+            // cepstrum_buf, exposes the result via ctx.cepstrum_buf. Skipped
+            // entirely when no active module needs it.
+            if any_needs_cepstrum {
+                cepstrum_buf_ref[ch].compute_from_bins(&complex_buf[..num_bins]);
+                hop_ctx.cepstrum_buf = Some(cepstrum_buf_ref[ch].quefrency());
+            }
+
+            // Phase 6.2: per-hop chromagram + harmonic-group populate. Chromagram
+            // optionally uses IF for sub-bin pitch refinement. Harmonic-group
+            // detection requires the IF buffer (always available here because
+            // any_needs_groups force-enables any_needs_if above). Both are skipped
+            // entirely when no active module needs them.
+            if any_needs_chromagram {
+                let if_opt = if any_needs_if { Some(&if_buffer_ref[ch][..num_bins]) } else { None };
+                crate::dsp::chromagram::compute_chromagram(
+                    &complex_buf[..num_bins],
+                    if_opt,
+                    sample_rate,
+                    fft_size,
+                    &mut chromagram_buf_ref[ch],
+                );
+                hop_ctx.chromagram = Some(&chromagram_buf_ref[ch]);
+            }
+            if any_needs_groups {
+                harmonic_groups_ref[ch].detect(
+                    &complex_buf[..num_bins],
+                    &if_buffer_ref[ch][..num_bins],
+                    sample_rate,
+                    fft_size,
+                );
+                hop_ctx.harmonic_groups = Some(harmonic_groups_ref[ch].groups());
+            }
+
             // Run all modules through the fx_matrix slot chain.
             fx_matrix.process_hop(
                 channel,
@@ -499,13 +1240,37 @@ impl Pipeline {
                 &slot_targets_snap,
                 slot_curve_cache_ref,
                 &route_matrix_snap,
-                &ctx,
+                &hop_ctx,
                 channel_supp_buf,
                 num_bins,
+                enable_heavy_modules,
             );
             for k in 0..channel_supp_buf.len() {
                 if channel_supp_buf[k] > suppression_buf[k] { suppression_buf[k] = channel_supp_buf[k]; }
             }
+
+            // PLPV: re-wrap unwrapped phase back into (-π, π] and recombine with the (possibly
+            // modified) magnitude. When no module touched ctx.unwrapped_phase this is a no-op
+            // up to f32 round-off (typically ≤ 1 ULP).
+            if plpv_enable {
+                crate::dsp::plpv::rewrap_phase(
+                    &unwrapped_phase_ref[ch][..num_bins],
+                    &mut rewrap_buf_ref[ch][..num_bins],
+                    num_bins,
+                );
+                for k in 0..num_bins {
+                    let m = complex_buf[k].norm();
+                    let p = rewrap_buf_ref[ch][k];
+                    complex_buf[k] = Complex::from_polar(m, p);
+                }
+            }
+
+            // realfft requires Im(X[0]) == Im(X[Nyquist]) == 0 (Hermitian invariant
+            // for real IFFT output). Modules and PLPV's Complex::from_polar may have
+            // introduced a non-zero imag at these special bins; project back into the
+            // real-output subspace before IFFT to avoid an unwinding-panic abort.
+            complex_buf[0].im = 0.0;
+            complex_buf[num_bins - 1].im = 0.0;
 
             ifft_plan.process(complex_buf, block).unwrap();
 
@@ -514,6 +1279,23 @@ impl Pipeline {
                 *s *= w * norm * output_linear;
             }
         });
+
+        // Drain pending hop frames into history after the StftHelper closure.
+        // Multi-hop blocks (block_size > hop_size) overwrite the pad each iteration,
+        // so at most ONE frame lands in history per block — `pending_hops > 0`
+        // guards against block_size < hop_size (no hop completed inside the closure).
+        // The pad and history both top out at the StftHelper's channel count;
+        // bound the loop on `history.num_channels()` so the drain can never write
+        // past whatever HistoryBuffer was sized for at construction.
+        if pending_hops > 0 {
+            let channels = stft_num_channels
+                .min(self.history.num_channels())
+                .min(self.pending_hop_frames.len());
+            for ch in 0..channels {
+                self.history.write_hop(ch, &self.pending_hop_frames[ch][..num_bins]);
+            }
+            self.history.advance_after_all_channels_written();
+        }
 
         // M/S decode: Mid/Side → L/R (after STFT)
         if is_mid_side {
@@ -564,10 +1346,19 @@ impl Pipeline {
 
         // Push latest spectra to GUI triple-buffers (allocation-free: mutate in-place then publish).
         // Bridge buffers are MAX_NUM_BINS; bins beyond num_bins are left as zero (silent).
-        shared.spectrum_tx.input_buffer_mut().copy_from_slice(&spectrum_buf[..MAX_NUM_BINS]);
-        shared.spectrum_tx.publish();
-        shared.suppression_tx.input_buffer_mut().copy_from_slice(&suppression_buf[..MAX_NUM_BINS]);
-        shared.suppression_tx.publish();
+        // Gated on `pending_hops > 0`: when a host block contains no hops we
+        // skip the publish (the GUI's triple_buffer keeps returning the last
+        // published frame — exactly what the user wants when "a new frame
+        // is not calculated"). After publishing, zero the per-block peak-
+        // hold accumulators so the next publish reflects fresh data.
+        if pending_hops > 0 {
+            shared.spectrum_tx.input_buffer_mut().copy_from_slice(&spectrum_buf[..MAX_NUM_BINS]);
+            shared.spectrum_tx.publish();
+            shared.suppression_tx.input_buffer_mut().copy_from_slice(&suppression_buf[..MAX_NUM_BINS]);
+            shared.suppression_tx.publish();
+            for v in spectrum_buf.iter_mut()    { *v = 0.0; }
+            for v in suppression_buf.iter_mut() { *v = 0.0; }
+        }
 
         // Publish SC envelope for the currently-edited slot, if it is an SC-aware Gain slot.
         let editing_slot = params.editing_slot.try_lock().map(|g| *g as usize).unwrap_or(0);
@@ -581,6 +1372,52 @@ impl Pipeline {
         }
         shared.sc_envelope_tx.publish();
     }
+
+    /// Apply a NoteOn from the host. Called from `SpectralForge::process()` per event.
+    #[inline]
+    pub fn note_on(&mut self, note: u8) {
+        crate::dsp::midi::apply_note_on(note, &mut self.held_notes, &mut self.held_pitch_classes);
+    }
+
+    /// Apply a NoteOff from the host. Called from `SpectralForge::process()` per event.
+    #[inline]
+    pub fn note_off(&mut self, note: u8) {
+        crate::dsp::midi::apply_note_off(note, &mut self.held_notes, &mut self.held_pitch_classes);
+    }
+
+    /// Read-only access to the current held-notes snapshot — used by tests.
+    pub fn held_notes(&self) -> &[bool; crate::dsp::midi::NUM_MIDI_NOTES] {
+        &self.held_notes
+    }
+
+    /// Test-only snapshot of HistoryBuffer state. Used by `tests/calibration.rs`
+    /// to assert the buffer fills, summary stats stay finite, and depth changes
+    /// take effect.
+    #[cfg(any(test, feature = "probe"))]
+    pub fn history_probe(&self, channel: usize) -> HistoryProbe {
+        let frames_used = self.history.frames_used();
+        let capacity    = self.history.capacity_frames();
+        let decay = self.history.summary_decay_estimate(channel);
+        let rms   = self.history.summary_rms_envelope(channel);
+        let stab  = self.history.summary_if_stability(channel);
+        HistoryProbe {
+            frames_used,
+            capacity,
+            summary_decay_max:        decay.iter().cloned().fold(0.0f32, f32::max),
+            summary_rms_max:          rms.iter().cloned().fold(0.0f32, f32::max),
+            summary_if_stability_max: stab.iter().cloned().fold(0.0f32, f32::max),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "probe"))]
+#[derive(Clone, Copy, Debug)]
+pub struct HistoryProbe {
+    pub frames_used: usize,
+    pub capacity:    usize,
+    pub summary_decay_max:        f32,
+    pub summary_rms_max:          f32,
+    pub summary_if_stability_max: f32,
 }
 
 /// Test-only: run identity processing on a mono signal, return output Vec.

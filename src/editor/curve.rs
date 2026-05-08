@@ -108,6 +108,48 @@ pub fn default_nodes_for_curve(curve_idx: usize) -> [CurveNode; 6] {
     }
 }
 
+/// Module-aware default nodes for a freshly-assigned slot. Lets per-module
+/// calibrations (e.g. Past's Age and Smear) start from a neutral midpoint so
+/// the offset slider has headroom in both directions, instead of starting at
+/// gain=1.0 (where positive offset clamps to a no-op).
+///
+/// Falls back to `default_nodes_for_curve(curve_idx)` for any (module, curve)
+/// combination that hasn't been calibrated yet — modules pick this up
+/// automatically when their UX overhaul lands.
+/// See spec docs/superpowers/specs/2026-05-04-past-module-ux-design.md §7.2.
+pub fn default_nodes_for_module_curve(
+    module_type: crate::dsp::modules::ModuleType,
+    curve_idx: usize,
+) -> [CurveNode; 6] {
+    use crate::dsp::modules::ModuleType;
+
+    // The legacy `default_nodes_for_curve(curve_idx)` fallback returns RATIO-
+    // specific defaults for curve_idx == 1 (Dynamics' 1:2 high-shelf preset).
+    // For every OTHER module that happens to have a curve at index 1 — Mid-Side
+    // EXPANSION, Future TIME, Punch WIDTH, Rhythm DIVISION, Geometry MODE_CAP,
+    // Kinetics MASS, Harmony THRESHOLD, etc. — those RATIO defaults add a
+    // hidden ~2× boost to the baseline curve gain via the y=0.334 high shelf
+    // at 20 Hz, which is what was producing the "graph parks at 200% / slider
+    // shows 100%" desync ("100% offset bug"). Routing every non-Dynamics
+    // module through the flat `default_nodes()` keeps the baseline at gain=1.0
+    // so the displayed curve sits at the curve's natural value.
+    //
+    // PAST Age (curve 1) and Smear (curve 3) had this fix already; the special
+    // case below is now subsumed by the general "Dynamics-only RATIO" rule.
+    //
+    // Earlier code used `flat_at_y(-0.334)` for some cases to seed a centred
+    // 50% display for an "equal headroom" intent, but bells are bandwidth-
+    // limited and don't sum to a flat non-neutral curve — the result was a
+    // comb of bumps. The non-neutral baseline can't be expressed in the
+    // current bell+shelf math; the right fix would be a global-gain
+    // parameter, not per-bell offsets.
+    if module_type == ModuleType::Dynamics {
+        default_nodes_for_curve(curve_idx)
+    } else {
+        default_nodes()
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum BandType { LowShelf, Bell, HighShelf }
 
@@ -229,30 +271,40 @@ pub fn display_curve_idx(module_type: ModuleType, curve_idx: usize, gain_mode: G
         ModuleType::Freeze => match curve_idx {
             0 => 8,             // LENGTH → ms (log, 10–4000)
             1 => 9,             // THRESHOLD → dBFS
-            2 => 10,            // PORTAMENTO → ms (log, 1–1000)
+            2 => 15,            // PORTAMENTO → ms (D-1b: log 1–750, neutral 150)
             3 => 11,            // RESISTANCE → dimensionless 0–2
             4 => 6,             // MIX → %
             _ => curve_idx,
         },
         ModuleType::PhaseSmear => match curve_idx {
             0 => 7,             // AMOUNT → 0–200 %
-            1 => 10,            // PEAK HOLD → ms (log, treated as time constant)
+            1 => 14,            // PEAK HOLD → ms via peak_hold_curve_to_ms (was 10, misused Portamento mapping)
             2 => 6,             // MIX → %
             _ => curve_idx,
         },
         ModuleType::Contrast => match curve_idx {
-            0 => 1,             // AMOUNT → ratio 1–20 (maps gain directly to bp_ratio)
+            // 2026-05-08: 6-curve layout mirroring Dynamics.
+            0 => 9,  // THRESHOLD → dBFS (idx 9 = dBFS log mapping)
+            1 => 1,  // RATIO 1–20
+            2 => 2,  // ATTACK ms
+            3 => 3,  // RELEASE ms
+            4 => 4,  // KNEE dB
+            5 => 6,  // MIX → %
             _ => curve_idx,
         },
         ModuleType::Gain => match curve_idx {
             // In Add/Subtract the curve is a ±18 dB gain; in Pull/Match it's a
-            // clamped [0, 1] wet/dry mix drawn on the same screen scale but with
-            // percentage grid labels.
+            // clamped [0, 1] wet/dry mix on a 0..100 % axis. Pull/Match used
+            // to route to idx 12 (dB-scaled) which mapped neutral gain to
+            // 0 dB → display 0 % (curve at the bottom of the % axis); offset
+            // changes barely moved the visible line. Routing to idx 6
+            // (`gain * 100 %`) puts neutral gain at 100 % matching the cfg
+            // and lets the offset slider sweep the full 0..100 % range.
             0 => match gain_mode {
-                GainMode::Pull | GainMode::Match => 12,
+                GainMode::Pull | GainMode::Match => 6,
                 _ => 5,
             },
-            1 => 10,            // PEAK HOLD → ms
+            1 => 14,            // PEAK HOLD → ms via peak_hold_curve_to_ms (was 10, misused Portamento mapping)
             _ => curve_idx,
         },
         ModuleType::MidSide => match curve_idx {
@@ -261,6 +313,93 @@ pub fn display_curve_idx(module_type: ModuleType, curve_idx: usize, gain_mode: G
         },
         ModuleType::TransientSustainedSplit => match curve_idx {
             0 => 6,             // SENSITIVITY → 0–100 %
+            1 => 11,            // SMOOTHNESS → 0–2 dimensionless (idx 11 = Resistance scale)
+            _ => curve_idx,
+        },
+        ModuleType::Past => match curve_idx {
+            0 => 6,   // AMOUNT → 0–100 %
+            // TIME → seconds-history. Until Task 14 re-plumbs paint_response_curve and
+            // the offset DragValue formatter to receive Pipeline's real total_history_seconds,
+            // both render with total=0.0 and produce flat-zero output. Tracked in Task 14.
+            1 => 13,
+            2 => 9,   // THRESHOLD → dBFS (mirrors Freeze threshold scale)
+            3 => 6,   // SPREAD / Smear → 0–100 %
+            4 => 6,   // MIX → 0–100 %
+            _ => curve_idx,
+        },
+        ModuleType::Geometry => match curve_idx {
+            0 => 6,   // AMOUNT → 0–100 % (gain=1.0 → 100% depth after * 0.5 fix)
+            1 => 7,   // MODE_CAP → 0–200 % dimensionless (eigenmode index 0..2)
+            2 => 6,   // DAMP_REL → 0–100 % (magnitude bleed / release)
+            3 => 7,   // THRESH → 0–200 % dimensionless (overflow threshold 0..2)
+            4 => 6,   // MIX → 0–100 %
+            _ => curve_idx,
+        },
+        ModuleType::Circuit => match curve_idx {
+            0 => 6,   // AMOUNT → 0–100 % (drive/attenuation depth)
+            1 => 6,   // THRESH → 0–100 % (normalised trigger level, not dBFS)
+            2 => 6,   // SPREAD → 0–100 % (energy bleed fraction)
+            3 => 11,  // RELEASE → 0–2 dimensionless (time constant scalar)
+            4 => 6,   // MIX → 0–100 %
+            _ => curve_idx,
+        },
+        ModuleType::Life => match curve_idx {
+            0 => 6,   // AMOUNT → 0–100 % (effect depth / intensity)
+            1 => 6,   // THRESHOLD → 0–100 % (magnitude floor; not dBFS — DSP uses gain*0.5)
+            2 => 6,   // SPEED → 0–100 % (LP coefficient / update rate)
+            3 => 6,   // REACH → 0–100 % (bin neighbourhood fraction)
+            4 => 6,   // MIX → 0–100 %
+            _ => curve_idx,
+        },
+        ModuleType::Kinetics => match curve_idx {
+            0 => 7,   // STRENGTH → 0–200 % (spring/force; neutral=1.0 → 100%)
+            1 => 7,   // MASS → 0–200 % (inertia; neutral=1.0 → 100%)
+            2 => 7,   // REACH → 0–200 % (bin radius; neutral=1.0 → 100%)
+            3 => 7,   // DAMPING → 0–200 % (viscous damping; neutral=1.0 → 100%)
+            4 => 6,   // MIX → 0–100 % (direct gain, no *0.5 in Kinetics)
+            _ => curve_idx,
+        },
+        ModuleType::Harmony => match curve_idx {
+            0 => 6,   // AMOUNT → 0–100 % (harmonic addition strength)
+            1 => 6,   // THRESHOLD → 0–100 % (magnitude gate; DSP uses gain*0.5)
+            2 => 6,   // STABILITY → 0–100 % (unused in most modes)
+            3 => 6,   // SPREAD → 0–100 % (harmonic spread snap radius)
+            4 => 7,   // COEFFICIENT → 0–200 % (mode-specific weighting; neutral=1.0)
+            5 => 6,   // MIX → 0–100 %
+            _ => curve_idx,
+        },
+        ModuleType::Modulate => match curve_idx {
+            0 => 6,   // AMOUNT → 0–100 % (modulation depth / blend)
+            1 => 6,   // REACH → 0–100 % (frequency span fraction)
+            2 => 6,   // RATE → 0–100 % (modulation rate, mode-dependent)
+            3 => 6,   // THRESH → 0–100 % (normalised amp-gate level, not dBFS)
+            4 => 6,   // AMPGATE → 0–100 % (amplitude gate fraction)
+            5 => 6,   // MIX → 0–100 %
+            _ => curve_idx,
+        },
+        ModuleType::Rhythm => match curve_idx {
+            0 => 6,   // AMOUNT → 0–100 % (pulse depth / gate strength)
+            1 => 7,   // DIVISION → 0–200 % dimensionless (maps to step count 1..64)
+            2 => 6,   // ATTACK_FADE → 0–100 % (ramp edge fraction, capped at 50%)
+            3 => 6,   // TARGET_PHASE → 0–100 % (DSP clamps 0-1 → 0..2π)
+            4 => 6,   // MIX → 0–100 %
+            _ => curve_idx,
+        },
+        ModuleType::Future => match curve_idx {
+            0 => 6,   // AMOUNT → 0–100 % (leak / echo amplitude)
+            1 => 7,   // TIME → 0–200 % dimensionless (delay hops 1..16, fft-size-relative)
+            2 => 6,   // THRESHOLD → 0–100 % (feedback %, PreEcho only)
+            3 => 6,   // SPREAD → 0–100 % (HF damping / side-bleed fraction)
+            4 => 6,   // MIX → 0–100 %
+            _ => curve_idx,
+        },
+        ModuleType::Punch => match curve_idx {
+            0 => 6,   // AMOUNT → 0–100 % (carve depth)
+            1 => 7,   // WIDTH → 0–200 % dimensionless (peak detection window in bins)
+            2 => 6,   // FILL_MODE → 0–100 % (pitch-fill drift rate)
+            3 => 7,   // AMP_FILL → 0–200 % (amplitude boost; neutral=1.0)
+            4 => 10,  // HEAL → ms log (gain*150 → 20–2000 ms; portamento scale fits)
+            5 => 6,   // MIX → 0–100 %
             _ => curve_idx,
         },
         _ => curve_idx,
@@ -289,28 +428,21 @@ pub fn curve_offset_max(display_idx: usize) -> f32 {
     }
 }
 
-/// Inverse of `physical_to_y` — pixel y → physical value for tooltip display.
-pub fn screen_y_to_physical(y: f32, curve_idx: usize, db_min: f32, db_max: f32, rect: Rect) -> f32 {
+/// Inverse of `physical_to_y` — pixel y → physical value, for hover tooltips.
+/// Reads `cfg.y_log` and the runtime-substituted `(y_min, _, y_max)` anchors.
+pub fn screen_y_to_physical(
+    y: f32,
+    cfg: &CurveDisplayConfig,
+    anchors: (f32, f32, f32),
+    rect: Rect,
+) -> f32 {
+    let (y_min, _y_natural, y_max) = anchors;
     let t = ((rect.bottom() - y) / rect.height()).clamp(0.0, 1.0);
-    match curve_idx {
-        0 => db_min + t * (db_max - db_min),
-        1 => 1.0 * 20.0_f32.powf(t),
-        2 | 3 => 1024.0_f32.powf(t),
-        4 => 1.5 * (48.0_f32 / 1.5).powf(t),
-        5 => -18.0 + t * 36.0,
-        6 => t * 100.0,
-        7 => t * 200.0,
-        8 => 62.5 * (4000.0_f32 / 62.5).powf(t),   // Freeze Length: 62.5ms–4000ms log (matches config y_min)
-        9 => -80.0 + t * 80.0,
-        10 => 40.0 * (1000.0_f32 / 40.0).powf(t),  // Portamento: 40ms–1000ms log (matches config y_min)
-        11 => t * 2.0,                    // Resistance 0–2
-        12 => {
-            // Dry-mix %: screen y → dB (-18..+18) → clamped wet/dry percentage.
-            // Matches the grid labels: 0 dB=100 %, -6 dB=50 %, -12 dB=25 %, -18 dB≈12 %.
-            let db = -18.0 + t * 36.0;
-            (100.0 * 10f32.powf(db / 20.0)).clamp(0.0, 100.0)
-        }
-        _ => 0.0,
+    if cfg.y_log {
+        let lo = y_min.max(1e-6);
+        lo * (y_max / lo).powf(t)
+    } else {
+        y_min + t * (y_max - y_min)
     }
 }
 
@@ -336,12 +468,20 @@ pub fn paint_hover_text(
     cfg: &CurveDisplayConfig,
     db_min: f32,
     db_max: f32,
+    total_history_seconds: f32,
+    attack_ms: f32,
+    release_ms: f32,
     sample_rate: f32,
 ) {
     use nih_plug_egui::egui::{FontId, vec2};
     let nyquist = (sample_rate / 2.0).max(20_001.0);
     let freq_hz = screen_to_freq(cursor_pos.x, rect, nyquist);
-    let phys    = screen_y_to_physical(cursor_pos.y, display_idx, db_min, db_max, rect);
+    let anchors = runtime_anchors(cfg, display_idx, total_history_seconds, db_min, db_max, attack_ms, release_ms);
+    // Cursor → physical value uses the headroom-aware inner rect so the
+    // reported dBFS / value matches the curve drawn by paint_response_curve.
+    let scale = painter.ctx().pixels_per_point();
+    let inner_rect = db_inner_rect(rect, scale);
+    let phys    = screen_y_to_physical(cursor_pos.y, cfg, anchors, inner_rect);
     let text = if cfg.y_label.is_empty() {
         format!("{}  /  {:.2}", format_freq_hz(freq_hz), phys)
     } else {
@@ -366,18 +506,43 @@ pub fn paint_hover_text(
     painter.galley(tip_pos, galley, th::GRID_TEXT);
 }
 
+/// Shrink `rect` from the top by `HEADROOM_PX` (scaled) so db→y mappings
+/// reserve a visual headroom strip above the y_max grid line. Returns the
+/// inner rect to use for grid lines, response curves, and the spectrum
+/// gradient. Click areas and node-clamp logic continue to use the FULL rect
+/// so virtual nodes can still be drawn into and beyond the headroom strip.
+/// See `HEADROOM_PX` in theme.rs.
+#[inline]
+pub fn db_inner_rect(rect: Rect, scale: f32) -> Rect {
+    let headroom = th::scaled(th::HEADROOM_PX, scale);
+    Rect::from_min_max(
+        nih_plug_egui::egui::pos2(rect.left(), (rect.top() + headroom).min(rect.bottom())),
+        rect.max,
+    )
+}
+
 /// Map a physical value to pixel y using a linear scale.
+///
+/// `t` is clamped at the bottom (no values below y_min) but NOT at the top
+/// — values above y_max produce y above `rect.top()` so curves and dots can
+/// flow into the HEADROOM_PX strip (or beyond, where egui's painter clips).
+/// Caller is responsible for any further clamping (e.g. `curve_widget`
+/// keeps node dots inside the FULL outer rect).
 #[inline]
 fn linear_to_y(v: f32, y_min: f32, y_max: f32, rect: Rect) -> f32 {
-    let t = ((v - y_min) / (y_max - y_min)).clamp(0.0, 1.0);
+    let denom = (y_max - y_min).max(1e-6);
+    let t = ((v - y_min) / denom).max(0.0);
     rect.bottom() - t * rect.height()
 }
 
 /// Map a physical value to pixel y using a logarithmic scale.
+///
+/// Like `linear_to_y`, the result may extend above `rect.top()` for values
+/// above y_max so the curve can flow into the headroom strip.
 #[inline]
 fn log_to_y(v: f32, y_min: f32, y_max: f32, rect: Rect) -> f32 {
     let v   = v.max(y_min);
-    let t   = ((v / y_min).log10() / (y_max / y_min).log10()).clamp(0.0, 1.0);
+    let t   = ((v / y_min).log10() / (y_max / y_min).log10()).max(0.0);
     rect.bottom() - t * rect.height()
 }
 
@@ -396,31 +561,84 @@ pub fn apply_curve_adjustments(
     tilt: f32,
     offset: f32,
     curvature: f32,
-    offset_fn: fn(f32, f32) -> f32,
+    offset_fn: fn(f32, f32, (f32, f32, f32)) -> f32,
+    anchors: (f32, f32, f32),
     nyquist: f32,
 ) -> f32 {
     // curvature only shapes the tilt; if tilt=0, curvature has no effect.
     // offset_fn(g, 0.0) == g for all calibrations, so offset=0 is also a no-op.
     if tilt.abs() < 1e-6 && offset.abs() < 1e-6 { return gain; }
-    // Map freq to log-normalised [0, 1] (20 Hz → nyquist).
-    // Pivot at 1 kHz — computed dynamically so it stays centred at 1 kHz across sample rates.
-    const LOG_20: f32 = 1.301_030; // log10(20.0)
-    let log_range  = (nyquist / 20.0).log10(); // e.g. 3.0 at 20 kHz Nyquist (40 kHz SR)
+    const LOG_20: f32 = 1.301_030;
+    const LOG_2:  f32 = 0.301_030;
+    let log_range  = (nyquist / 20.0).log10();
     let pivot      = (1000.0_f32 / 20.0).log10() / log_range;
-    // Smoothstep value at the pivot — centres the sigmoid shape there.
     let s_pivot    = 3.0 * pivot * pivot - 2.0 * pivot * pivot * pivot;
+    let oct_per_shape = log_range / LOG_2;
     let norm = ((freq_hz.max(20.0).log10() - LOG_20) / log_range).clamp(0.0, 1.0);
     let linear_shape  = norm - pivot;
-    let s             = 3.0 * norm * norm - 2.0 * norm * norm * norm; // smoothstep(norm)
+    let s             = 3.0 * norm * norm - 2.0 * norm * norm * norm;
     let sigmoid_shape = s - s_pivot;
     let shape = linear_shape + curvature * (sigmoid_shape - linear_shape);
-    let t = tilt * shape;
-    let g_off = offset_fn(gain, offset);
-    (g_off * (1.0 + t)).max(0.0)
+    let octaves = shape * oct_per_shape;
+    let db_shift = tilt * octaves;
+    let g_off = offset_fn(gain, offset, anchors);
+    (g_off * 10f32.powf(db_shift / 20.0)).max(0.0)
+}
+
+/// Resolve a `CurveDisplayConfig`'s declared anchors `(y_min, y_natural, y_max)`
+/// into runtime physical units. Substitutions:
+///   - idx 0  (Dynamics threshold dBFS): y_min, y_max ← (db_min, db_max).
+///   - idx 2  (Attack ms):                y_natural ← attack_ms.
+///   - idx 3  (Release ms):               y_natural ← release_ms.
+///   - idx 13 (Past Age/Delay):           all three scaled by total_history_seconds.
+/// Other indices pass cfg anchors through unchanged.
+pub fn runtime_anchors(
+    cfg: &CurveDisplayConfig,
+    display_idx: usize,
+    total_history_seconds: f32,
+    db_min: f32,
+    db_max: f32,
+    attack_ms: f32,
+    release_ms: f32,
+) -> (f32, f32, f32) {
+    match display_idx {
+        13 => {
+            let scale = total_history_seconds;
+            (cfg.y_min * scale, cfg.y_natural * scale, cfg.y_max * scale)
+        }
+        0 | 9 => (db_min, cfg.y_natural, db_max),
+        2 => (cfg.y_min, attack_ms, cfg.y_max),
+        3 => (cfg.y_min, release_ms, cfg.y_max),
+        _ => (cfg.y_min, cfg.y_natural, cfg.y_max),
+    }
+}
+
+/// Axis-aware lerp from UI parameter spec §2. Linear in physical units when
+/// y_log=false; geometric (log) in physical units when y_log=true.
+#[inline]
+pub fn axis_aware_lerp(
+    cfg: &CurveDisplayConfig,
+    anchors: (f32, f32, f32),
+    v: f32,
+) -> f32 {
+    let (y_min, y_nat, y_max) = anchors;
+    if cfg.y_log {
+        debug_assert!(y_min > 0.0 && y_nat > 0.0 && y_max > 0.0,
+            "y_log=true requires strictly positive anchors; got ({y_min}, {y_nat}, {y_max})");
+        if v >= 0.0 { y_nat * (y_max / y_nat).powf(v) }
+        else        { y_nat * (y_nat / y_min).powf(v) }
+    } else {
+        if v >= 0.0 { y_nat + v * (y_max - y_nat) }
+        else        { y_nat + v * (y_nat - y_min) }
+    }
 }
 
 /// Convert a curve's linear gain to its physical display value (no freq scaling).
 /// Used for the coloured response line.
+///
+/// `total_history_seconds` is consumed only by display index 13 ("seconds,
+/// history-relative") used by Past's Age/Delay curves; legacy callers pass
+/// `0.0` and never hit index 13.
 pub fn gain_to_display(
     curve_idx: usize,
     gain: f32,
@@ -428,51 +646,77 @@ pub fn gain_to_display(
     global_release_ms: f32,
     db_min: f32,
     db_max: f32,
+    total_history_seconds: f32,
 ) -> f32 {
     // UI parameter contract: see docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md
+    //
+    // The upper clamps were removed (D-2 follow-up): values above the curve's
+    // y_max produce display values above the y_max grid line so the response
+    // curve can flow into the HEADROOM_PX strip when offset/tilt push it
+    // there. Floor clamps stay so below-axis values still pin to the bottom
+    // edge (no negative dB / negative %).
     match curve_idx {
         0 => {
-            // Matches the pipeline formula: log-based ±60 dBFS range centred at −20 dBFS.
-            let t_db = if gain > 1e-10 { 20.0 * gain.log10() } else { -120.0 };
-            (-20.0 + t_db * (60.0 / 18.0)).clamp(db_min, db_max)
+            // Piecewise slopes anchored to (db_min, -20, db_max): WYSIWYG for any db range.
+            // In production db_min=-160 → slopes match dynamics.rs bp_threshold formula.
+            let t_db = if gain > 1e-10 { 20.0 * gain.log10() } else { -200.0 };
+            let slope_neg = (-20.0 - db_min) / 18.0;
+            let slope_pos = (db_max - (-20.0)) / 18.0;
+            let v = if t_db <= 0.0 { -20.0 + slope_neg * t_db } else { -20.0 + slope_pos * t_db };
+            v.max(db_min)
         }
-        1 => gain.clamp(1.0, 20.0),
-        2 => (global_attack_ms  * gain.max(0.01)).clamp(1.0, 1024.0),
-        3 => (global_release_ms * gain.max(0.01)).clamp(1.0, 1024.0),
-        4 => (gain * 6.0).clamp(1.5, 48.0),
+        1 => gain.max(1.0),
+        2 => (global_attack_ms  * gain.max(0.0)).max(1.0),
+        3 => (global_release_ms * gain.max(0.0)).max(1.0),
+        4 => (gain * 6.0).max(0.0),
         5 | 12 => if gain > 1e-6 { 20.0 * gain.log10() } else { -60.0 },
-        6 => (gain * 100.0).clamp(0.0, 100.0),
+        6 => (gain * 100.0).max(0.0),
         // Effects curves — tilt/offset not used (passed as 0.0/0.0 from UI)
-        7 => gain.clamp(0.0, 2.0) * 100.0,                  // Phase Amount: 0-200%
-        8 => (gain * 500.0).clamp(0.0, 4000.0),             // Freeze Length: 0-4000ms (neutral=500ms)
-        9 => {                                               // Freeze Threshold: dBFS
-            // Matches the DSP formula in freeze::curve_to_threshold_db:
-            // linear in gain — gain=1.0 → -20, gain=2.0 → 0, gain=-2.0 → -80 (clamped).
-            (-40.0 + gain * 20.0).clamp(-80.0, 0.0)
+        7 => gain.max(0.0) * 100.0,                          // Phase Amount: 0-200% (top unbounded for headroom)
+        8 => (gain * 500.0).max(0.0),                        // Freeze Length: ms (top unbounded for headroom)
+        9 => {                                               // Freeze/Past Threshold: dBFS
+            // Same piecewise-anchored formula as idx=0; anchors (db_min, -20, db_max).
+            // In production db_min=-160 → matches freeze.rs curve_to_threshold_db.
+            let t_db = if gain > 1e-10 { 20.0 * gain.log10() } else { -200.0 };
+            let slope_neg = (-20.0 - db_min) / 18.0;
+            let slope_pos = (db_max - (-20.0)) / 18.0;
+            let v = if t_db <= 0.0 { -20.0 + slope_neg * t_db } else { -20.0 + slope_pos * t_db };
+            v.max(db_min)
         }
-        10 => (gain * 200.0).clamp(0.0, 1000.0),            // Portamento/SC Smooth: 0-1000ms (neutral=200ms)
-        11 => gain.clamp(0.0, 2.0),                          // Resistance: 0-2 (normalised excess)
+        10 => (gain * 200.0).max(0.0),                       // SC Smooth / legacy Portamento: ms (top unbounded for headroom)
+        11 => gain.max(0.0),                                  // Resistance: 0-2 (top unbounded for headroom)
+        13 => (gain * total_history_seconds).max(0.0),
+        // PEAK HOLD ms — matches the DSP-side `peak_hold_curve_to_ms` helper
+        // (log-piecewise: gain 0→1 ms, 1→50 ms, 2→500 ms). Used by
+        // PhaseSmear PEAK HOLD and Gain PEAK HOLD; replaces the prior
+        // misuse of idx 10 which mapped neutral gain to 200 ms when the
+        // helper actually returns 50 ms.
+        14 => crate::dsp::modules::peak_hold_curve_to_ms(gain),
+        // Freeze portamento — D-1b DSP uses `curve * 150` clamped 1..750 ms.
+        // Idx 10 still maps to the legacy `gain * 200` for SC Smooth and
+        // Punch/4 callers; this idx 15 is for the new freeze portamento
+        // calibration with neutral 150 ms.
+        15 => (gain * 150.0).max(1.0),
         _ => gain,
     }
 }
 
 
-/// Map a physical value to pixel y for a given curve type.
-pub fn physical_to_y(v: f32, curve_idx: usize, db_min: f32, db_max: f32, rect: Rect) -> f32 {
-    // UI parameter contract: see docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md
-    match curve_idx {
-        0 => linear_to_y(v, db_min, db_max, rect),
-        1 => log_to_y(v, 1.0, 20.0, rect),
-        2 | 3 => log_to_y(v, 1.0, 1024.0, rect),
-        4 => log_to_y(v, 1.5, 48.0, rect),
-        5 | 12 => linear_to_y(v, -18.0, 18.0, rect),
-        6 => linear_to_y(v, 0.0, 100.0, rect),
-        7 => linear_to_y(v, 0.0, 200.0, rect),
-        8 => log_to_y(v.max(62.5), 62.5, 4000.0, rect),    // Freeze Length 62.5ms–4000ms (matches config y_min)
-        9 => linear_to_y(v, -80.0, 0.0, rect),
-        10 => log_to_y(v.max(40.0), 40.0, 1000.0, rect),   // Portamento 40ms–1000ms (matches config y_min)
-        11 => linear_to_y(v, 0.0, 2.0, rect),               // Resistance 0–2
-        _ => rect.center().y,
+/// Map a physical value to pixel y for a given display config.
+/// `anchors` is `(y_min, y_natural, y_max)` from `runtime_anchors`, i.e. with
+/// runtime substitutions for idx 0 (db range) and idx 13 (history seconds)
+/// already applied. The linear/log axis choice comes from `cfg.y_log`.
+pub fn physical_to_y(
+    v: f32,
+    cfg: &CurveDisplayConfig,
+    anchors: (f32, f32, f32),
+    rect: Rect,
+) -> f32 {
+    let (y_min, _y_natural, y_max) = anchors;
+    if cfg.y_log {
+        log_to_y(v.max(y_min), y_min, y_max, rect)
+    } else {
+        linear_to_y(v, y_min, y_max, rect)
     }
 }
 
@@ -507,6 +751,8 @@ pub fn paint_grid(
     display_idx: usize,
     db_min: f32,
     db_max: f32,
+    attack_ms: f32,
+    release_ms: f32,
     sample_rate: f32,
 ) {
     // UI parameter contract: see docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §4
@@ -515,8 +761,18 @@ pub fn paint_grid(
     let max_hz  = nyquist.max(20_001.0);
     let grid_stroke = Stroke::new(th::scaled_stroke(th::STROKE_THIN, scale), th::GRID_LINE);
     let font = nih_plug_egui::egui::FontId::proportional(th::scaled(th::FONT_SIZE_GRID, scale));
+    // Headroom-aware inner rect: db→y mappings (horizontal grid lines, the
+    // y-axis label, response curves, spectrum overlay) all live inside the
+    // inner rect, leaving HEADROOM_PX of empty space above the y_max grid
+    // line. Vertical Hz lines span the full rect so the frequency grid still
+    // covers the entire visible area including the headroom strip.
+    let inner_rect = db_inner_rect(rect, scale);
+    // Resolve runtime anchors once for grid-line y mapping.
+    // Pass 0.0 for total_history_seconds — the only index that uses it (idx 13) is the Past
+    // Age curve; Task 14 will plumb the real value end-to-end.
+    let anchors = runtime_anchors(cfg, display_idx, 0.0, db_min, db_max, attack_ms, release_ms);
 
-    // Vertical lines at Hz intervals
+    // Vertical lines at Hz intervals — span the full rect including headroom.
     for &f in HZ_VERTICALS {
         if f > max_hz { continue; }
         let x = freq_to_x_max(f, max_hz, rect);
@@ -565,6 +821,7 @@ pub fn paint_grid(
 
     // Horizontal grid lines driven by CurveDisplayConfig.grid_lines.
     // See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §3.
+    // y values map into `inner_rect` (headroom-aware); lines span full width.
     for &(v, label) in cfg.grid_lines {
         // Skip values that fall outside the curve's configured display range
         // (e.g. Threshold grid line -48 dBFS when db_min > -48).
@@ -572,7 +829,7 @@ pub fn paint_grid(
         // For curves whose runtime display range is user-adjustable (threshold),
         // also respect the current db_min/db_max window.
         if display_idx == 0 && (v < db_min || v > db_max) { continue; }
-        let y = physical_to_y(v, display_idx, db_min, db_max, rect);
+        let y = physical_to_y(v, cfg, anchors, inner_rect);
         painter.line_segment(
             [Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)],
             grid_stroke,
@@ -625,20 +882,24 @@ pub fn paint_response_curve(
     tilt: f32,
     offset: f32,
     curvature: f32,
-    offset_fn: fn(f32, f32) -> f32,
+    cfg: &CurveDisplayConfig,
+    total_history_seconds: f32,
 ) {
     if gains.len() < 2 { return; }
     let n = gains.len();
     let max_hz = (sample_rate / 2.0).max(20_001.0);
+    let scale  = painter.ctx().pixels_per_point();
+    let inner_rect = db_inner_rect(rect, scale);
 
     // Coloured response line — dashed for attack/release, solid for all others.
     // Tilt, offset, and curvature are applied to the raw gain before display mapping.
+    let anchors = runtime_anchors(cfg, curve_idx, total_history_seconds, db_min, db_max, global_attack_ms, global_release_ms);
     let pts: Vec<Pos2> = (0..n).map(|k| {
         let f_hz = (k as f32 * sample_rate / fft_size as f32).max(20.0);
         let x    = freq_to_x_max(f_hz, max_hz, rect);
-        let adj  = apply_curve_adjustments(gains[k], f_hz, tilt, offset, curvature, offset_fn, max_hz);
-        let v    = gain_to_display(curve_idx, adj, global_attack_ms, global_release_ms, db_min, db_max);
-        let y    = physical_to_y(v, curve_idx, db_min, db_max, rect);
+        let adj  = apply_curve_adjustments(gains[k], f_hz, tilt, offset, curvature, cfg.offset_fn, anchors, max_hz);
+        let v    = gain_to_display(curve_idx, adj, global_attack_ms, global_release_ms, db_min, db_max, total_history_seconds);
+        let y    = physical_to_y(v, cfg, anchors, inner_rect);
         Pos2::new(x, y)
     }).collect();
     let line_stroke = Stroke::new(stroke_width, color);
@@ -670,6 +931,7 @@ pub fn paint_peak_hold_envelope_overlay(
     if envelope.is_empty() || fft_size == 0 { return; }
     // UI parameter contract: see docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §4
     let scale = painter.ctx().pixels_per_point();
+    let inner_rect = db_inner_rect(rect, scale);
     // Derive a darker tone from curve_color (r/3, g/3, b/3, opaque).
     let dim = Color32::from_rgb(
         curve_color.r() / 3,
@@ -687,9 +949,10 @@ pub fn paint_peak_hold_envelope_overlay(
         let x    = freq_to_x_max(f_hz, max_hz, rect);
         let mag  = (envelope[k] * norm_factor).max(1e-12);
         let db   = 20.0 * mag.log10();
-        // Map dB onto the spectrum display range [db_min..db_max]. Top = db_max, bottom = db_min.
+        // Map dB onto the spectrum display range [db_min..db_max] inside the
+        // headroom-aware inner rect.
         let norm = ((db - db_min) / range).clamp(0.0, 1.0);
-        let y    = rect.max.y - norm * rect.height();
+        let y    = inner_rect.max.y - norm * inner_rect.height();
         if let Some(p) = prev {
             painter.line_segment([p, Pos2::new(x, y)], overlay_stroke);
         }
@@ -707,17 +970,40 @@ pub struct CurveWidgetResult {
     pub drag_started: bool,
     /// True if a drag gesture ended this frame (use to call `end_set_parameter`).
     pub drag_stopped: bool,
+    /// If an alt-click landed on a node this frame: `Some((screen_pos, node_index))`.
+    pub alt_clicked_node: Option<(Pos2, usize)>,
+}
+
+/// Curve display context — the slice of state needed for the dot to land on
+/// the rendered curve at a node's frequency. When `Some`, dots track the line
+/// through offset/tilt/curvature transforms; when `None`, dots fall back to the
+/// raw `node.y` mapping (legacy behavior).
+pub struct NodeDisplayContext<'a> {
+    pub gains:                 &'a [f32],
+    pub fft_size:              usize,
+    pub tilt:                  f32,
+    pub offset:                f32,
+    pub curvature:             f32,
+    pub cfg:                   &'a CurveDisplayConfig,
+    pub db_min:                f32,
+    pub db_max:                f32,
+    pub global_attack_ms:      f32,
+    pub global_release_ms:     f32,
+    pub total_history_seconds: f32,
+    pub display_curve_idx:     usize,
 }
 
 /// Draw interactive nodes for the active curve. Returns drag/change state.
-/// Handles are drawn at normalised y positions (node.y ∈ [-1, +1] mapped to [bottom, top])
-/// so they cover the full display height and track the cursor 1:1 when dragged.
+/// When `display_ctx` is `Some`, each dot's screen y matches the rendered
+/// curve at the node's frequency (dots follow offset/tilt/curvature). When
+/// `None`, dots fall back to the raw `node.y` mapping.
 pub fn curve_widget(
     ui: &mut Ui,
     rect: Rect,
     nodes: &mut [CurveNode; 6],
     curve_idx: usize,
     sample_rate: f32,
+    display_ctx: Option<&NodeDisplayContext<'_>>,
 ) -> CurveWidgetResult {
     use nih_plug_egui::egui::Sense;
 
@@ -725,6 +1011,7 @@ pub fn curve_widget(
     let mut changed = false;
     let mut drag_started = false;
     let mut drag_stopped = false;
+    let mut alt_clicked_node: Option<(Pos2, usize)> = None;
     let node_color_lit  = th::curve_color_lit(curve_idx);
     let node_color_hover = {
         let c = node_color_lit;
@@ -735,12 +1022,46 @@ pub fn curve_widget(
         )
     };
 
+    // Pre-compute anchors once if we have a display context.
+    let display_anchors = display_ctx.map(|d| runtime_anchors(
+        d.cfg, d.display_curve_idx, d.total_history_seconds,
+        d.db_min, d.db_max, d.global_attack_ms, d.global_release_ms,
+    ));
+
+    // Headroom-aware inner rect for db→y mapping. The painters draw the
+    // response curve into this inner rect, so dots must use it too to land
+    // on the line. Click areas / drag clamps continue to use the FULL rect
+    // so virtual nodes (|y| > 1) can still be drawn into and beyond the
+    // headroom strip with their off-rect indicator.
+    let scale = ui.ctx().pixels_per_point();
+    let inner_rect = db_inner_rect(rect, scale);
+
     for i in 0..6 {
-        // Normalised y position: node.y ∈ [-1, +1] maps linearly to [bottom, top] of rect.
-        // node.y has ±2 parameter headroom (see drag clamp below) but the dot is pinned to the
-        // graph rect so it can never stray into the routing matrix above or below. The headroom
-        // still influences the rendered response curve and underlying parameters.
-        let sy_raw = rect.bottom() - (nodes[i].y + 1.0) / 2.0 * rect.height();
+        // Dot screen-y: when a display context is provided, place the dot ON
+        // the rendered curve at the node's frequency by replicating
+        // paint_response_curve's per-bin path. Otherwise fall back to the raw
+        // node.y mapping. node.y has ±2 parameter headroom (drag clamp below)
+        // but the dot is pinned to the FULL graph rect (which includes the
+        // headroom strip).
+        let sy_raw = if let (Some(d), Some(anchors)) = (display_ctx, display_anchors) {
+            let f_hz = (20.0_f32 * 1000.0_f32.powf(nodes[i].x.clamp(0.0, 1.0))).max(20.0);
+            let bin_k = ((f_hz * d.fft_size as f32 / sample_rate).round() as usize)
+                .min(d.gains.len().saturating_sub(1));
+            let raw_gain = d.gains.get(bin_k).copied().unwrap_or(1.0);
+            let adj = apply_curve_adjustments(
+                raw_gain, f_hz, d.tilt, d.offset, d.curvature,
+                d.cfg.offset_fn, anchors, max_hz,
+            );
+            let v = gain_to_display(
+                d.display_curve_idx, adj,
+                d.global_attack_ms, d.global_release_ms,
+                d.db_min, d.db_max, d.total_history_seconds,
+            );
+            physical_to_y(v, d.cfg, anchors, inner_rect)
+        } else {
+            // No display context: map raw node.y to FULL rect (legacy behavior).
+            rect.bottom() - (nodes[i].y + 1.0) / 2.0 * rect.height()
+        };
         let sy = sy_raw.clamp(rect.top(), rect.bottom());
 
         // Visual position scaled to the current SR's Nyquist range.
@@ -764,6 +1085,9 @@ pub fn curve_widget(
 
         let node_rect = Rect::from_center_size(node_pos, Vec2::splat(th::NODE_RADIUS * 3.0));
         let resp = ui.interact(node_rect, ui.id().with(("node", i)), Sense::drag());
+        // Hovering a node falls through to the per-curve help text resolved
+        // by help_box::draw from the active curve layout — same fallback as
+        // the empty graph area.
         drag_started |= resp.drag_started();
         drag_stopped |= resp.drag_stopped();
 
@@ -807,6 +1131,12 @@ pub fn curve_widget(
             changed = true;
         }
 
+        // Alt-click opens the Modulation Ring overlay for this node.
+        let alt_down = ui.input(|inp| inp.modifiers.alt);
+        if resp.clicked() && alt_down {
+            alt_clicked_node = Some((node_pos, i));
+        }
+
         crate::editor::delayed_tooltip(ui, &resp, format!("Node {} \u{2014} drag to adjust", i));
 
         let color = if resp.hovered() { node_color_hover } else { node_color_lit };
@@ -838,7 +1168,47 @@ pub fn curve_widget(
                     Stroke::new(th::STROKE_BORDER, th::BORDER));
             }
         }
+
+        // Off-rect indicator: when node.y is outside the visible ±1 range, draw a
+        // red directional triangle at the corresponding rect edge. Triangle x matches the
+        // node dot's screen-x (log-frequency mapping); only sy was clamped, sx is unmodified.
+        // This visual cue shows users WHICH direction the node lives in.
+        if nodes[i].y.abs() > 1.0 {
+            let edge_y = if nodes[i].y > 0.0 {
+                rect.top() - th::NODE_OFFRECT_OFFSET_PX
+            } else {
+                rect.bottom() + th::NODE_OFFRECT_OFFSET_PX
+            };
+            let half = th::NODE_OFFRECT_SIZE_PX / 2.0;
+            // Use the same screen-x as the node dot (log-frequency mapping); see line ~960.
+            let sx = sx_actual;
+            let triangle = if nodes[i].y > 0.0 {
+                // pointing up (node is above the visible rect)
+                vec![
+                    Pos2::new(sx,          edge_y - half),
+                    Pos2::new(sx - half,   edge_y + half),
+                    Pos2::new(sx + half,   edge_y + half),
+                ]
+            } else {
+                // pointing down (node is below the visible rect)
+                vec![
+                    Pos2::new(sx,          edge_y + half),
+                    Pos2::new(sx - half,   edge_y - half),
+                    Pos2::new(sx + half,   edge_y - half),
+                ]
+            };
+            // Extend clip rect vertically to avoid culling the triangle which is drawn
+            // ~9px outside the curve rect bounds (above rect.top() or below rect.bottom()).
+            let expansion_px = th::NODE_OFFRECT_OFFSET_PX + th::NODE_OFFRECT_SIZE_PX + 2.0;
+            let extended_clip = rect.expand2(Vec2::new(0.0, expansion_px));
+            let painter = ui.painter_at(extended_clip);
+            painter.add(Shape::convex_polygon(
+                triangle,
+                th::NODE_OFFRECT_COLOR,
+                Stroke::NONE,
+            ));
+        }
     }
 
-    CurveWidgetResult { changed, drag_started, drag_stopped }
+    CurveWidgetResult { changed, drag_started, drag_stopped, alt_clicked_node }
 }

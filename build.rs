@@ -22,7 +22,8 @@ use std::path::PathBuf;
 const NUM_SLOTS: usize = 9;
 const NUM_CURVES: usize = 7;
 const NUM_NODES: usize = 6;
-const NUM_MATRIX_ROWS: usize = 9;
+const NUM_MATRIX_ROWS:    usize = 9;   // destinations (slots only)
+const NUM_MATRIX_SOURCES: usize = 13;  // sources: 9 slots + 4 T/S virtual rows
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -58,6 +59,7 @@ fn main() {
     emit_tilt_offset_fields(&mut f);
     emit_curvature_fields(&mut f);
     emit_matrix_fields(&mut f);
+    emit_past_scalar_fields(&mut f);
     writeln!(f, "}}").unwrap();
     writeln!(f).unwrap();
 
@@ -69,6 +71,7 @@ fn main() {
     emit_tilt_offset_inits(&mut f);
     emit_curvature_inits(&mut f);
     emit_matrix_inits(&mut f);
+    emit_past_scalar_inits(&mut f);
     writeln!(f, "        }}").unwrap();
     writeln!(f, "    }}").unwrap();
     writeln!(f, "}}").unwrap();
@@ -90,6 +93,7 @@ fn main() {
     emit_tilt_offset_map_entries(&mut f);
     emit_curvature_map_entries(&mut f);
     emit_matrix_map_entries(&mut f);
+    emit_past_scalar_map_entries(&mut f);
     writeln!(f, "    }}").unwrap();
     writeln!(f, "}}").unwrap();
 
@@ -104,6 +108,8 @@ fn main() {
     emit_curvature_dispatch(&mut f);
     writeln!(f).unwrap();
     emit_matrix_dispatch(&mut f);
+    writeln!(f).unwrap();
+    emit_past_scalar_dispatch(&mut f);
 }
 
 // ── Field declarations (bare, no initializers) ──────────────────────────────
@@ -134,7 +140,7 @@ fn emit_tilt_offset_fields(f: &mut File) {
 
 fn emit_matrix_fields(f: &mut File) {
     for r in 0..NUM_MATRIX_ROWS {
-        for col in 0..NUM_SLOTS {
+        for col in 0..NUM_MATRIX_SOURCES {
             let rust_name = format!("mr{}c{}", r, col);
             writeln!(f, "    pub {rust_name}: FloatParam,").unwrap();
         }
@@ -187,15 +193,43 @@ fn graph_node_defaults(node: usize, field: char) -> (f32, f32, f32) {
     }
 }
 
+/// Return `true` when the curve at `(slot, curve)` — evaluated for the *default*
+/// module type of that slot with `GainMode::Add` — has `y_natural == y_max`
+/// (natural-at-max).  These curves default their offset FloatParam to `+1.0`
+/// so the user loads at `y_max` (e.g. 100% wet for MIX) and slides down.
+///
+/// Default module assignment (mirrors `params::Default::default()`):
+///   slot 0 = Dynamics, slot 1 = Gain (Add mode), slots 2-7 = Empty, slot 8 = Master.
+///
+/// This is an explicit lookup table because build.rs cannot import the crate.
+/// Keep in sync with `curve_config::curve_display_config()`.
+fn offset_default_for_slot_curve(slot: usize, curve: usize) -> f32 {
+    // Dynamics (slot 0): MIX at local curve index 5 is natural-at-max
+    //   (y_natural = 100.0 == y_max = 100.0).
+    // All other Dynamics curves: not natural-at-max.
+    // Gain/Add (slot 1): curve 0 y_natural=0.0 ≠ y_max=18.0; curve 1 y_natural=50 ≠ y_max=500.
+    // Empty / Master (slots 2-8): default_config y_natural=0.5 ≠ y_max=1.0.
+    if slot == 0 && curve == 5 {
+        1.0_f32
+    } else {
+        0.0_f32
+    }
+}
+
 fn emit_tilt_offset_inits(f: &mut File) {
     for s in 0..NUM_SLOTS {
         for c in 0..NUM_CURVES {
             for kind in ["tilt", "offset"] {
                 let id = format!("s{}c{}{}", s, c, kind);
                 let rust_name = format!("s{}c{}_{}", s, c, kind);
+                let default = if kind == "offset" {
+                    offset_default_for_slot_curve(s, c)
+                } else {
+                    0.0_f32
+                };
                 writeln!(
                     f,
-                    "            {rust_name}: FloatParam::new(\"{id}\", 0.0f32, \
+                    "            {rust_name}: FloatParam::new(\"{id}\", {default}f32, \
                      FloatRange::Linear {{ min: -1.0f32, max: 1.0f32 }})\
                      .with_smoother(SmoothingStyle::Linear(2.0))\
                      .hide_in_generic_ui(),"
@@ -210,17 +244,20 @@ fn emit_matrix_inits(f: &mut File) {
     // Param ID convention: mr{row}c{col}  where  row = DESTINATION slot,  col = SOURCE slot.
     // This is the TRANSPOSE of RouteMatrix.send[src][dst] (first index = source).
     // When building RouteMatrix from params: send[col][r] = mr{r}c{col}.value()
-    // Default: serial chain. mr1c0=1 (slot 0 → row 1 = slot 1), mr2c1=1, etc.
+    //
+    // Default routing: Dynamics (slot 0) → Gain (slot 1) → Master (slot 8).
+    // Matches the default slot_module_types in params.rs / presets.rs.
+    // mr1c0 = 1.0 (col 0 → row 1) and mr8c1 = 1.0 (col 1 → row 8); rest are 0.
     for r in 0..NUM_MATRIX_ROWS {
-        for col in 0..NUM_SLOTS {
+        for col in 0..NUM_MATRIX_SOURCES {
             let id = format!("mr{}c{}", r, col);
             let rust_name = format!("mr{}c{}", r, col);
-            let default: f32 = if col + 1 == r { 1.0 } else { 0.0 };
+            let default: f32 = if (r == 1 && col == 0) || (r == 8 && col == 1) { 1.0 } else { 0.0 };
             writeln!(
                 f,
                 "            {rust_name}: FloatParam::new(\"{id}\", {default}f32, \
-                 FloatRange::Linear {{ min: 0.0f32, max: 1.0f32 }})\
-                 .with_smoother(SmoothingStyle::Linear(2.0))\
+                 FloatRange::Linear {{ min: -1.0f32, max: 1.0f32 }})\
+                 .with_smoother(SmoothingStyle::Linear(100.0))\
                  .hide_in_generic_ui(),"
             )
             .unwrap();
@@ -266,7 +303,7 @@ fn emit_tilt_offset_map_entries(f: &mut File) {
 
 fn emit_matrix_map_entries(f: &mut File) {
     for r in 0..NUM_MATRIX_ROWS {
-        for col in 0..NUM_SLOTS {
+        for col in 0..NUM_MATRIX_SOURCES {
             let id = format!("mr{}c{}", r, col);
             let rust_name = format!("mr{}c{}", r, col);
             writeln!(
@@ -339,7 +376,7 @@ fn emit_matrix_dispatch(f: &mut File) {
     writeln!(f, "    ($self:expr, $r:expr, $col:expr) => {{").unwrap();
     writeln!(f, "        match ($r, $col) {{").unwrap();
     for r in 0..NUM_MATRIX_ROWS {
-        for col in 0..NUM_SLOTS {
+        for col in 0..NUM_MATRIX_SOURCES {
             writeln!(f, "            ({r}, {col}) => &$self.generated.mr{r}c{col},").unwrap();
         }
     }
@@ -400,4 +437,99 @@ fn emit_curvature_dispatch(f: &mut File) {
     writeln!(f, "        }}").unwrap();
     writeln!(f, "    }};").unwrap();
     writeln!(f, "}}").unwrap();
+}
+
+// ── Past UX Overhaul: per-slot scalar params ────────────────────────────────
+//
+// Five new per-slot params for the Past module (5 × 9 = 45 fields):
+//   - past_floor_hz        Skewed 20..2000 Hz, default 230
+//   - past_reverse_window_s Linear 0.05..30 s, default 1.0
+//   - past_stretch_rate    Skewed 0.05..4.0 ×, default 1.0
+//   - past_stretch_dither  Linear 0..1, default 0.0
+//   - past_soft_clip       Bool, default true
+//
+// See docs/superpowers/specs/2026-05-04-past-module-ux-design.md §2 + §3.
+
+fn emit_past_scalar_fields(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        writeln!(f, "    pub s{s}_past_floor_hz:        FloatParam,").unwrap();
+        writeln!(f, "    pub s{s}_past_reverse_window_s: FloatParam,").unwrap();
+        writeln!(f, "    pub s{s}_past_stretch_rate:    FloatParam,").unwrap();
+        writeln!(f, "    pub s{s}_past_stretch_dither:  FloatParam,").unwrap();
+        writeln!(f, "    pub s{s}_past_soft_clip:       BoolParam,").unwrap();
+    }
+}
+
+fn emit_past_scalar_inits(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        writeln!(
+            f,
+            "            s{s}_past_floor_hz: FloatParam::new(\"s{s}past_floor_hz\", 230.0f32, \
+             FloatRange::Skewed {{ min: 20.0f32, max: 2000.0f32, factor: FloatRange::skew_factor(-2.0) }})\
+             .with_smoother(SmoothingStyle::Logarithmic(50.0))\
+             .with_unit(\" Hz\")\
+             .hide_in_generic_ui(),"
+        ).unwrap();
+        writeln!(
+            f,
+            "            s{s}_past_reverse_window_s: FloatParam::new(\"s{s}past_reverse_window_s\", 1.0f32, \
+             FloatRange::Linear {{ min: 0.05f32, max: 30.0f32 }})\
+             .with_smoother(SmoothingStyle::Linear(50.0))\
+             .with_unit(\" s\")\
+             .hide_in_generic_ui(),"
+        ).unwrap();
+        writeln!(
+            f,
+            "            s{s}_past_stretch_rate: FloatParam::new(\"s{s}past_stretch_rate\", 1.0f32, \
+             FloatRange::SymmetricalSkewed {{ min: 0.05f32, max: 4.0f32, \
+             factor: FloatRange::skew_factor(-1.0), center: 1.0f32 }})\
+             .with_smoother(SmoothingStyle::Logarithmic(50.0))\
+             .with_unit(\"\u{00d7}\")\
+             .hide_in_generic_ui(),"
+        ).unwrap();
+        // Dither: stored as 0..100 with unit \"%\" so the host's automation lane
+        // displays \"50 %\" rather than \"0.50 %\". DSP rescales /100 → [0, 1].
+        writeln!(
+            f,
+            "            s{s}_past_stretch_dither: FloatParam::new(\"s{s}past_stretch_dither\", 0.0f32, \
+             FloatRange::Linear {{ min: 0.0f32, max: 100.0f32 }})\
+             .with_smoother(SmoothingStyle::Linear(20.0))\
+             .with_unit(\" %\")\
+             .hide_in_generic_ui(),"
+        ).unwrap();
+        writeln!(
+            f,
+            "            s{s}_past_soft_clip: BoolParam::new(\"s{s}past_soft_clip\", true)\
+             .hide_in_generic_ui(),"
+        ).unwrap();
+    }
+}
+
+fn emit_past_scalar_map_entries(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for suffix in ["floor_hz", "reverse_window_s", "stretch_rate", "stretch_dither", "soft_clip"] {
+            let id = format!("s{s}past_{suffix}");
+            let rust_name = format!("s{s}_past_{suffix}");
+            writeln!(
+                f,
+                "        out.push(({id:?}.to_string(), self.{rust_name}.as_ptr(), String::new()));"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_past_scalar_dispatch(f: &mut File) {
+    for suffix in ["floor_hz", "reverse_window_s", "stretch_rate", "stretch_dither", "soft_clip"] {
+        writeln!(f, "macro_rules! past_{suffix}_dispatch {{").unwrap();
+        writeln!(f, "    ($self:expr, $s:expr) => {{").unwrap();
+        writeln!(f, "        match $s {{").unwrap();
+        for s in 0..NUM_SLOTS {
+            writeln!(f, "            {s} => &$self.generated.s{s}_past_{suffix},").unwrap();
+        }
+        writeln!(f, "            _ => unreachable!(),").unwrap();
+        writeln!(f, "        }}").unwrap();
+        writeln!(f, "    }};").unwrap();
+        writeln!(f, "}}").unwrap();
+        writeln!(f).unwrap();
+    }
 }

@@ -5,8 +5,19 @@ pub mod theme;
 pub mod spectrum_display;
 pub mod fx_matrix_grid;
 pub mod module_popup;
+pub mod amp_popup;
+pub mod life_popup;
+pub mod past_popup;
+pub mod kinetics_popup;
+pub mod harmony_popup;
+pub mod circuit_popup;
 pub mod preset_menu;
 pub use preset_menu::{PresetMenuState, preset_menu_ui};
+pub mod mod_ring;
+pub use mod_ring::{ModRingState, ModRingToggle};
+pub mod rhythm_panel;
+pub mod past_panel;
+pub mod help_box;
 
 /// Show a tooltip for `response` only after the pointer has been stationary
 /// over it for 1 second. Resets the timer whenever the pointer moves.

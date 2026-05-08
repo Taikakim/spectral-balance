@@ -5,6 +5,9 @@ use triple_buffer::Input as TbInput;
 use std::sync::{Arc, atomic::Ordering};
 use crate::params::SpectralForgeParams;
 use crate::editor::{curve as crv, spectrum_display as sd, theme as th};
+use crate::editor::help_box::{HelpTopic, track_help};
+use crate::editor::mod_ring::{mod_ring_overlay};
+use crate::dsp::modulation_ring::{RingKey, RingStateBank};
 
 
 pub fn create_editor(
@@ -16,6 +19,8 @@ pub fn create_editor(
     suppression_rx: Option<Arc<parking_lot::Mutex<triple_buffer::Output<Vec<f32>>>>>,
     sc_envelope_rx: Option<Arc<parking_lot::Mutex<triple_buffer::Output<Vec<f32>>>>>,
     sidechain_active: Option<Arc<std::sync::atomic::AtomicBool>>,
+    reset_requested: Option<Arc<std::sync::atomic::AtomicBool>>,
+    ring_states: Option<Arc<Mutex<RingStateBank>>>,
     plugin_alive: std::sync::Weak<()>,
 ) -> Option<Box<dyn Editor>> {
     create_egui_editor(
@@ -31,6 +36,14 @@ pub fn create_editor(
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 return;
             }
+
+            // Promote the previous frame's pending help focus into the
+            // presented slot, then clear pending. Widgets call `track_help*`
+            // throughout the frame to write fresh claims into pending; the
+            // help-box reads from presented. The 1-frame indirection lets
+            // popups (rendered AFTER help_box::draw) still update the
+            // help-box.
+            crate::editor::help_box::promote_focus(ctx);
 
             // Scaling: use the user's chosen scale directly as pixels_per_point.
             // This is stable (no feedback loop) and ensures content renders at the target
@@ -69,7 +82,7 @@ pub fn create_editor(
                     let fft_size     = fft_size_arc.load(Ordering::Relaxed).max(512);
                     let num_bins     = fft_size / 2 + 1;
                     let sr           = sample_rate.as_ref().map(|a| a.load()).unwrap_or(44100.0);
-                    let db_min       = *params.graph_db_min.lock();
+                    let db_min       = -160.0_f32;
                     let db_max       = *params.graph_db_max.lock();
                     let falloff      = *params.peak_falloff_ms.lock();
                     let atk_ms       = params.attack_ms.value();
@@ -96,8 +109,51 @@ pub fn create_editor(
                         // PEAK HOLD tab (only meaningful in Pull mode).
                         let slot_gain_mode_snap = params.slot_gain_mode.lock()[editing_slot];
 
+                        // Determine the visible curve set for this mode. If the module has an
+                        // `active_layout`, use its `active` list and `label_overrides`; otherwise
+                        // fall back to rendering all `curve_labels`. Past is the first consumer.
+                        let active_layout_opt: Option<crate::dsp::modules::CurveLayout> =
+                            spec.active_layout.map(|f| {
+                                let mode_byte: u8 = match editing_type {
+                                    crate::dsp::modules::ModuleType::Past     => params.slot_past_mode.lock()[editing_slot]     as u8,
+                                    crate::dsp::modules::ModuleType::Future   => params.slot_future_mode.lock()[editing_slot]   as u8,
+                                    crate::dsp::modules::ModuleType::Circuit  => params.slot_circuit_mode.lock()[editing_slot]  as u8,
+                                    crate::dsp::modules::ModuleType::Life     => params.slot_life_mode.lock()[editing_slot]     as u8,
+                                    crate::dsp::modules::ModuleType::Modulate => params.slot_modulate_mode.lock()[editing_slot] as u8,
+                                    crate::dsp::modules::ModuleType::Rhythm   => params.slot_rhythm_mode.lock()[editing_slot]   as u8,
+                                    crate::dsp::modules::ModuleType::Punch    => params.slot_punch_mode.lock()[editing_slot]    as u8,
+                                    crate::dsp::modules::ModuleType::Harmony  => params.slot_harmony_mode.lock()[editing_slot]  as u8,
+                                    crate::dsp::modules::ModuleType::Geometry => params.slot_geometry_mode.lock()[editing_slot] as u8,
+                                    crate::dsp::modules::ModuleType::Kinetics => params.slot_kinetics_mode.lock()[editing_slot] as u8,
+                                    _ => 0u8,
+                                };
+                                f(mode_byte)
+                            });
+
+                        let visible_curves: Vec<(usize, &str)> = if let Some(layout) = active_layout_opt.as_ref() {
+                            layout.active.iter().map(|&idx| {
+                                let label = layout.label_overrides.iter()
+                                    .find_map(|&(c, l)| if c == idx { Some(l) } else { None })
+                                    .or_else(|| spec.curve_labels.get(idx as usize).copied())
+                                    .unwrap_or("");
+                                (idx as usize, label)
+                            }).collect()
+                        } else {
+                            spec.curve_labels.iter().enumerate()
+                                .map(|(i, l)| (i, *l))
+                                .collect()
+                        };
+
+                        // Snap editing_curve to first visible if the current selection is now hidden
+                        // (e.g. user just changed Past mode).
+                        if !visible_curves.iter().any(|(i, _)| *i == editing_curve) {
+                            if let Some(&(first_visible, _)) = visible_curves.first() {
+                                *params.editing_curve.lock() = first_visible as u8;
+                            }
+                        }
+
                         // Adaptive curve selector buttons
-                        for (i, &default_label) in spec.curve_labels.iter().enumerate() {
+                        for (i, default_label) in visible_curves.iter().copied() {
                             let label = crv::curve_label_for(
                                 editing_type, i, slot_gain_mode_snap, default_label,
                             );
@@ -129,6 +185,34 @@ pub fn create_editor(
                                 egui::Sense::click()
                             };
                             let resp = ui.add(btn.sense(sense));
+                            // Hovering a curve-tab button previews that curve's
+                            // help text in the help-box (resolves through the
+                            // multi-mode + single-mode help tables). When the
+                            // tables don't have an entry, fall back to the
+                            // generic CurveTab topic.
+                            let mode_byte_for_help: u8 = match editing_type {
+                                crate::dsp::modules::ModuleType::Past     => params.slot_past_mode.lock()[editing_slot]     as u8,
+                                crate::dsp::modules::ModuleType::Future   => params.slot_future_mode.lock()[editing_slot]   as u8,
+                                crate::dsp::modules::ModuleType::Circuit  => params.slot_circuit_mode.lock()[editing_slot]  as u8,
+                                crate::dsp::modules::ModuleType::Life     => params.slot_life_mode.lock()[editing_slot]     as u8,
+                                crate::dsp::modules::ModuleType::Modulate => params.slot_modulate_mode.lock()[editing_slot] as u8,
+                                crate::dsp::modules::ModuleType::Rhythm   => params.slot_rhythm_mode.lock()[editing_slot]   as u8,
+                                crate::dsp::modules::ModuleType::Punch    => params.slot_punch_mode.lock()[editing_slot]    as u8,
+                                crate::dsp::modules::ModuleType::Harmony  => params.slot_harmony_mode.lock()[editing_slot]  as u8,
+                                crate::dsp::modules::ModuleType::Geometry => params.slot_geometry_mode.lock()[editing_slot] as u8,
+                                crate::dsp::modules::ModuleType::Kinetics => params.slot_kinetics_mode.lock()[editing_slot] as u8,
+                                _ => 0,
+                            };
+                            let preview = crate::editor::help_box::curve_help_text(
+                                editing_type, mode_byte_for_help, i,
+                            );
+                            if !preview.is_empty() {
+                                crate::editor::help_box::track_help_strings(
+                                    ui, &resp, label.to_string(), preview.to_string(),
+                                );
+                            } else {
+                                track_help(ui, &resp, HelpTopic::CurveTab);
+                            }
                             if !gain_disabled && resp.clicked() {
                                 *params.editing_curve.lock() = i as u8;
                             }
@@ -140,26 +224,16 @@ pub fn create_editor(
                             ui.add_space(4.0);
                         }
 
-                        ui.label(egui::RichText::new("Floor").color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale)));
-                        {
-                            let mut v = *params.graph_db_min.lock();
-                            if ui.add(
-                                egui::DragValue::new(&mut v)
-                                    .range(-160.0..=-20.0)
-                                    .suffix(" dB").speed(0.5).max_decimals(1),
-                            ).changed() {
-                                *params.graph_db_min.lock() = v.min(db_max - 6.0);
-                            }
-                        }
-                        ui.add_space(4.0);
                         ui.label(egui::RichText::new("Ceil").color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale)));
                         {
                             let mut v = *params.graph_db_max.lock();
-                            if ui.add(
+                            let resp = ui.add(
                                 egui::DragValue::new(&mut v)
                                     .range(-20.0..=0.0)
                                     .suffix(" dB").speed(0.5).max_decimals(1),
-                            ).changed() {
+                            );
+                            track_help(ui, &resp, HelpTopic::GraphCeil);
+                            if resp.changed() {
                                 *params.graph_db_max.lock() = v.max(db_min + 6.0);
                             }
                         }
@@ -167,11 +241,13 @@ pub fn create_editor(
                         ui.label(egui::RichText::new("Falloff").color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale)));
                         {
                             let mut v = *params.peak_falloff_ms.lock();
-                            if ui.add(
+                            let resp = ui.add(
                                 egui::DragValue::new(&mut v)
                                     .range(0.0..=5000.0)
                                     .suffix(" ms").speed(10.0).max_decimals(0),
-                            ).changed() {
+                            );
+                            track_help(ui, &resp, HelpTopic::PeakFalloff);
+                            if resp.changed() {
                                 *params.peak_falloff_ms.lock() = v;
                             }
                         }
@@ -187,7 +263,72 @@ pub fn create_editor(
                             egui::Sense::hover(),
                         );
                         ui.painter().rect_filled(rect, 0.0, color);
+
+                        // Reset to Default button — opens a confirm dialog.
+                        ui.add_space(8.0);
+                        let reset_btn = egui::Button::new(
+                            egui::RichText::new("Reset to Default")
+                                .color(th::LABEL_DIM)
+                                .size(th::scaled(th::FONT_SIZE_LABEL, scale)),
+                        )
+                        .fill(th::BG)
+                        .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
+                        let reset_resp = ui.add(reset_btn);
+                        track_help(ui, &reset_resp, HelpTopic::ResetToDefault);
+                        if reset_resp.clicked() {
+                            let key = egui::Id::new("show_reset_dialog");
+                            ui.ctx().data_mut(|d| d.insert_temp(key, true));
+                        }
+
+                        // HELP toggle — show or hide context-sensitive help.
+                        ui.add_space(8.0);
+                        let help_on = params.help_enabled.value();
+                        let (help_fill, help_text_color) = if help_on {
+                            (th::BORDER, th::BG)
+                        } else {
+                            (th::BG, th::LABEL_DIM)
+                        };
+                        let help_btn = egui::Button::new(
+                            egui::RichText::new("HELP")
+                                .color(help_text_color)
+                                .size(th::scaled(th::FONT_SIZE_LABEL, scale)),
+                        )
+                        .fill(help_fill)
+                        .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
+                        let help_resp = ui.add(help_btn);
+                        track_help(ui, &help_resp, HelpTopic::HelpToggle);
+                        if help_resp.clicked() {
+                            setter.begin_set_parameter(&params.help_enabled);
+                            setter.set_parameter(&params.help_enabled, !help_on);
+                            setter.end_set_parameter(&params.help_enabled);
+                        }
                     });
+
+                    // Confirm dialog for Reset to Default.
+                    {
+                        let key = egui::Id::new("show_reset_dialog");
+                        let show: bool = ctx.data(|d| d.get_temp(key).unwrap_or(false));
+                        if show {
+                            egui::Window::new("Reset all settings?")
+                                .collapsible(false)
+                                .resizable(false)
+                                .show(ctx, |ui| {
+                                    ui.label("Reset every parameter to defaults and clear all module state. This cannot be undone.");
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Reset").clicked() {
+                                            params.reset_to_defaults(setter);
+                                            if let Some(ref arc) = reset_requested {
+                                                arc.store(true, std::sync::atomic::Ordering::Release);
+                                            }
+                                            ctx.data_mut(|d| d.insert_temp(key, false));
+                                        }
+                                        if ui.button("Cancel").clicked() {
+                                            ctx.data_mut(|d| d.insert_temp(key, false));
+                                        }
+                                    });
+                                });
+                        }
+                    }
 
                     // ── Second bar: FFT size selector ─────────────────────────────
                     ui.horizontal(|ui| {
@@ -217,7 +358,9 @@ pub fn create_editor(
                             )
                             .fill(fill)
                             .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
-                            if ui.add(btn).clicked() {
+                            let resp = ui.add(btn);
+                            track_help(ui, &resp, HelpTopic::FftSize);
+                            if resp.clicked() {
                                 setter.begin_set_parameter(&params.fft_size);
                                 setter.set_parameter(&params.fft_size, choice);
                                 setter.end_set_parameter(&params.fft_size);
@@ -248,7 +391,9 @@ pub fn create_editor(
                             )
                             .fill(fill)
                             .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
-                            if ui.add(btn).clicked() {
+                            let resp = ui.add(btn);
+                            track_help(ui, &resp, HelpTopic::UiScale);
+                            if resp.clicked() {
                                 *params.ui_scale.lock() = step_scale;
                             }
                         }
@@ -284,7 +429,11 @@ pub fn create_editor(
                             (avail.max.y - strip_height).max(avail.min.y),
                         ),
                     );
-                    ui.allocate_rect(curve_rect, egui::Sense::hover());
+                    // Hovering the empty curve area falls through to the
+                    // per-curve / per-mode help (resolved by help_box::draw
+                    // from the editing slot's active layout). Only the node
+                    // dots themselves claim a topic explicitly.
+                    let _curve_area_resp = ui.allocate_rect(curve_rect, egui::Sense::hover());
 
                     // Read spectrum + suppression from bridge.
                     // Cache the last successful read so try_lock misses don't flicker.
@@ -334,7 +483,7 @@ pub fn create_editor(
                     );
                     crv::paint_grid(
                         ui.painter(), curve_rect, &grid_cfg, grid_display_idx,
-                        db_min, db_max, sr,
+                        db_min, db_max, atk_ms, rel_ms, sr,
                     );
 
                     // 2. Spectrum + suppression gradient (always shown)
@@ -396,31 +545,92 @@ pub fn create_editor(
                         };
 
                         // Read tilt/offset/curvature lock-free from automatable params.
+                        // Tilt is normalized [-1, 1] in the param store; the DSP path
+                        // (`pipeline.rs::process` -> `apply_curve_transform`) multiplies by
+                        // `TILT_MAX` to convert to physical dB/oct. The display
+                        // (`apply_curve_adjustments`) takes the same physical-tilt
+                        // value, so we apply the same scaling here. Without it the
+                        // visible curve tilts at 1/TILT_MAX of what the DSP actually
+                        // does, and the user sees compression triggering on bins
+                        // that look untouched.
+                        use crate::dsp::modules::TILT_MAX;
                         let slot_meta: [(f32, f32, f32); 7] = std::array::from_fn(|c| {
-                            let t  = params.tilt_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0);
+                            let t  = params.tilt_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0) * TILT_MAX;
                             let o  = params.offset_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0);
                             let cv = params.curvature_param(editing_slot, c).map(|p| p.value()).unwrap_or(0.0);
                             (t, o, cv)
                         });
 
+                        // Build visible curve set for this slot/mode. Mirrors the tab-strip
+                        // logic above so paint and tabs stay in lockstep.
+                        let active_layout_opt: Option<crate::dsp::modules::CurveLayout> =
+                            spec.active_layout.map(|f| {
+                                let mode_byte: u8 = match editing_type {
+                                    crate::dsp::modules::ModuleType::Past     => params.slot_past_mode.lock()[editing_slot]     as u8,
+                                    crate::dsp::modules::ModuleType::Future   => params.slot_future_mode.lock()[editing_slot]   as u8,
+                                    crate::dsp::modules::ModuleType::Circuit  => params.slot_circuit_mode.lock()[editing_slot]  as u8,
+                                    crate::dsp::modules::ModuleType::Life     => params.slot_life_mode.lock()[editing_slot]     as u8,
+                                    crate::dsp::modules::ModuleType::Modulate => params.slot_modulate_mode.lock()[editing_slot] as u8,
+                                    crate::dsp::modules::ModuleType::Rhythm   => params.slot_rhythm_mode.lock()[editing_slot]   as u8,
+                                    crate::dsp::modules::ModuleType::Punch    => params.slot_punch_mode.lock()[editing_slot]    as u8,
+                                    crate::dsp::modules::ModuleType::Harmony  => params.slot_harmony_mode.lock()[editing_slot]  as u8,
+                                    crate::dsp::modules::ModuleType::Geometry => params.slot_geometry_mode.lock()[editing_slot] as u8,
+                                    crate::dsp::modules::ModuleType::Kinetics => params.slot_kinetics_mode.lock()[editing_slot] as u8,
+                                    _ => 0u8,
+                                };
+                                f(mode_byte)
+                            });
+                        let visible_curves: Vec<(usize, &str)> = if let Some(layout) = active_layout_opt.as_ref() {
+                            layout.active.iter().map(|&idx| {
+                                let label = layout.label_overrides.iter()
+                                    .find_map(|&(c, l)| if c == idx { Some(l) } else { None })
+                                    .or_else(|| spec.curve_labels.get(idx as usize).copied())
+                                    .unwrap_or("");
+                                (idx as usize, label)
+                            }).collect()
+                        } else {
+                            spec.curve_labels.iter().enumerate()
+                                .map(|(i, l)| (i, *l))
+                                .collect()
+                        };
+
+                        // Snap editing_curve to first visible if the current selection is hidden.
+                        let editing_curve_visible = visible_curves.iter().any(|(i, _)| *i == editing_curve);
+                        if !editing_curve_visible {
+                            if let Some(&(first_visible, _)) = visible_curves.first() {
+                                *params.editing_curve.lock() = first_visible as u8;
+                            }
+                        }
+
+                        // total_history_seconds: live value derived from history-depth param +
+                        // current FFT hop. Consumed by display index 13 (Past TIME, "seconds, age").
+                        // All other display indices ignore the value.
+                        let total_history_seconds = {
+                            let depth_secs = params.history_depth.value().seconds();
+                            let hop = (fft_size / crate::dsp::pipeline::OVERLAP).max(1) as f32;
+                            let capacity_frames = ((depth_secs * sr) / hop).ceil().max(1.0);
+                            capacity_frames * (hop / sr.max(1.0))
+                        };
+
                         // Draw inactive curves (dim) — display_curve_idx maps to correct y-axis scale
-                        for i in 0..num_c.min(7) {
+                        for (i, _label) in visible_curves.iter().copied() {
                             if i == editing_curve { continue; }
+                            if i >= num_c.min(7) { continue; }
                             let (tilt, offset, curvature) = slot_meta[i];
                             let disp_i = crv::display_curve_idx(editing_type, i, slot_gain_mode_snap);
-                            let offset_fn = crate::editor::curve_config::curve_display_config(
+                            let cfg = crate::editor::curve_config::curve_display_config(
                                 editing_type, i, slot_gain_mode_snap,
-                            ).offset_fn;
+                            );
                             crv::paint_response_curve(
                                 ui.painter(), curve_rect, &all_gains[i], disp_i,
                                 spec.color_dim, 1.0,
                                 db_min, db_max, atk_ms, rel_ms, sr, fft_size, tilt, offset, curvature,
-                                offset_fn,
+                                &cfg, total_history_seconds,
                             );
                         }
 
                         // Draw active curve (lit) + interactive widget
-                        if editing_curve < num_c && !all_gains.is_empty() {
+                        if editing_curve_visible && editing_curve < num_c && !all_gains.is_empty() {
                             // Live SC envelope overlay — painted first so the active curve draws
                             // on top. SC affects every Gain mode, so show it for any Gain curve.
                             if editing_type == crate::dsp::modules::ModuleType::Gain {
@@ -440,19 +650,34 @@ pub fn create_editor(
                             let disp_curve = crv::display_curve_idx(
                                 editing_type, editing_curve, slot_gain_mode_snap,
                             );
-                            let offset_fn = crate::editor::curve_config::curve_display_config(
+                            let cfg = crate::editor::curve_config::curve_display_config(
                                 editing_type, editing_curve, slot_gain_mode_snap,
-                            ).offset_fn;
+                            );
                             crv::paint_response_curve(
                                 ui.painter(), curve_rect, &all_gains[editing_curve], disp_curve,
                                 spec.color_lit, 2.0,
                                 db_min, db_max, atk_ms, rel_ms, sr, fft_size, tilt, offset, curvature,
-                                offset_fn,
+                                &cfg, total_history_seconds,
                             );
 
                             let mut nodes = slot_nodes[editing_curve];
+                            let display_ctx = crv::NodeDisplayContext {
+                                gains:                 &all_gains[editing_curve],
+                                fft_size,
+                                tilt,
+                                offset,
+                                curvature,
+                                cfg:                   &cfg,
+                                db_min,
+                                db_max,
+                                global_attack_ms:      atk_ms,
+                                global_release_ms:     rel_ms,
+                                total_history_seconds,
+                                display_curve_idx:     disp_curve,
+                            };
                             let cwr = crv::curve_widget(
                                 ui, curve_rect, &mut nodes, editing_curve, sr,
+                                Some(&display_ctx),
                             );
                             if cwr.drag_started {
                                 for n in 0..crate::param_ids::NUM_NODES {
@@ -497,6 +722,12 @@ pub fn create_editor(
                                 }
                             }
 
+                            // Alt-click on a node opens the Modulation Ring overlay.
+                            if let Some((node_screen_pos, node_idx)) = cwr.alt_clicked_node {
+                                let anchor_data = Some((node_screen_pos, editing_slot, editing_curve, node_idx));
+                                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("mod_ring_anchor"), anchor_data));
+                            }
+
                             // Cursor tooltip — unified path driven by CurveDisplayConfig.
                             // See docs/superpowers/specs/2026-04-23-ui-parameter-spec-design.md §3.
                             if let Some(hover) = ui.input(|i| i.pointer.hover_pos()) {
@@ -506,10 +737,57 @@ pub fn create_editor(
                                     );
                                     crv::paint_hover_text(
                                         ui.painter(), hover, curve_rect, disp_curve, &hover_cfg,
-                                        db_min, db_max, sr,
+                                        db_min, db_max, total_history_seconds, atk_ms, rel_ms, sr,
                                     );
                                 }
                             }
+
+                            // Modulation Ring overlay — shown when a node was alt-clicked.
+                            {
+                                let anchor: Option<(egui::Pos2, usize, usize, usize)> =
+                                    ui.ctx().data(|d| d.get_temp(egui::Id::new("mod_ring_anchor"))).flatten();
+                                if let Some((anchor_pos, ring_slot, ring_curve, ring_node)) = anchor {
+                                    let ring_key = RingKey {
+                                        slot:  ring_slot  as u8,
+                                        curve: ring_curve as u8,
+                                        node:  ring_node  as u8,
+                                    };
+                                    // Read state from shared bank (lock scope: read only).
+                                    let state = if let Some(ref bank_arc) = ring_states {
+                                        bank_arc.lock().get(ring_key)
+                                    } else {
+                                        Default::default()
+                                    };
+                                    let toggle_clicked = mod_ring_overlay(ui, anchor_pos, ring_key, &state);
+                                    // Write on click (lock scope: write only, minimal duration).
+                                    if let Some(t) = toggle_clicked {
+                                        if let Some(ref bank_arc) = ring_states {
+                                            let was_set = state.is_set(t);
+                                            bank_arc.lock().set_toggle(ring_key, t, !was_set);
+                                        }
+                                    }
+                                    // Close the ring when a click lands outside the overlay dots.
+                                    // Note: egui's pointer.any_click() is NOT drained by per-widget
+                                    // interact() calls — both a dot's clicked() and any_click() can
+                                    // fire on the same frame. The toggle_clicked.is_none() guard is
+                                    // what actually distinguishes "click on dot" (do not close) from
+                                    // "click anywhere else" (close); event consumption is not doing
+                                    // the work here. Phase 4 maintainers: always pair with this guard.
+                                    if toggle_clicked.is_none() && ui.input(|i| i.pointer.any_click()) {
+                                        ui.ctx().data_mut(|d| d.insert_temp(
+                                            egui::Id::new("mod_ring_anchor"),
+                                            Option::<(egui::Pos2, usize, usize, usize)>::None,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+
+                        // Per-module non-curve UI panel (Phase 1 hook; defaults to no-op for
+                        // every shipped module). See `dsp/modules/mod.rs::PanelWidgetFn`.
+                        if let Some(panel_fn) = crate::dsp::modules::module_spec(editing_type).panel_widget {
+                            ui.separator();
+                            panel_fn(ui, params.as_ref(), setter, editing_slot);
                         }
                     }
 
@@ -591,6 +869,7 @@ pub fn create_editor(
                                 ui.id().with("slot_header_interact"),
                                 egui::Sense::click(),
                             );
+                            track_help(ui, &header_resp, HelpTopic::SlotName);
                             if header_resp.clicked() {
                                 ui.data_mut(|d| d.insert_temp(name_edit_key, true));
                             }
@@ -637,11 +916,11 @@ pub fn create_editor(
 
                                 let cur_mode = params.slot_gain_mode.lock()[edit_slot];
                                 use crate::dsp::modules::GainMode;
-                                for (label, mode) in [
-                                    ("Add",      GainMode::Add),
-                                    ("Subtract", GainMode::Subtract),
-                                    ("Pull",     GainMode::Pull),
-                                    ("Match",    GainMode::Match),
+                                for (label, hint, mode) in [
+                                    ("Add",      "Add the GAIN curve to the input spectrum (additive synthesis-style boost).", GainMode::Add),
+                                    ("Subtract", "Subtract the GAIN curve from the input spectrum (carve content away).",      GainMode::Subtract),
+                                    ("Pull",     "Pull bins toward the GAIN curve over PEAK HOLD time. The PEAK HOLD curve becomes the second active curve.", GainMode::Pull),
+                                    ("Match",    "Match the input spectrum to the GAIN curve shape (spectral matcher).",       GainMode::Match),
                                 ] {
                                     let is_active = cur_mode == mode;
                                     let fill     = if is_active { th::BORDER } else { th::BG };
@@ -652,8 +931,276 @@ pub fn create_editor(
                                     .fill(fill)
                                     .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
                                     let resp = ui.add(btn);
+                                    crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
                                     if is_gain && resp.clicked() {
                                         params.slot_gain_mode.lock()[edit_slot] = mode;
+                                    }
+                                }
+                            });
+                        });
+                        ui.add_space(2.0);
+                    }
+
+                    // ── Mode selector — visible only for Future and Punch modules, but the
+                    // row is still laid out invisibly for other modules so the knob
+                    // row below stays in the same vertical position regardless.
+                    {
+                        let edit_slot = *params.editing_slot.lock() as usize;
+                        let slot_type = params.slot_module_types.lock()[edit_slot];
+                        let is_future   = slot_type == crate::dsp::modules::ModuleType::Future;
+                        let is_punch    = slot_type == crate::dsp::modules::ModuleType::Punch;
+                        let is_rhythm   = slot_type == crate::dsp::modules::ModuleType::Rhythm;
+                        let is_geometry = slot_type == crate::dsp::modules::ModuleType::Geometry;
+                        let is_modulate = slot_type == crate::dsp::modules::ModuleType::Modulate;
+                        let is_circuit  = slot_type == crate::dsp::modules::ModuleType::Circuit;
+                        let is_life     = slot_type == crate::dsp::modules::ModuleType::Life;
+                        let is_past     = slot_type == crate::dsp::modules::ModuleType::Past;
+                        let is_kinetics = slot_type == crate::dsp::modules::ModuleType::Kinetics;
+                        let is_harmony  = slot_type == crate::dsp::modules::ModuleType::Harmony;
+
+                        let mut mode_builder = egui::UiBuilder::new();
+                        if !is_future && !is_punch && !is_rhythm && !is_geometry && !is_modulate && !is_circuit && !is_life && !is_past && !is_kinetics && !is_harmony { mode_builder = mode_builder.invisible(); }
+                        ui.scope_builder(mode_builder, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add_space(4.0);
+                                ui.label(egui::RichText::new("Mode").color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale)));
+                                ui.add_space(2.0);
+
+                                if is_future {
+                                    let cur_mode = params.slot_future_mode.lock()[edit_slot];
+                                    use crate::dsp::modules::FutureMode;
+                                    for (label, hint, mode) in [
+                                        ("Print-Thru", "Print-through — bleeds future spectral content backward into present, like analogue tape print-through.", FutureMode::PrintThrough),
+                                        ("Pre-Echo",   "Pre-echo — adds advance copies of upcoming transients before they arrive.",                              FutureMode::PreEcho),
+                                    ] {
+                                        let is_active = cur_mode == mode;
+                                        let fill     = if is_active { th::BORDER } else { th::BG };
+                                        let text_col = if is_active { egui::Color32::BLACK } else { th::LABEL_DIM };
+                                        let btn = egui::Button::new(
+                                            egui::RichText::new(label).color(text_col).size(th::scaled(th::FONT_SIZE_LABEL, scale))
+                                        )
+                                        .fill(fill)
+                                        .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
+                                        let resp = ui.add(btn);
+                                        crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
+                                        if resp.clicked() {
+                                            params.slot_future_mode.lock()[edit_slot] = mode;
+                                        }
+                                    }
+                                } else if is_punch {
+                                    let cur_mode = params.slot_punch_mode.lock()[edit_slot];
+                                    use crate::dsp::modules::punch::PunchMode;
+                                    for (label, hint, mode) in [
+                                        ("Direct",  "Direct — emphasise transients in the wet signal.",        PunchMode::Direct),
+                                        ("Inverse", "Inverse — duck transients (attenuate them on the way out).", PunchMode::Inverse),
+                                    ] {
+                                        let is_active = cur_mode == mode;
+                                        let fill     = if is_active { th::BORDER } else { th::BG };
+                                        let text_col = if is_active { egui::Color32::BLACK } else { th::LABEL_DIM };
+                                        let btn = egui::Button::new(
+                                            egui::RichText::new(label).color(text_col).size(th::scaled(th::FONT_SIZE_LABEL, scale))
+                                        )
+                                        .fill(fill)
+                                        .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
+                                        let resp = ui.add(btn);
+                                        crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
+                                        if resp.clicked() {
+                                            params.slot_punch_mode.lock()[edit_slot] = mode;
+                                        }
+                                    }
+                                } else if is_rhythm {
+                                    let cur_mode = params.slot_rhythm_mode.lock()[edit_slot];
+                                    use crate::dsp::modules::rhythm::RhythmMode;
+                                    for (label, hint, mode) in [
+                                        ("Euclidean",   "Euclidean — distributes pulses evenly across the bar (k pulses in n steps).",            RhythmMode::Euclidean),
+                                        ("Arpeggiator", "Arpeggiator — sequences active spectral peaks rhythmically across the chosen pattern.",  RhythmMode::Arpeggiator),
+                                        ("Phase Reset", "Phase Reset — re-zeros bin phases on the rhythm pulse for tight, percussive transients.", RhythmMode::PhaseReset),
+                                    ] {
+                                        let is_active = cur_mode == mode;
+                                        let fill     = if is_active { th::BORDER } else { th::BG };
+                                        let text_col = if is_active { egui::Color32::BLACK } else { th::LABEL_DIM };
+                                        let btn = egui::Button::new(
+                                            egui::RichText::new(label).color(text_col).size(th::scaled(th::FONT_SIZE_LABEL, scale))
+                                        )
+                                        .fill(fill)
+                                        .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
+                                        let resp = ui.add(btn);
+                                        crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
+                                        if resp.clicked() {
+                                            params.slot_rhythm_mode.lock()[edit_slot] = mode;
+                                        }
+                                    }
+                                } else if is_geometry {
+                                    let cur_mode = params.slot_geometry_mode.lock()[edit_slot];
+                                    use crate::dsp::modules::geometry::GeometryMode;
+                                    for (label, hint, mode) in [
+                                        ("Chladni",   "Chladni — emphasises nodal-line frequencies of a vibrating-plate model. Carves resonances along the plate's modal pattern.", GeometryMode::Chladni),
+                                        ("Helmholtz", "Helmholtz — resonates a single frequency band like a Helmholtz cavity (cylindrical neck + cavity volume).",                  GeometryMode::Helmholtz),
+                                    ] {
+                                        let is_active = cur_mode == mode;
+                                        let fill     = if is_active { th::BORDER } else { th::BG };
+                                        let text_col = if is_active { egui::Color32::BLACK } else { th::LABEL_DIM };
+                                        let btn = egui::Button::new(
+                                            egui::RichText::new(label).color(text_col).size(th::scaled(th::FONT_SIZE_LABEL, scale))
+                                        )
+                                        .fill(fill)
+                                        .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
+                                        let resp = ui.add(btn);
+                                        crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
+                                        if resp.clicked() {
+                                            params.slot_geometry_mode.lock()[edit_slot] = mode;
+                                        }
+                                    }
+                                } else if is_modulate {
+                                    let cur_mode = params.slot_modulate_mode.lock()[edit_slot];
+                                    use crate::dsp::modules::modulate::ModulateMode;
+                                    for (label, hint, mode) in [
+                                        ("Phase Phaser", "Phase Phaser — sweeps notch-comb across the spectrum via per-bin phase rotation.",                                                  ModulateMode::PhasePhaser),
+                                        ("Bin Swapper",  "Bin Swapper — pseudo-randomly transposes bin pairs at the rate set by the SPEED curve.",                                              ModulateMode::BinSwapper),
+                                        ("RM/FM",        "RM/FM Matrix — ring/frequency modulates each bin against an internal carrier matrix for sideband colours.",                          ModulateMode::RmFmMatrix),
+                                        ("Diode RM",     "Diode RM — ring mod through a soft-clipping diode model, giving asymmetric harmonics.",                                                ModulateMode::DiodeRm),
+                                        ("Ground Loop",  "Ground Loop — injects a 50/60 Hz hum-style modulator that beats with low-frequency content.",                                          ModulateMode::GroundLoop),
+                                        ("Gravity",      "Gravity Phaser — pulls/pushes bins toward a moving gravity well; combine with Repel to invert and SC-pos to position via sidechain.", ModulateMode::GravityPhaser),
+                                        ("PLL Tear",     "PLL Tear — phase-locked loop on dominant peaks; modulation introduces controlled lock-loss artefacts.",                                ModulateMode::PllTear),
+                                        ("FM Network",   "FM Network — graph of frequency-modulating bin pairs producing complex sideband structures.",                                          ModulateMode::FmNetwork),
+                                    ] {
+                                        let is_active = cur_mode == mode;
+                                        let fill     = if is_active { th::BORDER } else { th::BG };
+                                        let text_col = if is_active { egui::Color32::BLACK } else { th::LABEL_DIM };
+                                        let btn = egui::Button::new(
+                                            egui::RichText::new(label).color(text_col).size(th::scaled(th::FONT_SIZE_LABEL, scale))
+                                        )
+                                        .fill(fill)
+                                        .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
+                                        let resp = ui.add(btn);
+                                        crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
+                                        if resp.clicked() {
+                                            params.slot_modulate_mode.lock()[edit_slot] = mode;
+                                        }
+                                    }
+                                    if cur_mode == ModulateMode::GravityPhaser {
+                                        ui.add_space(6.0);
+                                        {
+                                            let mut repel = params.slot_modulate_repel.lock()[edit_slot];
+                                            let resp = ui.checkbox(
+                                                &mut repel,
+                                                egui::RichText::new("Repel").size(th::scaled(th::FONT_SIZE_LABEL, scale)),
+                                            );
+                                            track_help(ui, &resp, HelpTopic::ModulateRepel);
+                                            if resp.changed() {
+                                                params.slot_modulate_repel.lock()[edit_slot] = repel;
+                                            }
+                                        }
+                                        {
+                                            let mut scp = params.slot_modulate_sc_positioned.lock()[edit_slot];
+                                            let resp = ui.checkbox(
+                                                &mut scp,
+                                                egui::RichText::new("SC-pos").size(th::scaled(th::FONT_SIZE_LABEL, scale)),
+                                            );
+                                            track_help(ui, &resp, HelpTopic::ModulateScPositioned);
+                                            if resp.changed() {
+                                                params.slot_modulate_sc_positioned.lock()[edit_slot] = scp;
+                                            }
+                                        }
+                                    }
+                                } else if is_circuit {
+                                    let cur_mode = params.slot_circuit_mode.lock()[edit_slot];
+                                    let label = crate::editor::circuit_popup::mode_label(cur_mode);
+                                    let hint  = crate::editor::circuit_popup::mode_hint(cur_mode);
+                                    let btn_text = format!("Mode: {}", label);
+                                    let btn = egui::Button::new(
+                                        egui::RichText::new(btn_text).color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale))
+                                    )
+                                    .fill(th::BG)
+                                    .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
+                                    let resp = ui.add(btn);
+                                    crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
+                                    if resp.clicked() {
+                                        crate::editor::circuit_popup::open_at(ui, edit_slot, resp.rect.right_top());
+                                    }
+                                } else if is_life {
+                                    let cur_mode = params.slot_life_mode.lock()[edit_slot];
+                                    let label = crate::editor::life_popup::mode_label(cur_mode);
+                                    let hint  = crate::editor::life_popup::mode_hint(cur_mode);
+                                    let btn_text = format!("Mode: {}", label);
+                                    let btn = egui::Button::new(
+                                        egui::RichText::new(btn_text).color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale))
+                                    )
+                                    .fill(th::BG)
+                                    .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
+                                    let resp = ui.add(btn);
+                                    crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
+                                    if resp.clicked() {
+                                        crate::editor::life_popup::open_at(ui, edit_slot, resp.rect.right_top());
+                                    }
+                                } else if is_past {
+                                    let cur_mode = params.slot_past_mode.lock()[edit_slot];
+                                    ui.horizontal(|ui| {
+                                        for &(mode, label, hint) in crate::editor::past_popup::MODES {
+                                            let selected = cur_mode == mode;
+                                            let resp = ui.selectable_label(selected,
+                                                egui::RichText::new(label)
+                                                    .color(if selected { th::MODULE_COLOR_LIT } else { th::LABEL_DIM })
+                                                    .size(th::scaled(th::FONT_SIZE_LABEL, scale))
+                                            ).on_hover_text(hint);
+                                            crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
+                                            if resp.clicked() && !selected {
+                                                params.slot_past_mode.lock()[edit_slot] = mode;
+                                            }
+                                        }
+                                    });
+                                    let mode_now = params.slot_past_mode.lock()[edit_slot];
+                                    if mode_now == crate::dsp::modules::past::PastMode::DecaySorter {
+                                        let cur_key = params.slot_past_sort_key.lock()[edit_slot];
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new("Sort:")
+                                                    .color(th::LABEL_DIM)
+                                                    .size(th::scaled(th::FONT_SIZE_LABEL, scale))
+                                            );
+                                            for &(sort_key, sort_label, sort_hint) in crate::editor::past_popup::SORT_KEYS {
+                                                let selected = cur_key == sort_key;
+                                                let resp = ui.selectable_label(selected,
+                                                    egui::RichText::new(sort_label)
+                                                        .color(if selected { th::MODULE_COLOR_LIT } else { th::LABEL_DIM })
+                                                        .size(th::scaled(th::FONT_SIZE_LABEL, scale))
+                                                );
+                                                crate::editor::help_box::track_help_strings(ui, &resp, sort_label, sort_hint);
+                                                if resp.clicked() && !selected {
+                                                    params.slot_past_sort_key.lock()[edit_slot] = sort_key;
+                                                }
+                                            }
+                                        });
+                                    }
+                                } else if is_kinetics {
+                                    let cur_mode = params.slot_kinetics_mode.lock()[edit_slot];
+                                    let label = crate::editor::kinetics_popup::mode_label(cur_mode);
+                                    let hint  = crate::editor::kinetics_popup::mode_hint(cur_mode);
+                                    let btn_text = format!("Mode: {}", label);
+                                    let btn = egui::Button::new(
+                                        egui::RichText::new(btn_text).color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale))
+                                    )
+                                    .fill(th::BG)
+                                    .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
+                                    let resp = ui.add(btn);
+                                    crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
+                                    if resp.clicked() {
+                                        crate::editor::kinetics_popup::open_at(ui, edit_slot, resp.rect.right_top());
+                                    }
+                                } else if is_harmony {
+                                    let cur_mode = params.slot_harmony_mode.lock()[edit_slot];
+                                    let label = crate::editor::harmony_popup::mode_label(cur_mode);
+                                    let hint  = crate::editor::harmony_popup::mode_hint(cur_mode);
+                                    let btn_text = format!("Mode: {}", label);
+                                    let btn = egui::Button::new(
+                                        egui::RichText::new(btn_text).color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale))
+                                    )
+                                    .fill(th::BG)
+                                    .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
+                                    let resp = ui.add(btn);
+                                    crate::editor::help_box::track_help_strings(ui, &resp, label, hint);
+                                    if resp.clicked() {
+                                        crate::editor::harmony_popup::open_at(ui, edit_slot, resp.rect.right_top());
                                     }
                                 }
                             });
@@ -664,9 +1211,10 @@ pub fn create_editor(
                     use nih_plug_egui::widgets::ParamSlider;
 
                     macro_rules! knob {
-                        ($ui:expr, $param:expr, $label:expr) => {{
+                        ($ui:expr, $param:expr, $label:expr, $topic:expr) => {{
                             $ui.vertical(|ui| {
-                                ui.add(ParamSlider::for_param($param, setter).with_width(36.0));
+                                let resp = ui.add(ParamSlider::for_param($param, setter).with_width(36.0));
+                                track_help(ui, &resp, $topic);
                                 ui.label(
                                     egui::RichText::new($label).color(th::LABEL_DIM).size(th::scaled(th::FONT_SIZE_LABEL, scale)),
                                 );
@@ -674,7 +1222,7 @@ pub fn create_editor(
                         }};
                     }
 
-                    let toggle = |ui: &mut egui::Ui, val: bool, label: &str| -> bool {
+                    let toggle = |ui: &mut egui::Ui, val: bool, label: &str, topic: HelpTopic| -> bool {
                         let (fill, text_color) = if val {
                             (th::BORDER, th::BG)
                         } else {
@@ -685,30 +1233,41 @@ pub fn create_editor(
                         )
                         .fill(fill)
                         .stroke(egui::Stroke::new(th::scaled_stroke(th::STROKE_BORDER, scale), th::BORDER));
-                        ui.add(btn).clicked()
+                        let resp = ui.add(btn);
+                        track_help(ui, &resp, topic);
+                        resp.clicked()
                     };
 
                     // Row 1 — always visible: global gain/mix + toggle buttons
                     ui.horizontal(|ui| {
-                        knob!(ui, &params.input_gain,  "IN");
-                        knob!(ui, &params.output_gain, "OUT");
-                        knob!(ui, &params.mix,         "MIX");
+                        knob!(ui, &params.input_gain,  "IN",  HelpTopic::InputGain);
+                        knob!(ui, &params.output_gain, "OUT", HelpTopic::OutputGain);
+                        knob!(ui, &params.mix,         "MIX", HelpTopic::Mix);
 
                         ui.add_space(8.0);
 
                         let auto_mk = params.auto_makeup.value();
-                        if toggle(ui, auto_mk, "AUTO MK") {
+                        if toggle(ui, auto_mk, "AUTO MK", HelpTopic::AutoMakeup) {
                             setter.begin_set_parameter(&params.auto_makeup);
                             setter.set_parameter(&params.auto_makeup, !auto_mk);
                             setter.end_set_parameter(&params.auto_makeup);
                         }
                         ui.add_space(4.0);
                         let delta = params.delta_monitor.value();
-                        if toggle(ui, delta, "DELTA") {
+                        if toggle(ui, delta, "DELTA", HelpTopic::DeltaMonitor) {
                             setter.begin_set_parameter(&params.delta_monitor);
                             setter.set_parameter(&params.delta_monitor, !delta);
                             setter.end_set_parameter(&params.delta_monitor);
                         }
+                        ui.add_space(4.0);
+                        let clip_enabled = params.master_clip_enabled.value();
+                        if toggle(ui, clip_enabled, "CLIP", HelpTopic::MasterClip) {
+                            setter.begin_set_parameter(&params.master_clip_enabled);
+                            setter.set_parameter(&params.master_clip_enabled, !clip_enabled);
+                            setter.end_set_parameter(&params.master_clip_enabled);
+                        }
+                        ui.add_space(2.0);
+                        knob!(ui, &params.master_clip_threshold_db, "THR", HelpTopic::MasterClipThreshold);
                     });
 
                     ui.add_space(2.0);
@@ -726,8 +1285,16 @@ pub fn create_editor(
                         .min(crate::dsp::modules::module_spec(editing_type).num_curves.saturating_sub(1));
 
                     let is_dynamics = editing_type == crate::dsp::modules::ModuleType::Dynamics;
+                    let is_contrast = editing_type == crate::dsp::modules::ModuleType::Contrast;
+                    let is_rhythm   = editing_type == crate::dsp::modules::ModuleType::Rhythm;
+                    // Show the Atk/Rel/Sens/Width group for both Dynamics and
+                    // Contrast — Contrast uses the same envelope-follower
+                    // params internally. Group label changes per module so
+                    // the user knows what's being controlled.
+                    let show_dyn_group = is_dynamics || is_contrast;
+                    let group_label = if is_contrast { "Contrast" } else { "Dynamics" };
                     let mut dyn_builder = egui::UiBuilder::new();
-                    if !is_dynamics { dyn_builder = dyn_builder.invisible(); }
+                    if !show_dyn_group { dyn_builder = dyn_builder.invisible(); }
                     ui.scope_builder(dyn_builder, |ui| {
                         ui.horizontal(|ui| {
                             let dyn_frame = egui::Frame::new()
@@ -735,17 +1302,29 @@ pub fn create_editor(
                                 .inner_margin(egui::Margin { left: 4, right: 4, top: 4, bottom: 4 });
                             let dyn_resp = dyn_frame.show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    knob!(ui, &params.attack_ms,         "Atk");
-                                    knob!(ui, &params.release_ms,        "Rel");
-                                    knob!(ui, &params.sensitivity,       "Sens");
-                                    knob!(ui, &params.suppression_width, "Width");
+                                    knob!(ui, &params.attack_ms,         "Atk",   HelpTopic::DynAttack);
+                                    knob!(ui, &params.release_ms,        "Rel",   HelpTopic::DynRelease);
+                                    knob!(ui, &params.sensitivity,       "Sens",  HelpTopic::DynSensitivity);
+                                    knob!(ui, &params.suppression_width, "Width", HelpTopic::DynSuppressionWidth);
                                 });
                             });
                             let lbl_pos = dyn_resp.response.rect.left_top() + egui::vec2(4.0, 0.0);
                             ui.painter().text(
-                                lbl_pos, egui::Align2::LEFT_TOP, "Dynamics",
+                                lbl_pos, egui::Align2::LEFT_TOP, group_label,
                                 egui::FontId::proportional(th::scaled(th::FONT_SIZE_TINY, scale)), th::LABEL_DIM,
                             );
+
+                            // Rhythm Arpeggiator grid (E-2 follow-up, 2026-05-08).
+                            // Shares the same row as the Dynamics group so it
+                            // doesn't push other UI down. Renders inline only
+                            // for Rhythm + Arpeggiator mode; otherwise the
+                            // space is empty (other modes don't use the grid).
+                            if is_rhythm {
+                                ui.add_space(8.0);
+                                crate::editor::rhythm_panel::render(
+                                    ui, params.as_ref(), setter, editing_slot,
+                                );
+                            }
                         });
                     });
 
@@ -755,7 +1334,42 @@ pub fn create_editor(
                     // for every module type, fixed vertical position.
                     ui.horizontal(|ui| {
                         let spec = crate::dsp::modules::module_spec(editing_type);
-                        if editing_curve < spec.num_curves {
+
+                        // Mirror the tab-strip / paint-loop visibility filter so the
+                        // Offset/Tilt/Curv row only renders for currently visible curves
+                        // when the module declares an `active_layout` (e.g. Past).
+                        let active_layout_opt: Option<crate::dsp::modules::CurveLayout> =
+                            spec.active_layout.map(|f| {
+                                let mode_byte: u8 = match editing_type {
+                                    crate::dsp::modules::ModuleType::Past     => params.slot_past_mode.lock()[editing_slot]     as u8,
+                                    crate::dsp::modules::ModuleType::Future   => params.slot_future_mode.lock()[editing_slot]   as u8,
+                                    crate::dsp::modules::ModuleType::Circuit  => params.slot_circuit_mode.lock()[editing_slot]  as u8,
+                                    crate::dsp::modules::ModuleType::Life     => params.slot_life_mode.lock()[editing_slot]     as u8,
+                                    crate::dsp::modules::ModuleType::Modulate => params.slot_modulate_mode.lock()[editing_slot] as u8,
+                                    crate::dsp::modules::ModuleType::Rhythm   => params.slot_rhythm_mode.lock()[editing_slot]   as u8,
+                                    crate::dsp::modules::ModuleType::Punch    => params.slot_punch_mode.lock()[editing_slot]    as u8,
+                                    crate::dsp::modules::ModuleType::Harmony  => params.slot_harmony_mode.lock()[editing_slot]  as u8,
+                                    crate::dsp::modules::ModuleType::Geometry => params.slot_geometry_mode.lock()[editing_slot] as u8,
+                                    crate::dsp::modules::ModuleType::Kinetics => params.slot_kinetics_mode.lock()[editing_slot] as u8,
+                                    _ => 0u8,
+                                };
+                                f(mode_byte)
+                            });
+                        let editing_curve_in_layout = match active_layout_opt.as_ref() {
+                            Some(layout) => layout.active.iter().any(|&i| i as usize == editing_curve),
+                            None => true,
+                        };
+
+                        // Live total_history_seconds for Past TIME (display index 13);
+                        // ignored by every other display index inside `gain_to_display`.
+                        let total_history_seconds = {
+                            let depth_secs = params.history_depth.value().seconds();
+                            let hop = (fft_size / crate::dsp::pipeline::OVERLAP).max(1) as f32;
+                            let capacity_frames = ((depth_secs * sr) / hop).ceil().max(1.0);
+                            capacity_frames * (hop / sr.max(1.0))
+                        };
+
+                        if editing_curve_in_layout && editing_curve < spec.num_curves {
                             ui.add_space(4.0);
                             let crv_col = spec.color_lit;
                             let curve_label = spec.curve_labels.get(editing_curve).copied().unwrap_or("");
@@ -772,25 +1386,36 @@ pub fn create_editor(
                                 let off_rel_ms  = rel_ms;
                                 let off_db_min  = db_min;
                                 let off_db_max  = db_max;
+                                let off_total_history_seconds = total_history_seconds;
                                 ui.vertical(|ui| {
                                     let resp = ui.add(
                                         egui::DragValue::new(&mut off_norm)
                                             .range(-1.0..=1.0)
                                             .speed(1.0 / 300.0)
                                             .custom_formatter(move |v, _range| {
-                                                let g_off = (off_cfg.offset_fn)(1.0, v as f32);
-                                                let phys = crv::gain_to_display(
-                                                    off_disp_idx, g_off,
-                                                    off_atk_ms, off_rel_ms,
-                                                    off_db_min, off_db_max,
-                                                );
+                                                // UI parameter spec §2: offset slider value uses
+                                                // axis_aware_lerp between the curve's three declared
+                                                // anchors (y_min, y_natural, y_max) — geometric on
+                                                // log-axis curves, linear on linear-axis curves.
+                                                // Independent of offset_fn — the audio path uses
+                                                // offset_fn separately (see apply_curve_transform).
+                                                //
+                                                // Modules without a calibrated config (y_label="")
+                                                // fall back to showing the raw normalised value so
+                                                // the drag is visible.
                                                 if off_cfg.y_label.is_empty() {
-                                                    format!("{:.2}", phys)
-                                                } else {
-                                                    format!("{:.1} {}", phys, off_cfg.y_label)
+                                                    return format!("{:+.2}", v as f32);
                                                 }
+                                                let anchors = crv::runtime_anchors(
+                                                    &off_cfg, off_disp_idx, off_total_history_seconds,
+                                                    off_db_min, off_db_max,
+                                                    off_atk_ms, off_rel_ms,
+                                                );
+                                                let phys = crv::axis_aware_lerp(&off_cfg, anchors, v as f32);
+                                                format!("{:.1} {}", phys, off_cfg.y_label)
                                             })
                                     );
+                                    track_help(ui, &resp, HelpTopic::Offset);
                                     if resp.drag_started() { setter.begin_set_parameter(off_p); }
                                     if resp.changed() {
                                         let clamped = off_norm.clamp(-1.0, 1.0);
@@ -812,6 +1437,7 @@ pub fn create_editor(
                                             .speed(1.0 / 300.0)
                                             .fixed_decimals(2)
                                     );
+                                    track_help(ui, &resp, HelpTopic::Tilt);
                                     if resp.drag_started() { setter.begin_set_parameter(tilt_p); }
                                     if resp.changed() {
                                         let clamped = tilt_norm.clamp(-1.0, 1.0);
@@ -833,6 +1459,7 @@ pub fn create_editor(
                                             .speed(1.0 / 300.0)
                                             .fixed_decimals(2)
                                     );
+                                    track_help(ui, &resp, HelpTopic::Curvature);
                                     if resp.drag_started() { setter.begin_set_parameter(curv_p); }
                                     if resp.changed() { setter.set_parameter(curv_p, curv_val.clamp(0.0, 1.0)); }
                                     if resp.drag_stopped() { setter.end_set_parameter(curv_p); }
@@ -862,23 +1489,32 @@ pub fn create_editor(
 
                     // ScrollArea allows the matrix to scroll when the window is too short
                     // to display all rows (e.g. at large scale on a small screen).
-                    let interaction = {
-                        let mut route_guard = params.route_matrix.lock();
-                        let route_matrix_ref = &mut *route_guard;
-                        egui::ScrollArea::vertical()
-                            .id_salt("matrix_scroll")
-                            .show(ui, |ui| {
-                                crate::editor::fx_matrix_grid::paint_fx_matrix_grid(
-                                    ui,
-                                    &types_snap,
-                                    &names_snap,
-                                    route_matrix_ref,
-                                    edit_slot,
-                                    scale,
-                                )
-                            })
-                            .inner
-                    };
+                    // Lay out the matrix and the help-box side by side; help-box sits to
+                    // the right with a fixed width (`HELP_BOX_WIDTH`).
+                    let interaction = ui.horizontal_top(|ui| {
+                        let interaction = {
+                            let mut route_guard = params.route_matrix.lock();
+                            let route_matrix_ref = &mut *route_guard;
+                            egui::ScrollArea::vertical()
+                                .id_salt("matrix_scroll")
+                                .show(ui, |ui| {
+                                    crate::editor::fx_matrix_grid::paint_fx_matrix_grid(
+                                        ui,
+                                        setter,
+                                        params.as_ref(),
+                                        &types_snap,
+                                        &names_snap,
+                                        route_matrix_ref,
+                                        edit_slot,
+                                        scale,
+                                    )
+                                })
+                                .inner
+                        };
+                        ui.add_space(8.0);
+                        crate::editor::help_box::draw(ui, &params, scale);
+                        interaction
+                    }).inner;
                     if let Some(new_slot) = interaction.left_click_slot {
                         *params.editing_slot.lock() = new_slot as u8;
                     }
@@ -886,8 +1522,62 @@ pub fn create_editor(
                     if let Some((slot, pos)) = interaction.right_click {
                         crate::editor::module_popup::open_popup(ui, slot, pos);
                     }
-                    // Render popup (egui Area — appears above matrix)
-                    let _ = crate::editor::module_popup::show_popup(ui, &params, scale);
+                    // Handle right-click on a send cell → open amp popup
+                    if let Some((row, col, pos)) = interaction.amp_right_click {
+                        crate::editor::amp_popup::open_at(ui, row, col, pos);
+                    }
+                    // Render popups (egui Area — appears above matrix)
+                    if let Some(changed_slot) = crate::editor::module_popup::show_popup(ui, &params, scale) {
+                        // Reset graph_node FloatParam atomics so the editor display matches.
+                        // assign_module already wrote the correct defaults into slot_curve_nodes;
+                        // we mirror those through setter so param.value() is also updated.
+                        let nodes_snap = params.slot_curve_nodes.lock()[changed_slot];
+                        for c in 0..7 {
+                            for n in 0..crate::param_ids::NUM_NODES {
+                                if let Some((x_p, y_p, q_p)) = params.graph_node(changed_slot, c, n) {
+                                    let node = nodes_snap[c][n];
+                                    setter.set_parameter(x_p, node.x);
+                                    setter.set_parameter(y_p, node.y);
+                                    setter.set_parameter(q_p, node.q);
+                                }
+                            }
+                        }
+                        // Reset tilt/offset/curvature FloatParam atomics so the slider UI matches.
+                        // assign_module reset the smoothers; the setter writes mirror the FloatParam
+                        // values through nih-plug's host-aware path so .value() also reads the
+                        // correct default (+1.0 for natural-at-max curves, 0.0 otherwise).
+                        let new_module_ty  = params.slot_module_types.lock()[changed_slot];
+                        let new_gain_mode  = params.slot_gain_mode.lock()[changed_slot];
+                        for (c, kind, value) in crate::editor::module_popup::transform_reset_pairs(
+                            changed_slot, new_module_ty, new_gain_mode,
+                        ) {
+                            let p = match kind {
+                                "tilt"      => params.tilt_param(changed_slot, c),
+                                "offset"    => params.offset_param(changed_slot, c),
+                                "curvature" => params.curvature_param(changed_slot, c),
+                                _ => None,
+                            };
+                            if let Some(fp) = p {
+                                setter.set_parameter(fp, value);
+                            }
+                        }
+                        // Republish all 7 curves to curve_tx so DSP sees reset nodes immediately.
+                        use crate::dsp::pipeline::MAX_NUM_BINS;
+                        if let Some(slot_chs) = curve_tx.get(changed_slot) {
+                            for (c, tx_arc) in slot_chs.iter().enumerate().take(7) {
+                                let gains = crv::compute_curve_response(&nodes_snap[c], MAX_NUM_BINS, sr, fft_size);
+                                if let Some(mut tx) = tx_arc.try_lock() {
+                                    tx.input_buffer_mut().copy_from_slice(&gains);
+                                    tx.publish();
+                                }
+                            }
+                        }
+                    }
+                    let _ = crate::editor::amp_popup::show_popup(ui, &params, scale);
+                    let _ = crate::editor::circuit_popup::show_popup(ui, &params, scale);
+                    let _ = crate::editor::life_popup::show_popup(ui, &params, scale);
+                    let _ = crate::editor::kinetics_popup::show_popup(ui, &params, scale);
+                    let _ = crate::editor::harmony_popup::show_popup(ui, &params, scale);
 
                     // Persist preset menu state across frames via egui temp storage.
                     ui.ctx().data_mut(|d| d.insert_temp(preset_key, preset_state.clone()));
@@ -922,6 +1612,7 @@ fn sc_strip_ui(
                         if v <= -90.0 { "−∞".to_owned() } else { format!("{:.1}", v) }
                     })
             );
+            track_help(ui, &resp, HelpTopic::ScGain);
             if resp.changed() {
                 params.slot_sc_gain_db.lock()[slot_idx] = g;
             }
@@ -938,7 +1629,7 @@ fn sc_strip_ui(
                 ScChannel::M  => "M",
                 ScChannel::S  => "S",
             };
-            egui::ComboBox::new(("sc_chan_slot", slot_idx), "Source")
+            let combo = egui::ComboBox::new(("sc_chan_slot", slot_idx), "Source")
                 .selected_text(label)
                 .show_ui(ui, |ui| {
                     for (v, text) in [
@@ -954,6 +1645,7 @@ fn sc_strip_ui(
                         }
                     }
                 });
+            track_help(ui, &combo.response, HelpTopic::ScChannel);
         }
     });
 }

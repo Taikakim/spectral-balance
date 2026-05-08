@@ -25,6 +25,8 @@ pub struct SpectralForge {
     gui_suppression_rx:    Option<Arc<parking_lot::Mutex<triple_buffer::Output<Vec<f32>>>>>,
     gui_sc_envelope_rx:    Option<Arc<parking_lot::Mutex<triple_buffer::Output<Vec<f32>>>>>,
     gui_sidechain_active: Option<Arc<std::sync::atomic::AtomicBool>>,
+    gui_reset_requested: Option<Arc<std::sync::atomic::AtomicBool>>,
+    gui_ring_states: Option<Arc<parking_lot::Mutex<crate::dsp::modulation_ring::RingStateBank>>>,
     /// Liveness token: the editor holds a Weak clone of this. When the plugin
     /// is destroyed (this Arc drops), the editor detects it and closes itself.
     plugin_alive: Arc<()>,
@@ -46,6 +48,8 @@ impl Default for SpectralForge {
         let gui_suppression_rx   = Some(shared.suppression_rx.clone());
         let gui_sc_envelope_rx   = Some(shared.sc_envelope_rx.clone());
         let gui_sidechain_active = Some(shared.sidechain_active.clone());
+        let gui_reset_requested  = Some(shared.reset_requested.clone());
+        let gui_ring_states      = Some(shared.ring_states.clone());
 
         Self {
             params:   Arc::new(SpectralForgeParams::default()),
@@ -58,6 +62,8 @@ impl Default for SpectralForge {
             gui_suppression_rx,
             gui_sc_envelope_rx,
             gui_sidechain_active,
+            gui_reset_requested,
+            gui_ring_states,
             plugin_alive: Arc::new(()),
             num_channels: 2,
             sample_rate:  dummy_sr,
@@ -66,11 +72,15 @@ impl Default for SpectralForge {
 }
 
 impl Plugin for SpectralForge {
+    #[cfg(not(feature = "dev-build"))]
     const NAME: &'static str = "Spectral Forge";
+    #[cfg(feature = "dev-build")]
+    const NAME: &'static str = "Spectral Forge (Dev)";
     const VENDOR: &'static str = "Kim";
     const URL: &'static str = "";
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
+    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
         // Layout 0: stereo with 1 aux stereo sidechain input
         AudioIOLayout {
@@ -101,6 +111,8 @@ impl Plugin for SpectralForge {
             self.gui_suppression_rx.clone(),
             self.gui_sc_envelope_rx.clone(),
             self.gui_sidechain_active.clone(),
+            self.gui_reset_requested.clone(),
+            self.gui_ring_states.clone(),
             Arc::downgrade(&self.plugin_alive),
         )
     }
@@ -127,7 +139,8 @@ impl Plugin for SpectralForge {
         let max_num_bins = dsp::pipeline::MAX_NUM_BINS;
 
         let slot_types = *self.params.slot_module_types.lock();
-        self.pipeline = Some(dsp::pipeline::Pipeline::new(sr, num_ch, fft_size, &slot_types));
+        let history_depth_seconds = self.params.history_depth.value().seconds();
+        self.pipeline = Some(dsp::pipeline::Pipeline::new(sr, num_ch, fft_size, &slot_types, history_depth_seconds));
         context.set_latency_samples(fft_size as u32);
 
         if let Some(ref sh) = self.shared {
@@ -178,7 +191,7 @@ impl Plugin for SpectralForge {
 
         // Old state: decode legacy persist fields and inject graph-node / tilt / matrix values
         // into state.params so nih-plug's normal deserialization path sets param.value() correctly.
-        use crate::param_ids::{NUM_SLOTS, NUM_CURVES, NUM_NODES, NUM_MATRIX_ROWS, graph_node_id, matrix_id};
+        use crate::param_ids::{NUM_SLOTS, NUM_CURVES, NUM_NODES, NUM_MATRIX_ROWS, NUM_MATRIX_SOURCES, graph_node_id, matrix_id};
         use nih_plug::wrapper::state::ParamValue;
 
         // ── Graph nodes ───────────────────────────────────────────────────────
@@ -203,8 +216,8 @@ impl Plugin for SpectralForge {
         // ── Matrix: send[src][dst] → matrix_cell(dst=r, src=col) ────────────
         if let Some(matrix_json) = state.fields.get("route_matrix") {
             if let Ok(route_matrix) = serde_json::from_str::<crate::dsp::modules::RouteMatrix>(matrix_json) {
-                for r in 0..NUM_MATRIX_ROWS {    // r = dst
-                    for col in 0..NUM_SLOTS {    // col = src
+                for r in 0..NUM_MATRIX_ROWS {        // r = dst (0..9)
+                    for col in 0..NUM_MATRIX_SOURCES { // col = src (0..13)
                         let val = route_matrix.send[col][r];
                         state.params.entry(matrix_id(r, col))
                             .or_insert_with(|| ParamValue::F32(val));
@@ -219,7 +232,8 @@ impl Plugin for SpectralForge {
 
     fn reset(&mut self) {
         if let Some(pipeline) = &mut self.pipeline {
-            pipeline.reset(self.sample_rate, self.num_channels);
+            let history_depth_seconds = self.params.history_depth.value().seconds();
+            pipeline.reset(self.sample_rate, self.num_channels, history_depth_seconds);
         }
     }
 
@@ -227,18 +241,31 @@ impl Plugin for SpectralForge {
         &mut self,
         buffer: &mut Buffer,
         aux: &mut AuxiliaryBuffers,
-        _ctx: &mut impl ProcessContext<Self>,
+        ctx: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         dsp::guard::flush_denormals();
         if let (Some(pipeline), Some(shared)) = (&mut self.pipeline, &mut self.shared) {
-            pipeline.process(buffer, aux, shared, &self.params);
+            // Drain MIDI events before audio processing — the held-notes state used
+            // by the closure must reflect the start-of-block keyboard state.
+            // Sample-accurate per-hop note timing is deferred to v2 (see Phase 6 umbrella).
+            while let Some(event) = ctx.next_event() {
+                match event {
+                    NoteEvent::NoteOn { note, .. }  => pipeline.note_on(note),
+                    NoteEvent::NoteOff { note, .. } => pipeline.note_off(note),
+                    _ => {}
+                }
+            }
+            pipeline.process(buffer, aux, shared, &self.params, ctx.transport());
         }
         ProcessStatus::Normal
     }
 }
 
 impl ClapPlugin for SpectralForge {
+    #[cfg(not(feature = "dev-build"))]
     const CLAP_ID: &'static str = "com.spectral-forge.spectral-forge";
+    #[cfg(feature = "dev-build")]
+    const CLAP_ID: &'static str = "com.spectral-forge.spectral-forge-dev";
     const CLAP_DESCRIPTION: Option<&'static str> = Some("Spectral compressor");
     const CLAP_MANUAL_URL: Option<&'static str> = None;
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
@@ -250,7 +277,10 @@ impl ClapPlugin for SpectralForge {
 impl Vst3Plugin for SpectralForge {
     // Every VST3 plugin requires a globally unique 16-byte ID.
     // This is exactly 16 characters long.
+    #[cfg(not(feature = "dev-build"))]
     const VST3_CLASS_ID: [u8; 16] = *b"TaikakimSpcForge";
+    #[cfg(feature = "dev-build")]
+    const VST3_CLASS_ID: [u8; 16] = *b"TaikakimSpcForgD";
 
     // This tells the DAW what folder to put your plugin in.
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[

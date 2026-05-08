@@ -201,6 +201,27 @@ impl SpectralEngine for SpectralCompressorEngine {
             }
         }
 
+        // Pass 2.5 — PLPV peak-locked override (Phase 4.3a).
+        // For each detected peak, force every bin in its Voronoi skirt to share the
+        // peak bin's gain reduction. Preserves partial coherence under ducking — all
+        // bins of a single partial duck together. No-op when the per-module flag is
+        // off OR the Pipeline didn't populate ctx.peaks (i.e. global PLPV off).
+        if params.plpv_dynamics_enabled {
+            if let Some(peaks) = params.peaks {
+                for p in peaks {
+                    // `peaks` is produced by the Phase 4.2 detector with k, low_k, high_k all
+                    // in [0, num_bins). The clamps below are belt-and-brace: they ensure the
+                    // engine cannot panic on the audio thread even if a future caller (test
+                    // probe, alternate detector) passes peaks with stale bin indices.
+                    let pk = (p.k as usize).min(n - 1);
+                    let peak_gr = self.smooth_buf[pk];
+                    let lo = (p.low_k as usize).min(n - 1);
+                    let hi = (p.high_k as usize).min(n - 1);
+                    self.smooth_buf[lo..=hi].fill(peak_gr);
+                }
+            }
+        }
+
         // Update auto-makeup long-term average (~1000ms smoothing at hop rate).
         // Tracks the mix-weighted spatially-smoothed GR (smooth_buf * mix) — i.e. the
         // GR actually applied to the audio — so compensation is exact at any mix setting.
@@ -222,6 +243,15 @@ impl SpectralEngine for SpectralCompressorEngine {
             suppression_out,
             auto_scale,
         );
+    }
+
+    fn clear_state(&mut self) {
+        self.env_db.fill(-96.0);
+        self.gr_db.fill(0.0);
+        self.smooth_buf.fill(0.0);
+        self.spectral_envelope.fill(0.0);
+        self.auto_makeup_db.fill(0.0);
+        self.prefix_buf.fill(0.0);
     }
 
     fn name(&self) -> &'static str { "Spectral Compressor" }
