@@ -1,7 +1,6 @@
 # Spectral Forge
 
-A quick recap of what's going on:
-0.1 was just a succesful proof of concept, that I decided to transform the project into something more ambitious: not only a scalable UI, presets, automation and a better modularised codebase making adding new modules easier. The next version will have not only these basic plugin features, but also a fully modular routing between modules, with several new ones already under works. Currently this means that the main branch is not properly tested since my focus is on the dev branch which is very much a work in progress. So, compiling the plugin yourself it is not functional at this stage. Use the release binaries for now.
+0.15 is now merged to the Master branch. An extensive update with dozens of new processors, modular routing, presets, host automation, a new more modular codebase, etc. I will tweak the things before a release since some of the new processors still lack DSP, and none of them have really had their parameter ranges and DSP tuned for usability and interesting outcomes. Work with the missing DSP for some of the new modules will go on in parallel in the dev branch.
 
 A spectral compressor and modular effects processor for Linux/Windows, implemented as a CLAP plugin. Designed for Bitwig Studio.
 
