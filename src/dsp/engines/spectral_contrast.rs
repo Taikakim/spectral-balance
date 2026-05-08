@@ -148,17 +148,20 @@ impl SpectralEngine for SpectralContrastEngine {
                 + (1.0 - coeff_slow) * effective_gr;
         }
 
-        // Pass 4 — apply smoothed gain + makeup + auto-makeup + mix.
+        // Pass 4 — apply smoothed gain + makeup + auto-makeup + threshold-gated mix.
         for k in 0..n {
             let auto_comp   = if params.auto_makeup { -self.auto_makeup_db[k] } else { 0.0 };
-            // Clamp total_db to ±40 dB (100× linear gain max) to prevent f32 overflow
-            // from unusually large GR values reaching the audio output.
             let total_db    = (self.smooth_buf[k] + params.makeup_db[k] + auto_comp).clamp(-80.0, 40.0);
             let linear_gain = 10.0f32.powf(total_db / 20.0);
-            let mix         = params.mix[k].clamp(0.0, 1.0);
+
+            // THRESHOLD as bypass floor: bins quieter than the per-bin threshold
+            // get full dry-mix, no contrast applied. Lets the noise floor sit
+            // untouched while contrast still acts on louder content.
+            let mag_db   = 20.0 * bins[k].norm().max(1e-10).log10();
+            let bypass_t = if mag_db < params.threshold_db[k] { 1.0 } else { 0.0 };
+            let mix      = params.mix[k].clamp(0.0, 1.0) * (1.0 - bypass_t);
+
             bins[k] = bins[k] * (1.0 - mix + mix * linear_gain);
-            // Suppression out: show the magnitude of net cut to the existing display.
-            // Boosts (positive smooth_buf) are currently not visualised.
             suppression_out[k] = (-self.smooth_buf[k]).max(0.0);
         }
     }
