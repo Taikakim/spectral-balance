@@ -653,23 +653,58 @@ fn default_config() -> CurveDisplayConfig {
     (g + o).clamp(0.0, 1.0)
 }
 
-/// Dynamics / Freeze THRESHOLD dBFS: multiplicative log-dBFS, calibrated so
-/// the offset slider spans the full y_min=-160..y_max=0 axis from v=±1
-/// when the curve gain is at its neutral 1.0.
+/// Dynamics / Freeze THRESHOLD dBFS: additive shift in display-dB space.
 ///
-/// `curve_to_threshold_db` (see `dsp::modules::freeze::curve_to_threshold_db`)
-/// maps curve_gain g via t_db = 20·log10(g) and then:
-///   - positive: display = -20 + (20/18)·t_db, so display=0 needs t_db=18.
-///   - negative: display = -20 + (140/18)·t_db, so display=-160 needs t_db=-18.
-/// Both ends require the SAME |t_db| = 18 (asymmetric only in display
-/// scaling, not in curve-gain space), so a single symmetric multiplier
-/// 10^(0.9·v) reaches y_max at v=+1 and y_min at v=-1.
+/// Earlier multiplicative `g * 10^(0.9·v)` only matched axis_aware_lerp at
+/// the curve's neutral g=1.0 — when nodes were drawn HIGH the visible curve
+/// flattened mid-axis instead of reaching the floor at v=-1, because the
+/// gain-space scaling didn't translate to a uniform display-dB shift across
+/// all curve_gain values (the display function `curve_to_threshold_db` is
+/// piecewise linear with a 7× slope ratio at the -20 dBFS pivot).
 ///
-/// Previous calibration used 0.3·v / 0.6·v which only reached display = -13
-/// at v=+1 and -113 at v=-1 — leaving most of the axis unreachable from
-/// the slider. Fixed 2026-05-07 (D-1c).
-#[inline] pub fn off_thresh(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
-    g * 10f32.powf(0.9 * o)
+/// New formulation (2026-05-08): uniform shift in display-dB space.
+///   1. Forward-compute curr_display = curve_to_threshold_db(g)
+///   2. shift = axis_aware_lerp(o) - neutral_db   (offset baseline at o)
+///   3. target = curr_display + shift
+///   4. Inverse: target → t_db_target → gain (via the same piecewise slopes)
+///
+/// At neutral curve (g=1): curr_display = neutral_db, shift = axis_aware_lerp(o)
+/// - neutral_db, target = axis_aware_lerp(o). Slider text and graph agree.
+///
+/// At HIGH curve (g large, curve_display = e.g. -8 dBFS): target =
+/// curve_display + shift, so the slider's full range still translates to
+/// a full ~140 dB downward sweep (clamped by `gain_to_display` at db_min).
+/// The graph reaches the axis floor regardless of where the user drew the
+/// nodes — the curve's shape rides on top of the offset baseline.
+#[inline] pub fn off_thresh(g: f32, o: f32, anchors: (f32, f32, f32)) -> f32 {
+    let (y_min, _y_natural, y_max) = anchors;
+    let neutral_db = -20.0_f32;
+    let slope_neg = (neutral_db - y_min) / 18.0; // 7.78 for db_min=-160
+    let slope_pos = (y_max - neutral_db) / 18.0; // 1.11 for db_max=0
+
+    // Forward: g → curr_display dBFS (matches `curve_to_threshold_db`).
+    let t_db = if g > 1e-10 { 20.0 * g.log10() } else { -200.0 };
+    let curr_display = if t_db <= 0.0 {
+        neutral_db + slope_neg * t_db
+    } else {
+        neutral_db + slope_pos * t_db
+    };
+
+    // Offset baseline = axis_aware_lerp(o) for THRESHOLD's linear axis.
+    let offset_baseline = if o >= 0.0 {
+        neutral_db + o * (y_max - neutral_db)
+    } else {
+        neutral_db + o * (neutral_db - y_min)
+    };
+    let target = curr_display + (offset_baseline - neutral_db);
+
+    // Inverse target → gain through the same piecewise slopes.
+    let t_db_target = if target <= neutral_db {
+        (target - neutral_db) / slope_neg
+    } else {
+        (target - neutral_db) / slope_pos
+    };
+    10f32.powf(t_db_target / 20.0)
 }
 
 /// Ratio 1–20: WYSIWYG with log axis (spec §2 axis-aware lerp).
@@ -706,10 +741,27 @@ fn default_config() -> CurveDisplayConfig {
     if o >= 0.0 { g } else { g + o }
 }
 
-/// Gain dB (Add/Subtract): multiplicative with factor 10^(18/20) ≈ 7.9433.
-/// off=+1 → g×7.9433 → +18 dB; off=-1 → g/7.9433 → -18 dB.
-#[inline] pub fn off_gain_db(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
-    g * 7.943_282_f32.powf(o)
+/// Gain dB (Add/Subtract): additive shift in display-dB space, mirroring
+/// the threshold/log-axis fix (2026-05-08). Earlier multiplicative
+/// `g * 7.943^o` only matched axis_aware_lerp at neutral curve gain — at
+/// extreme node positions the slider could only shift display by ±18 dB,
+/// not far enough to reach the cfg's y_min/y_max from a far-from-neutral
+/// curve.
+///
+/// New: target_display = curr_display + (axis_aware_lerp(o) - neutral),
+/// then inverse to gain via `gain = 10^(target/20)`. Slider sweeps a full
+/// uniform dB shift regardless of curve state.
+#[inline] pub fn off_gain_db(g: f32, o: f32, anchors: (f32, f32, f32)) -> f32 {
+    let (y_min, _y_natural, y_max) = anchors;
+    let neutral_db = 0.0_f32;
+    let curr_display = if g > 1e-6 { 20.0 * g.log10() } else { -60.0 };
+    let baseline = if o >= 0.0 {
+        neutral_db + o * (y_max - neutral_db)
+    } else {
+        neutral_db + o * (neutral_db - y_min)
+    };
+    let target = curr_display + (baseline - neutral_db);
+    10f32.powf(target / 20.0)
 }
 
 /// Gain Pull/Match (%): gain=1.0 → 100% dry (at y_max); off=-1 → 0%.
@@ -733,16 +785,10 @@ fn default_config() -> CurveDisplayConfig {
     g * factor
 }
 
-/// Freeze/Past THRESHOLD dBFS: matches `off_thresh` (Dynamics) — the
-/// Freeze/Past axis is also y_min=-160..y_max=0 with neutral -20, and the
-/// `gain_to_display` idx 9 mapping uses the same piecewise slopes anchored
-/// to (db_min, -20, db_max) as idx 0. Symmetric `10^(0.9·v)` reaches both
-/// endpoints from neutral curve gain (G-2, 2026-05-08).
-///
-/// Previous calibration used asymmetric `0.3 / 0.9` exponents which only
-/// reached display ~-13 dBFS at v=+1 and ~-113 at v=-1.
-#[inline] pub fn off_freeze_thresh(g: f32, o: f32, _anchors: (f32, f32, f32)) -> f32 {
-    g * 10f32.powf(0.9 * o)
+/// Freeze/Past THRESHOLD dBFS: same algorithm as `off_thresh` (Dynamics).
+/// Idx 9 uses the same piecewise slopes anchored to (db_min, -20, db_max).
+#[inline] pub fn off_freeze_thresh(g: f32, o: f32, anchors: (f32, f32, f32)) -> f32 {
+    off_thresh(g, o, anchors)
 }
 
 /// Portamento/SC-smooth ms: multiplicative, factor = 1000/200 = 5.0.

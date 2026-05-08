@@ -137,11 +137,21 @@ fn past_config_returns_calibrated_display_per_curve() {
         approx(f(0.5, -0.3, sentinel), 0.2) && approx(f(0.5, 0.3, sentinel), 0.8) && approx(f(2.0, 0.5, sentinel), 1.0)
     };
     let is_freeze_thresh = |f: fn(f32, f32, (f32, f32, f32)) -> f32| {
-        // G-2 (2026-05-08): symmetric `g * 10^(0.9 * o)` for both signs so
-        // the slider sweeps the full y_min=-160..y_max=0 axis.
-        approx(f(0.5, -0.3, sentinel), 0.5 * 10f32.powf(0.9 * -0.3))
-            && approx(f(0.5, 0.3, sentinel), 0.5 * 10f32.powf(0.9 * 0.3))
-            && approx(f(2.0, 0.5, sentinel), 2.0 * 10f32.powf(0.9 * 0.5))
+        // 2026-05-08 (post offset-clip-fix): off_thresh is now an additive
+        // shift in display-dB space, parameterized by the THRESHOLD axis
+        // anchors (db_min, neutral=-20, db_max). Verify endpoint reach
+        // from neutral curve gain — slider at -1 reaches y_min, +1 reaches
+        // y_max, regardless of where curve was drawn.
+        let anchors = (-160.0_f32, -20.0_f32, 0.0_f32);
+        // Floor reach: g=1 (neutral), o=-1 → display y_min=-160 → gain ≈ 10^-0.9.
+        let g_floor   = f(1.0, -1.0, anchors);
+        // Ceiling reach: g=1 (neutral), o=+1 → display y_max=0 → gain ≈ 10^0.9.
+        let g_ceiling = f(1.0,  1.0, anchors);
+        // Identity at o=0 from neutral.
+        let g_id      = f(1.0,  0.0, anchors);
+        approx(g_floor,   10f32.powf(-0.9))
+            && approx(g_ceiling, 10f32.powf(0.9))
+            && approx(g_id, 1.0)
     };
     let is_identity = |f: fn(f32, f32, (f32, f32, f32)) -> f32| {
         approx(f(0.5, -0.3, sentinel), 0.5) && approx(f(0.5, 0.3, sentinel), 0.5) && approx(f(2.0, 0.5, sentinel), 2.0)
