@@ -25,10 +25,12 @@ fn matrix_cell_default_values_are_zero_or_unity_per_serial_default() {
 
 #[test]
 fn matrix_cell_param_exists_for_all_valid_coordinates() {
-    use spectral_forge::param_ids::{NUM_MATRIX_ROWS, NUM_SLOTS};
+    use spectral_forge::param_ids::{NUM_MATRIX_ROWS, NUM_MATRIX_SOURCES};
     let p = SpectralForgeParams::default();
+    // 2026-05-08: rows = destinations (0..9), cols = sources (0..13)
+    // including 4 T/S Split virtual rows.
     for r in 0..NUM_MATRIX_ROWS {
-        for col in 0..NUM_SLOTS {
+        for col in 0..NUM_MATRIX_SOURCES {
             if r == col { continue; } // diagonal is module-loaded indicator, not a route
             assert!(p.matrix_cell(r, col).is_some(),
                 "matrix_cell({r}, {col}) should be Some");
@@ -36,5 +38,5 @@ fn matrix_cell_param_exists_for_all_valid_coordinates() {
     }
     // Out-of-range returns None.
     assert!(p.matrix_cell(NUM_MATRIX_ROWS, 0).is_none());
-    assert!(p.matrix_cell(0, NUM_SLOTS).is_none());
+    assert!(p.matrix_cell(0, NUM_MATRIX_SOURCES).is_none());
 }

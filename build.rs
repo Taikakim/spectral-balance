@@ -22,7 +22,8 @@ use std::path::PathBuf;
 const NUM_SLOTS: usize = 9;
 const NUM_CURVES: usize = 7;
 const NUM_NODES: usize = 6;
-const NUM_MATRIX_ROWS: usize = 9;
+const NUM_MATRIX_ROWS:    usize = 9;   // destinations (slots only)
+const NUM_MATRIX_SOURCES: usize = 13;  // sources: 9 slots + 4 T/S virtual rows
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -139,7 +140,7 @@ fn emit_tilt_offset_fields(f: &mut File) {
 
 fn emit_matrix_fields(f: &mut File) {
     for r in 0..NUM_MATRIX_ROWS {
-        for col in 0..NUM_SLOTS {
+        for col in 0..NUM_MATRIX_SOURCES {
             let rust_name = format!("mr{}c{}", r, col);
             writeln!(f, "    pub {rust_name}: FloatParam,").unwrap();
         }
@@ -248,7 +249,7 @@ fn emit_matrix_inits(f: &mut File) {
     // Matches the default slot_module_types in params.rs / presets.rs.
     // mr1c0 = 1.0 (col 0 → row 1) and mr8c1 = 1.0 (col 1 → row 8); rest are 0.
     for r in 0..NUM_MATRIX_ROWS {
-        for col in 0..NUM_SLOTS {
+        for col in 0..NUM_MATRIX_SOURCES {
             let id = format!("mr{}c{}", r, col);
             let rust_name = format!("mr{}c{}", r, col);
             let default: f32 = if (r == 1 && col == 0) || (r == 8 && col == 1) { 1.0 } else { 0.0 };
@@ -302,7 +303,7 @@ fn emit_tilt_offset_map_entries(f: &mut File) {
 
 fn emit_matrix_map_entries(f: &mut File) {
     for r in 0..NUM_MATRIX_ROWS {
-        for col in 0..NUM_SLOTS {
+        for col in 0..NUM_MATRIX_SOURCES {
             let id = format!("mr{}c{}", r, col);
             let rust_name = format!("mr{}c{}", r, col);
             writeln!(
@@ -375,7 +376,7 @@ fn emit_matrix_dispatch(f: &mut File) {
     writeln!(f, "    ($self:expr, $r:expr, $col:expr) => {{").unwrap();
     writeln!(f, "        match ($r, $col) {{").unwrap();
     for r in 0..NUM_MATRIX_ROWS {
-        for col in 0..NUM_SLOTS {
+        for col in 0..NUM_MATRIX_SOURCES {
             writeln!(f, "            ({r}, {col}) => &$self.generated.mr{r}c{col},").unwrap();
         }
     }

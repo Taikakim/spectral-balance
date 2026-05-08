@@ -191,7 +191,7 @@ impl Plugin for SpectralForge {
 
         // Old state: decode legacy persist fields and inject graph-node / tilt / matrix values
         // into state.params so nih-plug's normal deserialization path sets param.value() correctly.
-        use crate::param_ids::{NUM_SLOTS, NUM_CURVES, NUM_NODES, NUM_MATRIX_ROWS, graph_node_id, matrix_id};
+        use crate::param_ids::{NUM_SLOTS, NUM_CURVES, NUM_NODES, NUM_MATRIX_ROWS, NUM_MATRIX_SOURCES, graph_node_id, matrix_id};
         use nih_plug::wrapper::state::ParamValue;
 
         // ── Graph nodes ───────────────────────────────────────────────────────
@@ -216,8 +216,8 @@ impl Plugin for SpectralForge {
         // ── Matrix: send[src][dst] → matrix_cell(dst=r, src=col) ────────────
         if let Some(matrix_json) = state.fields.get("route_matrix") {
             if let Ok(route_matrix) = serde_json::from_str::<crate::dsp::modules::RouteMatrix>(matrix_json) {
-                for r in 0..NUM_MATRIX_ROWS {    // r = dst
-                    for col in 0..NUM_SLOTS {    // col = src
+                for r in 0..NUM_MATRIX_ROWS {        // r = dst (0..9)
+                    for col in 0..NUM_MATRIX_SOURCES { // col = src (0..13)
                         let val = route_matrix.send[col][r];
                         state.params.entry(matrix_id(r, col))
                             .or_insert_with(|| ParamValue::F32(val));

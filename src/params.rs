@@ -716,8 +716,10 @@ impl SpectralForgeParams {
     /// Returns a reference to the matrix-cell FloatParam for the given row/col.
     /// Returns `None` if any index is out of range.
     pub fn matrix_cell(&self, row: usize, col: usize) -> Option<&FloatParam> {
-        use crate::param_ids::{NUM_MATRIX_ROWS, NUM_SLOTS};
-        if row >= NUM_MATRIX_ROWS || col >= NUM_SLOTS {
+        use crate::param_ids::{NUM_MATRIX_ROWS, NUM_MATRIX_SOURCES};
+        // row = destination slot (0..9); col = source matrix-row, 0..13
+        // (9 real slots + 4 T/S Split virtual rows).
+        if row >= NUM_MATRIX_ROWS || col >= NUM_MATRIX_SOURCES {
             return None;
         }
         Some(matrix_dispatch!(self, row, col))
@@ -820,10 +822,11 @@ impl SpectralForgeParams {
         // ── Matrix: route_matrix.send[src][dst] → matrix_cell(dst, src) ─────
         // The pipeline reads `matrix_cell(r, col).smoothed.next()` and writes
         // `route_matrix_snap.send[col][r]`. So matrix_cell(dst, src) ↔ send[src][dst].
+        // Virtual rows (col 9..12) need MAX_MATRIX_SOURCES width.
         {
             let legacy_matrix = self.route_matrix.lock();
-            for r in 0..crate::param_ids::NUM_MATRIX_ROWS {    // r = dst
-                for col in 0..crate::param_ids::NUM_SLOTS {     // col = src
+            for r in 0..crate::param_ids::NUM_MATRIX_ROWS {        // r = dst (0..9)
+                for col in 0..crate::param_ids::NUM_MATRIX_SOURCES { // col = src (0..13)
                     if let Some(p) = self.matrix_cell(r, col) {
                         // send[col][r] = send[src][dst]
                         p.smoothed.reset(legacy_matrix.send[col][r]);
@@ -872,8 +875,11 @@ mod accessor_tests {
         assert!(p.offset_param(9, 0).is_none());
         assert!(p.curvature_param(0, 7).is_none());
         assert!(p.curvature_param(9, 0).is_none());
-        assert!(p.matrix_cell(9, 0).is_none());
-        assert!(p.matrix_cell(0, 9).is_none());
+        // 2026-05-08: matrix_cell(row=dst, col=src). Dest stays 0..NUM_MATRIX_ROWS=9
+        // (only slots receive sends). Src extends to NUM_MATRIX_SOURCES=13
+        // (9 slots + 4 T/S virtual rows).
+        assert!(p.matrix_cell(9,  0).is_none());   // dst out of range
+        assert!(p.matrix_cell(0, 13).is_none());   // src out of range
     }
 
     #[test]
@@ -885,6 +891,9 @@ mod accessor_tests {
         assert!(p.curvature_param(8, 6).is_some());
         assert!(p.matrix_cell(0, 0).is_some());
         assert!(p.matrix_cell(8, 8).is_some());
+        // Virtual-row sources now addressable too (col 9..12).
+        assert!(p.matrix_cell(0,  9).is_some());
+        assert!(p.matrix_cell(8, 12).is_some());
     }
 }
 

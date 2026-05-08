@@ -79,7 +79,11 @@ fn param_ids_constants_match_expected_dimensions() {
     assert_eq!(spectral_forge::param_ids::NUM_SLOTS,       9);
     assert_eq!(spectral_forge::param_ids::NUM_CURVES,      7);
     assert_eq!(spectral_forge::param_ids::NUM_NODES,       6);
+    // 2026-05-08: NUM_MATRIX_ROWS stays 9 (destinations are slots only).
+    // NUM_MATRIX_SOURCES = 13 (9 slots + 4 T/S Split virtual rows) is the
+    // new constant for matrix source columns.
     assert_eq!(spectral_forge::param_ids::NUM_MATRIX_ROWS, 9);
+    assert_eq!(spectral_forge::param_ids::NUM_MATRIX_SOURCES, 13);
     // Derived counts must produce the numbers the param_map test checks.
     let expected_graph  = spectral_forge::param_ids::NUM_SLOTS
         * spectral_forge::param_ids::NUM_CURVES
@@ -94,8 +98,9 @@ fn param_ids_constants_match_expected_dimensions() {
         * spectral_forge::param_ids::NUM_CURVES;  // 63
     assert_eq!(expected_curv, 63);
     let expected_matrix = spectral_forge::param_ids::NUM_MATRIX_ROWS
-        * spectral_forge::param_ids::NUM_SLOTS;
-    assert_eq!(expected_matrix, 81);
+        * spectral_forge::param_ids::NUM_MATRIX_SOURCES;
+    // 9 dst × 13 src = 117 (9 real slot sources + 4 T/S virtual).
+    assert_eq!(expected_matrix, 117);
 }
 
 #[test]
@@ -115,8 +120,8 @@ fn param_map_contains_expected_count() {
     assert_eq!(to_count, 126, "tilt/offset ID count mismatch");
     // Curvature: 9 × 7 = 63
     assert_eq!(curv_count, 63, "curvature ID count mismatch");
-    // Matrix: 9 × 9 = 81
-    assert_eq!(matrix_count, 81, "matrix ID count mismatch");
+    // Matrix: 13 × 9 = 117 (9 real rows + 4 T/S Split virtual rows).
+    assert_eq!(matrix_count, 117, "matrix ID count mismatch");
 }
 
 #[test]

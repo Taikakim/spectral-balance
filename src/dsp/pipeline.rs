@@ -969,8 +969,14 @@ impl Pipeline {
             amp_mode,
             amp_params,
         };
+        // r = destination slot (0..NUM_MATRIX_ROWS=9), col = source matrix-row
+        // (0..NUM_MATRIX_SOURCES=13). Param naming convention: mr{dst}c{src}.
+        // The audio-side `send[src][dst]` reads outer=src=col, inner=dst=r,
+        // matching the struct dims `[[f32; MAX_SLOTS]; MAX_MATRIX_ROWS]`
+        // (outer 0..MAX_MATRIX_ROWS=13, inner 0..MAX_SLOTS=9). Virtual rows
+        // are sources at col=9..12.
         for r in 0..crate::param_ids::NUM_MATRIX_ROWS {
-            for col in 0..crate::param_ids::NUM_SLOTS {
+            for col in 0..crate::param_ids::NUM_MATRIX_SOURCES {
                 if r == col { continue; } // skip diagonal to prevent self-feedback
                 if let Some(p) = params.matrix_cell(r, col) {
                     route_matrix_snap.send[col][r] = p.smoothed.next_step(block_size);

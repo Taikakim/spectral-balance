@@ -423,13 +423,12 @@ pub fn paint_fx_matrix_grid(
                             "\u{2298}", egui::FontId::proportional(th::scaled(th::FONT_SIZE_MATRIX_VROW, scale)), th::GRID_LINE,
                         );
                     } else {
-                        // TODO: matrix_cell doesn't support virtual rows yet — virtual row
-                        // indices (*vrow_src >= MAX_SLOTS) are outside param_ids::NUM_MATRIX_ROWS,
-                        // so params.matrix_cell(*vrow_src, col) returns None and the setter path
-                        // is a no-op. Virtual row sends are therefore non-functional until
-                        // NUM_MATRIX_ROWS is extended to cover virtual rows. See Phase 1 diagnosis
-                        // and route_matrix_propagation.rs for context.
-                        let p = params.matrix_cell(col, *vrow_src); // will be None for vrow_src >= 9
+                        // 2026-05-08: virtual-row sources now have FloatParams.
+                        // `NUM_MATRIX_SOURCES = 13` covers the 4 virtual rows at
+                        // `MAX_SLOTS..MAX_SLOTS+MAX_SPLIT_VIRTUAL_ROWS`, so
+                        // `matrix_cell(col=dst_slot, *vrow_src)` returns Some
+                        // and the setter path persists virtual-row sends.
+                        let p = params.matrix_cell(col, *vrow_src);
                         let mut send_val: f32 = p.map(|fp| fp.value())
                             .unwrap_or(route_matrix.send[*vrow_src][col]);
                         let vrow_label = match kind {
