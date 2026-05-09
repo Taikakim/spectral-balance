@@ -169,6 +169,10 @@ impl SpectralContrastEngine {
             let knee_db = params.knee_db[k].max(0.0);
             self.gr_db[k] = Self::contrast_gain(deviation_db, ratio, knee_db);
         }
+        // Tilt mode uses smooth_and_apply with the spec's default semitone width
+        // (mean_window_st=1.0 — Tilt has no per-bin neighbourhood concept; the
+        // reference is a global baseline_db + slope, so the GR mask still
+        // benefits from the standard log-frequency smoothing.)
         self.smooth_and_apply(bins, params, sample_rate, 1.0, suppression_out);
     }
 
