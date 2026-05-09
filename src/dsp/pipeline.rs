@@ -968,6 +968,7 @@ impl Pipeline {
                 contrast_scalars[s] = crate::dsp::modules::contrast::ContrastScalars {
                     mean_window_st:        params.contrast_mean_window_st_param(s).map(|p| p.smoothed.next()).unwrap_or(1.0),
                     tilt_slope_db_per_oct: params.contrast_tilt_slope_db_per_oct_param(s).map(|p| p.smoothed.next()).unwrap_or(0.0),
+                    gr_smoothing_st:       params.contrast_gr_smoothing_st_param(s).map(|p| p.smoothed.next()).unwrap_or(1.0),
                 };
             }
             self.fx_matrix.set_contrast_scalars(&contrast_scalars);

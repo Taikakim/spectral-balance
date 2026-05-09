@@ -913,6 +913,13 @@ impl SpectralForgeParams {
         Some(contrast_tilt_slope_db_per_oct_dispatch!(self, slot))
     }
 
+    /// Per-slot Contrast GR smoothing width (semitones, all modes).
+    pub fn contrast_gr_smoothing_st_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(contrast_gr_smoothing_st_dispatch!(self, slot))
+    }
+
     /// Reset every automatable Param to its nih-plug default via the ParamSetter.
     ///
     /// Iterates `param_map()` using the raw GuiContext API so host automation is properly

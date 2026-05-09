@@ -18,13 +18,18 @@ pub enum ContrastMode {
 
 #[derive(Clone, Copy, Debug)]
 pub struct ContrastScalars {
-    pub mean_window_st:        f32,  // Spatial only
+    pub mean_window_st:        f32,  // Spatial only — Pass 1 spatial mean width
     pub tilt_slope_db_per_oct: f32,  // Tilt only
+    pub gr_smoothing_st:       f32,  // NEW — all modes — Pass 3 GR-mask smoothing width
 }
 
 impl ContrastScalars {
     pub fn safe_default() -> Self {
-        Self { mean_window_st: 1.0, tilt_slope_db_per_oct: 0.0 }
+        Self {
+            mean_window_st:        1.0,
+            tilt_slope_db_per_oct: 0.0,
+            gr_smoothing_st:       1.0,  // default 1.0 st — matches legacy fallback
+        }
     }
 }
 
@@ -160,18 +165,22 @@ impl SpectralModule for ContrastModule {
                 self.engine.process_bins_spatial(
                     bins, &params, self.sample_rate,
                     self.scalars.mean_window_st,
+                    self.scalars.gr_smoothing_st,
                     suppression_out,
                 );
             }
             ContrastMode::Temporal => {
                 self.engine.process_bins_temporal(
-                    bins, &params, self.sample_rate, suppression_out,
+                    bins, &params, self.sample_rate,
+                    self.scalars.gr_smoothing_st,
+                    suppression_out,
                 );
             }
             ContrastMode::Tilt => {
                 self.engine.process_bins_tilt(
                     bins, &params, ctx.fft_size, self.sample_rate,
                     self.scalars.tilt_slope_db_per_oct,
+                    self.scalars.gr_smoothing_st,
                     suppression_out,
                 );
             }

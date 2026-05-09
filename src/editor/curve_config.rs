@@ -557,14 +557,15 @@ fn punch_config(i: usize) -> CurveDisplayConfig {
             offset_fn: off_amount_200,
             natural_at_max: false,
         },
-        // HEAL: release time displayed as ms via portamento scale
-        // display_curve_idx=10: gain_to_display = gain*200 ms; physical_to_y: log 40–1000 ms
-        // DSP formula: heal_ms = gain*150 (clamped 20–300 ms for gain 0.05–2.0)
+        // HEAL: release time displayed as ms via ratio-from-anchors scale.
+        // display_curve_idx=15: gain_to_display = gain*150 ms; physical_to_y: log 1–1000 ms.
+        // DSP formula: heal_ms = gain*150 (clamped 1–2000 ms via heal_ms.clamp(1.0, 2000.0)).
+        // Uses off_freeze_length (anchor-aware ratio) so v=-1 → 1 ms, v=+1 → 1000 ms, v=0 → 150 ms.
         4 => CurveDisplayConfig {
-            y_label: "ms", y_min: 40.0, y_max: 1000.0, y_log: true,
-            grid_lines: &[(40.0, "40ms"), (100.0, "100ms"), (250.0, "250ms"), (1000.0, "1s")],
-            y_natural: 200.0,
-            offset_fn: off_portamento,
+            y_label: "ms", y_min: 1.0, y_max: 1000.0, y_log: true,
+            grid_lines: &[(5.0, "5ms"), (50.0, "50ms"), (200.0, "200ms"), (1000.0, "1s")],
+            y_natural: 150.0,
+            offset_fn: off_freeze_length,
             natural_at_max: false,
         },
         _ => default_config(),

@@ -165,8 +165,8 @@ impl SpectralModule for PunchModule {
             let depth    = amount_g.clamp(0.0, 1.0);
             let ampfl_g  = ampfl_curve.get(k).copied().unwrap_or(1.0).clamp(0.0, 4.0);
             let amp_fill = ampfl_g; // neutral=1.0
-            let heal_g   = heal_curve.get(k).copied().unwrap_or(1.0).clamp(0.05, 2.0);
-            let heal_ms  = (heal_g * 150.0).clamp(20.0, 2000.0);
+            let heal_g   = heal_curve.get(k).copied().unwrap_or(1.0).clamp(0.0067, 2.0);  // 0.0067 * 150 ≈ 1 ms
+            let heal_ms  = (heal_g * 150.0).clamp(1.0, 2000.0);
             let mix_g    = mix_curve.get(k).copied().unwrap_or(1.0).clamp(0.0, 2.0);
             let mix      = mix_g.clamp(0.0, 1.0);
 

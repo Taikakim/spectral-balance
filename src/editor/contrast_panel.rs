@@ -34,10 +34,16 @@ pub fn draw(ui: &mut Ui, params: &SpectralForgeParams, setter: &ParamSetter<'_>,
 
         ui.separator();
 
+        // ALWAYS-VISIBLE: GR smoothing (all modes)
+        scalar_drag(ui, scale, setter, "Smooth (st)",
+            params.contrast_gr_smoothing_st_param(slot), 0.1, 48.0, 0.1, 2);
+
+        ui.separator();
+
         match mode {
             ContrastMode::Spatial => {
                 scalar_drag(ui, scale, setter, "Mean Win (st)",
-                    params.contrast_mean_window_st_param(slot), 0.1, 24.0, 0.05, 2);
+                    params.contrast_mean_window_st_param(slot), 0.1, 48.0, 0.1, 2);
             }
             ContrastMode::Temporal => {
                 // No extra scalar — Temporal uses ATTACK/RELEASE curves as time constants.

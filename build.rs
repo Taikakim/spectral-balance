@@ -887,9 +887,10 @@ fn emit_modulate_scalar_dispatch(f: &mut File) {
 
 // ── Contrast Scalars: per-slot Spatial/Tilt tuning params ─────────────────
 //
-// Two new per-slot params for Contrast mode-specific scalars (2 × 9 = 18 fields):
-//   - contrast_mean_window_st        Linear 0.1..24.0, default 1.0  (Spatial only)
+// Three per-slot params for Contrast mode-specific scalars (3 × 9 = 27 fields):
+//   - contrast_mean_window_st        Linear 0.1..48.0, default 1.0  (Spatial only)
 //   - contrast_tilt_slope_db_per_oct Linear -6.0..6.0, default 0.0  (Tilt only)
+//   - contrast_gr_smoothing_st       Linear 0.1..48.0, default 1.0  (all modes)
 //
 // See docs/superpowers/specs/2026-05-09-prototyping-exposable-scalars-design.md §5.
 
@@ -902,8 +903,9 @@ struct ContrastScalarSpec {
 }
 
 const CONTRAST_SCALAR_SPECS: &[ContrastScalarSpec] = &[
-    ContrastScalarSpec { suffix: "mean_window_st",        default: 1.0, min: 0.1,  max: 24.0, unit: " st" },
+    ContrastScalarSpec { suffix: "mean_window_st",        default: 1.0, min: 0.1,  max: 48.0, unit: " st" },
     ContrastScalarSpec { suffix: "tilt_slope_db_per_oct", default: 0.0, min: -6.0, max: 6.0,  unit: " dB/oct" },
+    ContrastScalarSpec { suffix: "gr_smoothing_st",       default: 1.0, min: 0.1,  max: 48.0, unit: " st" },
 ];
 
 fn emit_contrast_scalar_fields(f: &mut File) {

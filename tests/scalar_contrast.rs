@@ -86,7 +86,7 @@ fn contrast_temporal_converges_to_unity_on_steady_input() {
             sensitivity: 1.0, auto_makeup: false,
             peaks: None, plpv_dynamics_enabled: false,
         };
-        engine.process_bins_temporal(&mut bins, &params, 48_000.0, &mut suppression);
+        engine.process_bins_temporal(&mut bins, &params, 48_000.0, 1.0, &mut suppression);
         output_after = bins;
     }
 
@@ -114,6 +114,7 @@ fn contrast_scalars_round_trip_through_fx_matrix() {
     let custom = ContrastScalars {
         mean_window_st: 6.0,
         tilt_slope_db_per_oct: -3.0,
+        gr_smoothing_st: 4.0,
     };
     let mut arr = [ContrastScalars::safe_default(); 9];
     arr[0] = custom;
@@ -122,4 +123,5 @@ fn contrast_scalars_round_trip_through_fx_matrix() {
     let read_back = fxm.test_contrast_scalars(0).expect("slot 0 should hold Contrast");
     assert!((read_back.mean_window_st - 6.0).abs() < 1e-6);
     assert!((read_back.tilt_slope_db_per_oct - (-3.0)).abs() < 1e-6);
+    assert!((read_back.gr_smoothing_st - 4.0).abs() < 1e-6);
 }

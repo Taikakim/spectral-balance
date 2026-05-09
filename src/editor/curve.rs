@@ -399,7 +399,7 @@ pub fn display_curve_idx(module_type: ModuleType, curve_idx: usize, gain_mode: G
             1 => 7,   // WIDTH → 0–200 % dimensionless (peak detection window in bins)
             2 => 6,   // FILL_MODE → 0–100 % (pitch-fill drift rate)
             3 => 7,   // AMP_FILL → 0–200 % (amplitude boost; neutral=1.0)
-            4 => 10,  // HEAL → ms log (gain*150 → 20–2000 ms; portamento scale fits)
+            4 => 15,  // HEAL → ms log (gain*150, 1–2000 ms; same idx as Freeze PORTAMENTO)
             5 => 6,   // MIX → 0–100 %
             _ => curve_idx,
         },

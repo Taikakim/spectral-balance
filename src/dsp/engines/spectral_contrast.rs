@@ -56,7 +56,8 @@ impl SpectralContrastEngine {
         bins: &mut [Complex<f32>],
         params: &BinParams<'_>,
         sample_rate: f32,
-        mean_window_st: f32,
+        mean_window_st: f32,    // unchanged — drives Pass 1 spatial mean width
+        gr_smoothing_st: f32,   // NEW — drives Pass 3 GR-mask smoothing
         suppression_out: &mut [f32],
     ) {
         debug_assert_eq!(bins.len(), self.num_bins);
@@ -95,7 +96,7 @@ impl SpectralContrastEngine {
             self.gr_db[k] = Self::contrast_gain(deviation_db, ratio, knee_db);
         }
 
-        self.smooth_and_apply(bins, params, sample_rate, mean_window_st, suppression_out);
+        self.smooth_and_apply(bins, params, sample_rate, gr_smoothing_st, suppression_out);
     }
 
     /// Temporal kernel — per-bin deviation from each bin's own long-running mean.
@@ -106,6 +107,7 @@ impl SpectralContrastEngine {
         bins: &mut [Complex<f32>],
         params: &BinParams<'_>,
         sample_rate: f32,
+        gr_smoothing_st: f32,   // NEW — drives Pass 3 GR-mask smoothing
         suppression_out: &mut [f32],
     ) {
         debug_assert_eq!(bins.len(), self.num_bins);
@@ -129,9 +131,7 @@ impl SpectralContrastEngine {
             let knee_db = params.knee_db[k].max(0.0);
             self.gr_db[k] = Self::contrast_gain(deviation_db, ratio, knee_db);
         }
-        // Temporal mode uses smooth_and_apply with the spec's default semitone width
-        // (mean_window_st=1.0 — engine still smooths the GR mask in log-frequency)
-        self.smooth_and_apply(bins, params, sample_rate, 1.0, suppression_out);
+        self.smooth_and_apply(bins, params, sample_rate, gr_smoothing_st, suppression_out);
     }
 
     /// Tilt kernel — per-bin deviation from a fitted 1/f^alpha reference slope.
@@ -144,6 +144,7 @@ impl SpectralContrastEngine {
         fft_size: usize,
         sample_rate: f32,
         slope_db_per_oct: f32,
+        gr_smoothing_st: f32,   // NEW — drives Pass 3 GR-mask smoothing
         suppression_out: &mut [f32],
     ) {
         debug_assert_eq!(bins.len(), self.num_bins);
@@ -164,16 +165,16 @@ impl SpectralContrastEngine {
             let oct_from_1k = (freq_hz / 1000.0).log2();
             let expected_db = baseline_db + slope_db_per_oct * oct_from_1k;
             let mag_db = 20.0 * bins[k].norm().max(1e-10).log10();
-            let deviation_db = (mag_db - expected_db).clamp(-48.0, 48.0);
+            // Tilt's global baseline produces large per-bin deviations on natural
+            // spectra (full-band signals span 30+ dB around the average). Clamp
+            // tighter than Spatial/Temporal so a default ratio=2 can't multiply
+            // out to ±60 dB GR.
+            let deviation_db = (mag_db - expected_db).clamp(-12.0, 12.0);
             let ratio   = params.ratio[k].clamp(0.0, 20.0);
             let knee_db = params.knee_db[k].max(0.0);
             self.gr_db[k] = Self::contrast_gain(deviation_db, ratio, knee_db);
         }
-        // Tilt mode uses smooth_and_apply with the spec's default semitone width
-        // (mean_window_st=1.0 — Tilt has no per-bin neighbourhood concept; the
-        // reference is a global baseline_db + slope, so the GR mask still
-        // benefits from the standard log-frequency smoothing.)
-        self.smooth_and_apply(bins, params, sample_rate, 1.0, suppression_out);
+        self.smooth_and_apply(bins, params, sample_rate, gr_smoothing_st, suppression_out);
     }
 
     /// Pass 3 + Pass 4 from the original process_bins, factored so all three
@@ -183,12 +184,12 @@ impl SpectralContrastEngine {
         bins: &mut [Complex<f32>],
         params: &BinParams<'_>,
         sample_rate: f32,
-        mean_window_st: f32,
+        gr_smoothing_st: f32,  // RENAMED — controls Pass 3 GR-mask smoothing only
         suppression_out: &mut [f32],
     ) {
         let n   = bins.len();
         let hop = self.hop_size;
-        let width_ratio = 2.0f32.powf(mean_window_st.max(0.1) / 12.0);
+        let width_ratio = 2.0f32.powf(gr_smoothing_st.max(0.1) / 12.0);
 
         // Pass 3 — log-frequency smoothing of GR mask
         if params.smoothing_semitones < 0.01 {
@@ -252,8 +253,8 @@ impl SpectralEngine for SpectralContrastEngine {
         sample_rate: f32,
         suppression_out: &mut [f32],
     ) {
-        // Legacy entry point — defaults to Spatial mode with default mean window.
-        self.process_bins_spatial(bins, params, sample_rate, 1.0, suppression_out);
+        // Legacy entry point — defaults to Spatial mode with default mean window and GR smoothing.
+        self.process_bins_spatial(bins, params, sample_rate, 1.0, 1.0, suppression_out);
     }
 
     fn clear_state(&mut self) {
