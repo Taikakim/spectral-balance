@@ -342,6 +342,60 @@ pub trait SpectralModule: Send {
     #[cfg(any(test, feature = "probe"))]
     fn test_past_scalars(&self) -> Option<crate::dsp::modules::past::PastScalars> { None }
 
+    /// Apply per-slot Life mode-specific scalars (one multiplier per Life mode that has a
+    /// *_AMOUNT_SCALE constant). Default no-op — only `LifeModule` overrides this.
+    /// See spec docs/superpowers/specs/2026-05-09-prototyping-exposable-scalars-design.md §1.
+    fn set_life_scalars(&mut self, _: crate::dsp::modules::life::LifeScalars) {}
+
+    /// Test-only echo of currently-applied Life scalars. Default `None` —
+    /// `LifeModule` overrides to return `Some(self.scalars)`.
+    #[cfg(any(test, feature = "probe"))]
+    fn test_life_scalars(&self) -> Option<crate::dsp::modules::life::LifeScalars> { None }
+
+    /// Apply per-slot Kinetics mode-specific tuning scalars. Default no-op — only
+    /// `KineticsModule` overrides this.
+    /// See spec docs/superpowers/specs/2026-05-09-prototyping-exposable-scalars-design.md §2.
+    fn set_kinetics_scalars(&mut self, _: crate::dsp::modules::kinetics::KineticsScalars) {}
+
+    /// Test-only echo of currently-applied Kinetics scalars. Default `None` —
+    /// `KineticsModule` overrides to return `Some(self.scalars)`.
+    #[cfg(any(test, feature = "probe"))]
+    fn test_kinetics_scalars(&self) -> Option<crate::dsp::modules::kinetics::KineticsScalars> { None }
+
+    /// Apply per-slot Circuit Vactrol time-constant scalars. Default no-op — only
+    /// `CircuitModule` overrides this.
+    /// See spec docs/superpowers/specs/2026-05-09-prototyping-exposable-scalars-design.md §3.
+    fn set_circuit_scalars(&mut self, _: crate::dsp::modules::circuit::CircuitScalars) {}
+
+    /// Test-only echo of currently-applied Circuit scalars. Default `None` —
+    /// `CircuitModule` overrides to return `Some(self.scalars)`.
+    #[cfg(any(test, feature = "probe"))]
+    fn test_circuit_scalars(&self) -> Option<crate::dsp::modules::circuit::CircuitScalars> { None }
+
+    /// Apply per-slot Modulate PllTear tuning scalars (damping + tear_angle_rad).
+    /// Default no-op — only `ModulateModule` overrides this.
+    /// See spec docs/superpowers/specs/2026-05-09-prototyping-exposable-scalars-design.md §4.
+    fn set_modulate_scalars(&mut self, _: crate::dsp::modules::modulate::ModulateScalars) {}
+
+    /// Test-only echo of currently-applied Modulate scalars. Default `None` —
+    /// `ModulateModule` overrides to return `Some(self.scalars)`.
+    #[cfg(any(test, feature = "probe"))]
+    fn test_modulate_scalars(&self) -> Option<crate::dsp::modules::modulate::ModulateScalars> { None }
+
+    /// Update the operating mode for Contrast modules (Spatial/Temporal/Tilt).
+    /// Default no-op for all other types.
+    fn set_contrast_mode(&mut self, _: crate::dsp::modules::contrast::ContrastMode) {}
+
+    /// Apply per-slot Contrast scalars (mean_window_st, tilt_slope_db_per_oct).
+    /// Default no-op — only `ContrastModule` overrides this.
+    /// See spec docs/superpowers/specs/2026-05-09-prototyping-exposable-scalars-design.md §5.
+    fn set_contrast_scalars(&mut self, _: crate::dsp::modules::contrast::ContrastScalars) {}
+
+    /// Test-only echo of currently-applied Contrast scalars. Default `None` —
+    /// `ContrastModule` overrides to return `Some(self.scalars)`.
+    #[cfg(any(test, feature = "probe"))]
+    fn test_contrast_scalars(&self) -> Option<crate::dsp::modules::contrast::ContrastScalars> { None }
+
     /// Update the operating mode for Kinetics modules. Default no-op for all other types.
     fn set_kinetics_mode(&mut self, _: crate::dsp::modules::kinetics::KineticsMode) {}
     /// Update the WellSource for Kinetics-GravityWell mode. Default no-op for all other types.
@@ -537,8 +591,8 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         display_name: "Phase Smear",
         color_lit: Color32::from_rgb(0x90, 0x60, 0xc8),
         color_dim: Color32::from_rgb(0x30, 0x20, 0x42),
-        num_curves: 3,
-        curve_labels: &["AMOUNT", "PEAK HOLD", "MIX"],
+        num_curves: 4,
+        curve_labels: &["AMOUNT", "PEAK HOLD", "MIX", "PHASE_RANGE"],
         supports_sidechain: true,
         wants_sidechain: false,
         panel_widget: None,
@@ -561,6 +615,9 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         curve_labels: &["THRESHOLD", "RATIO", "ATTACK", "RELEASE", "KNEE", "MIX"],
         supports_sidechain: false,
         wants_sidechain: false,
+        #[cfg(feature = "dev-build")]
+        panel_widget: Some(crate::editor::contrast_panel::draw as PanelWidgetFn),
+        #[cfg(not(feature = "dev-build"))]
         panel_widget: None,
         writes_bin_physics: false,
         needs_instantaneous_freq: false,
@@ -721,6 +778,9 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         curve_labels: &["AMOUNT", "REACH", "RATE", "THRESH", "AMPGATE", "MIX"],
         supports_sidechain: true,
         wants_sidechain: true,
+        #[cfg(feature = "dev-build")]
+        panel_widget: Some(crate::editor::modulate_panel::draw as PanelWidgetFn),
+        #[cfg(not(feature = "dev-build"))]
         panel_widget: None,
         writes_bin_physics: true,
         needs_instantaneous_freq: true,
@@ -738,6 +798,9 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         curve_labels: &["AMOUNT", "THRESH", "SPREAD", "RELEASE", "MIX"],
         supports_sidechain: false,
         wants_sidechain: false,
+        #[cfg(feature = "dev-build")]
+        panel_widget: Some(crate::editor::circuit_panel::draw as PanelWidgetFn),
+        #[cfg(not(feature = "dev-build"))]
         panel_widget: None,
         // Opt-in ahead of Phases 5c.4–5c.10 (Vactrol/Transformer/Sag/Drift/Slew/BiasFuzz).
         // v1 BBD/Schmitt/Crossover kernels do not yet write any BinPhysics field.
@@ -757,6 +820,9 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         curve_labels: &["AMOUNT", "THRESHOLD", "SPEED", "REACH", "MIX"],
         supports_sidechain: false,
         wants_sidechain: false,
+        #[cfg(feature = "dev-build")]
+        panel_widget: Some(crate::editor::life_panel::draw as PanelWidgetFn),
+        #[cfg(not(feature = "dev-build"))]
         panel_widget: None,
         writes_bin_physics: true,
         needs_instantaneous_freq: false,
@@ -791,6 +857,9 @@ pub fn module_spec(ty: ModuleType) -> &'static ModuleSpec {
         curve_labels: &["STRENGTH", "MASS", "REACH", "DAMPING", "MIX"],
         supports_sidechain: true,
         wants_sidechain: false,
+        #[cfg(feature = "dev-build")]
+        panel_widget: Some(crate::editor::kinetics_panel::draw as PanelWidgetFn),
+        #[cfg(not(feature = "dev-build"))]
         panel_widget: None,
         writes_bin_physics: true,
         needs_instantaneous_freq: false,

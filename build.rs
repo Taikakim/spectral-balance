@@ -60,6 +60,11 @@ fn main() {
     emit_curvature_fields(&mut f);
     emit_matrix_fields(&mut f);
     emit_past_scalar_fields(&mut f);
+    emit_life_scalar_fields(&mut f);
+    emit_kinetics_scalar_fields(&mut f);
+    emit_circuit_scalar_fields(&mut f);
+    emit_modulate_scalar_fields(&mut f);
+    emit_contrast_scalar_fields(&mut f);
     writeln!(f, "}}").unwrap();
     writeln!(f).unwrap();
 
@@ -72,6 +77,11 @@ fn main() {
     emit_curvature_inits(&mut f);
     emit_matrix_inits(&mut f);
     emit_past_scalar_inits(&mut f);
+    emit_life_scalar_inits(&mut f);
+    emit_kinetics_scalar_inits(&mut f);
+    emit_circuit_scalar_inits(&mut f);
+    emit_modulate_scalar_inits(&mut f);
+    emit_contrast_scalar_inits(&mut f);
     writeln!(f, "        }}").unwrap();
     writeln!(f, "    }}").unwrap();
     writeln!(f, "}}").unwrap();
@@ -94,6 +104,11 @@ fn main() {
     emit_curvature_map_entries(&mut f);
     emit_matrix_map_entries(&mut f);
     emit_past_scalar_map_entries(&mut f);
+    emit_life_scalar_map_entries(&mut f);
+    emit_kinetics_scalar_map_entries(&mut f);
+    emit_circuit_scalar_map_entries(&mut f);
+    emit_modulate_scalar_map_entries(&mut f);
+    emit_contrast_scalar_map_entries(&mut f);
     writeln!(f, "    }}").unwrap();
     writeln!(f, "}}").unwrap();
 
@@ -110,6 +125,16 @@ fn main() {
     emit_matrix_dispatch(&mut f);
     writeln!(f).unwrap();
     emit_past_scalar_dispatch(&mut f);
+    writeln!(f).unwrap();
+    emit_life_scalar_dispatch(&mut f);
+    writeln!(f).unwrap();
+    emit_kinetics_scalar_dispatch(&mut f);
+    writeln!(f).unwrap();
+    emit_circuit_scalar_dispatch(&mut f);
+    writeln!(f).unwrap();
+    emit_modulate_scalar_dispatch(&mut f);
+    writeln!(f).unwrap();
+    emit_contrast_scalar_dispatch(&mut f);
 }
 
 // ── Field declarations (bare, no initializers) ──────────────────────────────
@@ -525,6 +550,415 @@ fn emit_past_scalar_dispatch(f: &mut File) {
         writeln!(f, "        match $s {{").unwrap();
         for s in 0..NUM_SLOTS {
             writeln!(f, "            {s} => &$self.generated.s{s}_past_{suffix},").unwrap();
+        }
+        writeln!(f, "            _ => unreachable!(),").unwrap();
+        writeln!(f, "        }}").unwrap();
+        writeln!(f, "    }};").unwrap();
+        writeln!(f, "}}").unwrap();
+        writeln!(f).unwrap();
+    }
+}
+
+// ── Life Scalars: per-slot per-mode multiplier params ──────────────────────
+//
+// Eight new per-slot params for Life mode-specific multipliers (8 × 9 = 72 fields):
+//   - life_viscosity_scale       Linear 0..2, default 1.0
+//   - life_surface_tension_scale Linear 0..2, default 1.0
+//   - life_non_newtonian_scale   Linear 0..2, default 1.0
+//   - life_stiction_scale        Linear 0..2, default 1.0
+//   - life_yield_scale           Linear 0..2, default 1.0
+//   - life_capillary_scale       Linear 0..2, default 1.0
+//   - life_sandpaper_scale       Linear 0..2, default 1.0
+//   - life_brownian_scale        Linear 0..2, default 1.0
+//
+// See docs/superpowers/specs/2026-05-09-prototyping-exposable-scalars-design.md §1.
+
+const LIFE_SCALAR_SUFFIXES: &[&str] = &[
+    "viscosity_scale",
+    "surface_tension_scale",
+    "non_newtonian_scale",
+    "stiction_scale",
+    "yield_scale",
+    "capillary_scale",
+    "sandpaper_scale",
+    "brownian_scale",
+];
+
+fn emit_life_scalar_fields(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for suffix in LIFE_SCALAR_SUFFIXES {
+            writeln!(f, "    pub s{s}_life_{suffix}: FloatParam,").unwrap();
+        }
+    }
+}
+
+fn emit_life_scalar_inits(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for suffix in LIFE_SCALAR_SUFFIXES {
+            writeln!(
+                f,
+                "            s{s}_life_{suffix}: FloatParam::new(\"s{s}life_{suffix}\", 1.0f32, \
+                 FloatRange::Linear {{ min: 0.0f32, max: 2.0f32 }})\
+                 .with_smoother(SmoothingStyle::Linear(50.0))\
+                 .hide_in_generic_ui(),"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_life_scalar_map_entries(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for suffix in LIFE_SCALAR_SUFFIXES {
+            let id = format!("s{s}life_{suffix}");
+            let rust_name = format!("s{s}_life_{suffix}");
+            writeln!(
+                f,
+                "        out.push(({id:?}.to_string(), self.{rust_name}.as_ptr(), String::new()));"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_life_scalar_dispatch(f: &mut File) {
+    for suffix in LIFE_SCALAR_SUFFIXES {
+        writeln!(f, "macro_rules! life_{suffix}_dispatch {{").unwrap();
+        writeln!(f, "    ($self:expr, $s:expr) => {{").unwrap();
+        writeln!(f, "        match $s {{").unwrap();
+        for s in 0..NUM_SLOTS {
+            writeln!(f, "            {s} => &$self.generated.s{s}_life_{suffix},").unwrap();
+        }
+        writeln!(f, "            _ => unreachable!(),").unwrap();
+        writeln!(f, "        }}").unwrap();
+        writeln!(f, "    }};").unwrap();
+        writeln!(f, "}}").unwrap();
+        writeln!(f).unwrap();
+    }
+}
+
+// ── Kinetics Scalars: per-slot mode-specific tuning params ─────────────────
+//
+// Seven new per-slot params for Kinetics mode-specific scalars (7 × 9 = 63 fields):
+//   - kinetics_sc_envelope_tau_hops          Linear 0.5..4.0,  default 1.0
+//   - kinetics_sc_mass_rate_scale            Linear 0.5..10.0, default 5.0
+//   - kinetics_tuning_fork_min_sep           Linear 1.0..16.0, default 4.0  (used as usize)
+//   - kinetics_orbital_sat_half_window       Linear 4.0..32.0, default 16.0 (used as usize)
+//   - kinetics_orbital_peak_threshold_factor Linear 1.0..5.0,  default 2.0
+//   - kinetics_static_well_baseline          Linear 1.0..2.0,  default 1.05
+//   - kinetics_sc_well_threshold_frac        Linear 0.1..0.9,  default 0.4
+//
+// See docs/superpowers/specs/2026-05-09-prototyping-exposable-scalars-design.md §2.
+
+struct KineticsScalarSpec {
+    suffix:  &'static str,
+    default: f32,
+    min:     f32,
+    max:     f32,
+}
+
+const KINETICS_SCALAR_SPECS: &[KineticsScalarSpec] = &[
+    KineticsScalarSpec { suffix: "sc_envelope_tau_hops",          default: 1.0,  min: 0.5, max: 4.0  },
+    KineticsScalarSpec { suffix: "sc_mass_rate_scale",            default: 5.0,  min: 0.5, max: 10.0 },
+    KineticsScalarSpec { suffix: "tuning_fork_min_sep",           default: 4.0,  min: 1.0, max: 16.0 },
+    KineticsScalarSpec { suffix: "orbital_sat_half_window",       default: 16.0, min: 4.0, max: 32.0 },
+    KineticsScalarSpec { suffix: "orbital_peak_threshold_factor", default: 2.0,  min: 1.0, max: 5.0  },
+    KineticsScalarSpec { suffix: "static_well_baseline",          default: 1.05, min: 1.0, max: 2.0  },
+    KineticsScalarSpec { suffix: "sc_well_threshold_frac",        default: 0.4,  min: 0.1, max: 0.9  },
+];
+
+fn emit_kinetics_scalar_fields(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for spec in KINETICS_SCALAR_SPECS {
+            let suffix = spec.suffix;
+            writeln!(f, "    pub s{s}_kinetics_{suffix}: FloatParam,").unwrap();
+        }
+    }
+}
+
+fn emit_kinetics_scalar_inits(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for spec in KINETICS_SCALAR_SPECS {
+            let suffix  = spec.suffix;
+            let default = spec.default;
+            let min     = spec.min;
+            let max     = spec.max;
+            writeln!(
+                f,
+                "            s{s}_kinetics_{suffix}: FloatParam::new(\"s{s}kinetics_{suffix}\", {default}f32, \
+                 FloatRange::Linear {{ min: {min}f32, max: {max}f32 }})\
+                 .with_smoother(SmoothingStyle::Linear(50.0))\
+                 .hide_in_generic_ui(),"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_kinetics_scalar_map_entries(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for spec in KINETICS_SCALAR_SPECS {
+            let suffix    = spec.suffix;
+            let id        = format!("s{s}kinetics_{suffix}");
+            let rust_name = format!("s{s}_kinetics_{suffix}");
+            writeln!(
+                f,
+                "        out.push(({id:?}.to_string(), self.{rust_name}.as_ptr(), String::new()));"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_kinetics_scalar_dispatch(f: &mut File) {
+    for spec in KINETICS_SCALAR_SPECS {
+        let suffix = spec.suffix;
+        writeln!(f, "macro_rules! kinetics_{suffix}_dispatch {{").unwrap();
+        writeln!(f, "    ($self:expr, $s:expr) => {{").unwrap();
+        writeln!(f, "        match $s {{").unwrap();
+        for s in 0..NUM_SLOTS {
+            writeln!(f, "            {s} => &$self.generated.s{s}_kinetics_{suffix},").unwrap();
+        }
+        writeln!(f, "            _ => unreachable!(),").unwrap();
+        writeln!(f, "        }}").unwrap();
+        writeln!(f, "    }};").unwrap();
+        writeln!(f, "}}").unwrap();
+        writeln!(f).unwrap();
+    }
+}
+
+// ── Circuit Scalars: per-slot Vactrol time-constant params ─────────────────
+//
+// Two new per-slot params for Circuit Vactrol mode (2 × 9 = 18 fields):
+//   - circuit_vactrol_fast_ms  Linear 1.0..50.0,    default 8.0   (converted ms→s in kernel)
+//   - circuit_vactrol_slow_ms  Linear 50.0..1000.0, default 250.0 (converted ms→s in kernel)
+//
+// See docs/superpowers/specs/2026-05-09-prototyping-exposable-scalars-design.md §3.
+
+struct CircuitScalarSpec {
+    suffix:  &'static str,
+    default: f32,
+    min:     f32,
+    max:     f32,
+    unit:    &'static str,
+}
+
+const CIRCUIT_SCALAR_SPECS: &[CircuitScalarSpec] = &[
+    CircuitScalarSpec { suffix: "vactrol_fast_ms", default: 8.0,   min: 1.0,  max: 50.0,   unit: " ms" },
+    CircuitScalarSpec { suffix: "vactrol_slow_ms", default: 250.0, min: 50.0, max: 1000.0, unit: " ms" },
+];
+
+fn emit_circuit_scalar_fields(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for spec in CIRCUIT_SCALAR_SPECS {
+            let suffix = spec.suffix;
+            writeln!(f, "    pub s{s}_circuit_{suffix}: FloatParam,").unwrap();
+        }
+    }
+}
+
+fn emit_circuit_scalar_inits(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for spec in CIRCUIT_SCALAR_SPECS {
+            let suffix  = spec.suffix;
+            let default = spec.default;
+            let min     = spec.min;
+            let max     = spec.max;
+            let unit    = spec.unit;
+            writeln!(
+                f,
+                "            s{s}_circuit_{suffix}: FloatParam::new(\"s{s}circuit_{suffix}\", {default}f32, \
+                 FloatRange::Linear {{ min: {min}f32, max: {max}f32 }})\
+                 .with_smoother(SmoothingStyle::Linear(50.0))\
+                 .with_unit({unit:?})\
+                 .hide_in_generic_ui(),"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_circuit_scalar_map_entries(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for spec in CIRCUIT_SCALAR_SPECS {
+            let suffix    = spec.suffix;
+            let id        = format!("s{s}circuit_{suffix}");
+            let rust_name = format!("s{s}_circuit_{suffix}");
+            writeln!(
+                f,
+                "        out.push(({id:?}.to_string(), self.{rust_name}.as_ptr(), String::new()));"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_circuit_scalar_dispatch(f: &mut File) {
+    for spec in CIRCUIT_SCALAR_SPECS {
+        let suffix = spec.suffix;
+        writeln!(f, "macro_rules! circuit_{suffix}_dispatch {{").unwrap();
+        writeln!(f, "    ($self:expr, $s:expr) => {{").unwrap();
+        writeln!(f, "        match $s {{").unwrap();
+        for s in 0..NUM_SLOTS {
+            writeln!(f, "            {s} => &$self.generated.s{s}_circuit_{suffix},").unwrap();
+        }
+        writeln!(f, "            _ => unreachable!(),").unwrap();
+        writeln!(f, "        }}").unwrap();
+        writeln!(f, "    }};").unwrap();
+        writeln!(f, "}}").unwrap();
+        writeln!(f).unwrap();
+    }
+}
+
+// ── Modulate Scalars: per-slot PllTear tuning params ──────────────────────────
+//
+// Two new per-slot params for Modulate PllTear mode (2 × 9 = 18 fields):
+//   - modulate_damping        Linear 0.1..2.0,          default 0.707
+//   - modulate_tear_angle_rad Linear π/8..π (radians),  default π/2 ≈ 1.5707963
+//
+// See docs/superpowers/specs/2026-05-09-prototyping-exposable-scalars-design.md §4.
+
+struct ModulateScalarSpec {
+    suffix:  &'static str,
+    default: f32,
+    min:     f32,
+    max:     f32,
+    unit:    &'static str,
+}
+
+const MODULATE_SCALAR_SPECS: &[ModulateScalarSpec] = &[
+    ModulateScalarSpec { suffix: "damping",        default: 0.707,      min: 0.1,        max: 2.0,        unit: "" },
+    ModulateScalarSpec { suffix: "tear_angle_rad", default: 1.5707963,  min: 0.39269908, max: 3.14159265, unit: " rad" },
+];
+
+fn emit_modulate_scalar_fields(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for spec in MODULATE_SCALAR_SPECS {
+            let suffix = spec.suffix;
+            writeln!(f, "    pub s{s}_modulate_{suffix}: FloatParam,").unwrap();
+        }
+    }
+}
+
+fn emit_modulate_scalar_inits(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for spec in MODULATE_SCALAR_SPECS {
+            let suffix  = spec.suffix;
+            let default = spec.default;
+            let min     = spec.min;
+            let max     = spec.max;
+            let unit    = spec.unit;
+            writeln!(
+                f,
+                "            s{s}_modulate_{suffix}: FloatParam::new(\"s{s}modulate_{suffix}\", {default}f32, \
+                 FloatRange::Linear {{ min: {min}f32, max: {max}f32 }})\
+                 .with_smoother(SmoothingStyle::Linear(50.0))\
+                 .with_unit({unit:?})\
+                 .hide_in_generic_ui(),"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_modulate_scalar_map_entries(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for spec in MODULATE_SCALAR_SPECS {
+            let suffix    = spec.suffix;
+            let id        = format!("s{s}modulate_{suffix}");
+            let rust_name = format!("s{s}_modulate_{suffix}");
+            writeln!(
+                f,
+                "        out.push(({id:?}.to_string(), self.{rust_name}.as_ptr(), String::new()));"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_modulate_scalar_dispatch(f: &mut File) {
+    for spec in MODULATE_SCALAR_SPECS {
+        let suffix = spec.suffix;
+        writeln!(f, "macro_rules! modulate_{suffix}_dispatch {{").unwrap();
+        writeln!(f, "    ($self:expr, $s:expr) => {{").unwrap();
+        writeln!(f, "        match $s {{").unwrap();
+        for s in 0..NUM_SLOTS {
+            writeln!(f, "            {s} => &$self.generated.s{s}_modulate_{suffix},").unwrap();
+        }
+        writeln!(f, "            _ => unreachable!(),").unwrap();
+        writeln!(f, "        }}").unwrap();
+        writeln!(f, "    }};").unwrap();
+        writeln!(f, "}}").unwrap();
+        writeln!(f).unwrap();
+    }
+}
+
+// ── Contrast Scalars: per-slot Spatial/Tilt tuning params ─────────────────
+//
+// Three per-slot params for Contrast mode-specific scalars (3 × 9 = 27 fields):
+//   - contrast_mean_window_st        Linear 0.1..48.0, default 1.0  (Spatial only)
+//   - contrast_tilt_slope_db_per_oct Linear -6.0..6.0, default 0.0  (Tilt only)
+//   - contrast_gr_smoothing_st       Linear 0.1..48.0, default 1.0  (all modes)
+//
+// See docs/superpowers/specs/2026-05-09-prototyping-exposable-scalars-design.md §5.
+
+struct ContrastScalarSpec {
+    suffix:  &'static str,
+    default: f32,
+    min:     f32,
+    max:     f32,
+    unit:    &'static str,
+}
+
+const CONTRAST_SCALAR_SPECS: &[ContrastScalarSpec] = &[
+    ContrastScalarSpec { suffix: "mean_window_st",        default: 1.0, min: 0.1,  max: 48.0, unit: " st" },
+    ContrastScalarSpec { suffix: "tilt_slope_db_per_oct", default: 0.0, min: -6.0, max: 6.0,  unit: " dB/oct" },
+    ContrastScalarSpec { suffix: "gr_smoothing_st",       default: 1.0, min: 0.1,  max: 48.0, unit: " st" },
+];
+
+fn emit_contrast_scalar_fields(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for spec in CONTRAST_SCALAR_SPECS {
+            let suffix = spec.suffix;
+            writeln!(f, "    pub s{s}_contrast_{suffix}: FloatParam,").unwrap();
+        }
+    }
+}
+
+fn emit_contrast_scalar_inits(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for spec in CONTRAST_SCALAR_SPECS {
+            let suffix  = spec.suffix;
+            let default = spec.default;
+            let min     = spec.min;
+            let max     = spec.max;
+            let unit    = spec.unit;
+            writeln!(
+                f,
+                "            s{s}_contrast_{suffix}: FloatParam::new(\"s{s}contrast_{suffix}\", {default}f32, \
+                 FloatRange::Linear {{ min: {min}f32, max: {max}f32 }})\
+                 .with_smoother(SmoothingStyle::Linear(50.0))\
+                 .with_unit({unit:?})\
+                 .hide_in_generic_ui(),"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_contrast_scalar_map_entries(f: &mut File) {
+    for s in 0..NUM_SLOTS {
+        for spec in CONTRAST_SCALAR_SPECS {
+            let suffix    = spec.suffix;
+            let id        = format!("s{s}contrast_{suffix}");
+            let rust_name = format!("s{s}_contrast_{suffix}");
+            writeln!(
+                f,
+                "        out.push(({id:?}.to_string(), self.{rust_name}.as_ptr(), String::new()));"
+            ).unwrap();
+        }
+    }
+}
+
+fn emit_contrast_scalar_dispatch(f: &mut File) {
+    for spec in CONTRAST_SCALAR_SPECS {
+        let suffix = spec.suffix;
+        writeln!(f, "macro_rules! contrast_{suffix}_dispatch {{").unwrap();
+        writeln!(f, "    ($self:expr, $s:expr) => {{").unwrap();
+        writeln!(f, "        match $s {{").unwrap();
+        for s in 0..NUM_SLOTS {
+            writeln!(f, "            {s} => &$self.generated.s{s}_contrast_{suffix},").unwrap();
         }
         writeln!(f, "            _ => unreachable!(),").unwrap();
         writeln!(f, "        }}").unwrap();

@@ -344,6 +344,116 @@ impl FxMatrix {
         self.slots.get(slot)?.as_ref()?.test_past_scalars()
     }
 
+    /// Propagate per-slot Life scalars from params to LifeModule instances.
+    /// Called once per audio block (before process_hop).
+    pub fn set_life_scalars(&mut self, scalars: &[crate::dsp::modules::life::LifeScalars; 9]) {
+        for s in 0..MAX_SLOTS {
+            if let Some(ref mut m) = self.slots[s] {
+                m.set_life_scalars(scalars[s]);
+            }
+        }
+    }
+
+    /// Test-only accessor: read back the scalars currently held by a Life slot.
+    /// Returns `None` for empty slots or non-Life modules.
+    #[cfg(any(test, feature = "probe"))]
+    pub fn test_life_scalars(
+        &self,
+        slot: usize,
+    ) -> Option<crate::dsp::modules::life::LifeScalars> {
+        self.slots.get(slot)?.as_ref()?.test_life_scalars()
+    }
+
+    /// Propagate per-slot Kinetics scalars from params to KineticsModule instances.
+    /// Called once per audio block (before process_hop).
+    pub fn set_kinetics_scalars(&mut self, scalars: &[crate::dsp::modules::kinetics::KineticsScalars; 9]) {
+        for s in 0..MAX_SLOTS {
+            if let Some(ref mut m) = self.slots[s] {
+                m.set_kinetics_scalars(scalars[s]);
+            }
+        }
+    }
+
+    /// Test-only accessor: read back the scalars currently held by a Kinetics slot.
+    /// Returns `None` for empty slots or non-Kinetics modules.
+    #[cfg(any(test, feature = "probe"))]
+    pub fn test_kinetics_scalars(
+        &self,
+        slot: usize,
+    ) -> Option<crate::dsp::modules::kinetics::KineticsScalars> {
+        self.slots.get(slot)?.as_ref()?.test_kinetics_scalars()
+    }
+
+    /// Propagate per-slot Circuit scalars from params to CircuitModule instances.
+    /// Called once per audio block (before process_hop).
+    pub fn set_circuit_scalars(&mut self, scalars: &[crate::dsp::modules::circuit::CircuitScalars; 9]) {
+        for s in 0..MAX_SLOTS {
+            if let Some(ref mut m) = self.slots[s] {
+                m.set_circuit_scalars(scalars[s]);
+            }
+        }
+    }
+
+    /// Test-only accessor: read back the scalars currently held by a Circuit slot.
+    /// Returns `None` for empty slots or non-Circuit modules.
+    #[cfg(any(test, feature = "probe"))]
+    pub fn test_circuit_scalars(
+        &self,
+        slot: usize,
+    ) -> Option<crate::dsp::modules::circuit::CircuitScalars> {
+        self.slots.get(slot)?.as_ref()?.test_circuit_scalars()
+    }
+
+    /// Propagate per-slot Modulate scalars from params to ModulateModule instances.
+    /// Called once per audio block (before process_hop).
+    pub fn set_modulate_scalars(&mut self, scalars: &[crate::dsp::modules::modulate::ModulateScalars; 9]) {
+        for s in 0..MAX_SLOTS {
+            if let Some(ref mut m) = self.slots[s] {
+                m.set_modulate_scalars(scalars[s]);
+            }
+        }
+    }
+
+    /// Test-only accessor: read back the scalars currently held by a Modulate slot.
+    /// Returns `None` for empty slots or non-Modulate modules.
+    #[cfg(any(test, feature = "probe"))]
+    pub fn test_modulate_scalars(
+        &self,
+        slot: usize,
+    ) -> Option<crate::dsp::modules::modulate::ModulateScalars> {
+        self.slots.get(slot)?.as_ref()?.test_modulate_scalars()
+    }
+
+    /// Propagate per-slot ContrastMode from params to ContrastModule instances.
+    /// Called once per audio block (before process_hop).
+    pub fn set_contrast_modes(&mut self, modes: &[crate::dsp::modules::contrast::ContrastMode; 9]) {
+        for s in 0..MAX_SLOTS {
+            if let Some(ref mut m) = self.slots[s] {
+                m.set_contrast_mode(modes[s]);
+            }
+        }
+    }
+
+    /// Propagate per-slot Contrast scalars from params to ContrastModule instances.
+    /// Called once per audio block (before process_hop).
+    pub fn set_contrast_scalars(&mut self, scalars: &[crate::dsp::modules::contrast::ContrastScalars; 9]) {
+        for s in 0..MAX_SLOTS {
+            if let Some(ref mut m) = self.slots[s] {
+                m.set_contrast_scalars(scalars[s]);
+            }
+        }
+    }
+
+    /// Test-only accessor: read back the scalars currently held by a Contrast slot.
+    /// Returns `None` for empty slots or non-Contrast modules.
+    #[cfg(any(test, feature = "probe"))]
+    pub fn test_contrast_scalars(
+        &self,
+        slot: usize,
+    ) -> Option<crate::dsp::modules::contrast::ContrastScalars> {
+        self.slots.get(slot)?.as_ref()?.test_contrast_scalars()
+    }
+
     /// Propagate per-slot KineticsMode from params to KineticsModule instances.
     /// Called once per audio block (before process_hop).
     pub fn set_kinetics_modes(&mut self, modes: &[crate::dsp::modules::kinetics::KineticsMode; 9]) {

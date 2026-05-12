@@ -12,6 +12,7 @@ use crate::dsp::modules::circuit::CircuitMode;
 use crate::dsp::modules::life::LifeMode;
 use crate::dsp::modules::past::{PastMode, SortKey};
 use crate::dsp::modules::modulate::ModulateMode;
+use crate::dsp::modules::contrast::ContrastMode;
 use crate::dsp::modules::punch::PunchMode;
 use crate::dsp::modules::rhythm::{ArpGrid, ArpTriggerSource, RhythmMode};
 
@@ -220,6 +221,10 @@ pub struct SpectralForgeParams {
     /// Per-slot Decay / Stability / Area sort key for `PastModule`'s DecaySorter sub-mode.
     /// Single mutex over the array so audio thread takes one lock per block.
     pub slot_past_sort_key: Arc<Mutex<[SortKey; 9]>>,
+
+    /// ContrastMode per slot (Spatial / Temporal / Tilt) for `ContrastModule`.
+    /// Single mutex over the array so audio thread takes one lock per block.
+    pub slot_contrast_mode: Arc<Mutex<[ContrastMode; 9]>>,
 
     /// KineticsMode per slot (only meaningful for Kinetics module slots).
     /// Single mutex over the array (matches `slot_past_mode`) so audio thread takes one lock per block.
@@ -448,6 +453,7 @@ impl Default for SpectralForgeParams {
             slot_life_mode:    Arc::new(Mutex::new([LifeMode::default();    9])),
             slot_past_mode:     Arc::new(Mutex::new([PastMode::default(); 9])),
             slot_past_sort_key: Arc::new(Mutex::new([SortKey::default();  9])),
+            slot_contrast_mode: Arc::new(Mutex::new([ContrastMode::default(); 9])),
             slot_kinetics_mode:        Arc::new(Mutex::new([crate::dsp::modules::kinetics::KineticsMode::default(); 9])),
             slot_kinetics_well_source: Arc::new(Mutex::new([crate::dsp::modules::kinetics::WellSource::default();   9])),
             slot_kinetics_mass_source: Arc::new(Mutex::new([crate::dsp::modules::kinetics::MassSource::default();   9])),
@@ -760,6 +766,160 @@ impl SpectralForgeParams {
         Some(past_soft_clip_dispatch!(self, slot))
     }
 
+    /// Per-slot Life Viscosity scale multiplier.
+    pub fn life_viscosity_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_viscosity_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Surface Tension scale multiplier.
+    pub fn life_surface_tension_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_surface_tension_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Non-Newtonian scale multiplier.
+    pub fn life_non_newtonian_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_non_newtonian_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Stiction scale multiplier.
+    pub fn life_stiction_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_stiction_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Yield scale multiplier.
+    pub fn life_yield_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_yield_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Capillary scale multiplier.
+    pub fn life_capillary_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_capillary_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Sandpaper scale multiplier.
+    pub fn life_sandpaper_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_sandpaper_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Life Brownian scale multiplier.
+    pub fn life_brownian_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(life_brownian_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Kinetics sidechain envelope tau (hops).
+    pub fn kinetics_sc_envelope_tau_hops_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(kinetics_sc_envelope_tau_hops_dispatch!(self, slot))
+    }
+
+    /// Per-slot Kinetics sidechain mass rate scale.
+    pub fn kinetics_sc_mass_rate_scale_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(kinetics_sc_mass_rate_scale_dispatch!(self, slot))
+    }
+
+    /// Per-slot Kinetics tuning fork minimum bin separation (integer-valued f32).
+    pub fn kinetics_tuning_fork_min_sep_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(kinetics_tuning_fork_min_sep_dispatch!(self, slot))
+    }
+
+    /// Per-slot Kinetics orbital phase half-window in bins (integer-valued f32).
+    pub fn kinetics_orbital_sat_half_window_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(kinetics_orbital_sat_half_window_dispatch!(self, slot))
+    }
+
+    /// Per-slot Kinetics orbital peak threshold factor.
+    pub fn kinetics_orbital_peak_threshold_factor_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(kinetics_orbital_peak_threshold_factor_dispatch!(self, slot))
+    }
+
+    /// Per-slot Kinetics static well baseline.
+    pub fn kinetics_static_well_baseline_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(kinetics_static_well_baseline_dispatch!(self, slot))
+    }
+
+    /// Per-slot Kinetics sidechain well threshold fraction.
+    pub fn kinetics_sc_well_threshold_frac_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(kinetics_sc_well_threshold_frac_dispatch!(self, slot))
+    }
+
+    /// Per-slot Circuit Vactrol fast time constant (ms).
+    pub fn circuit_vactrol_fast_ms_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(circuit_vactrol_fast_ms_dispatch!(self, slot))
+    }
+
+    /// Per-slot Circuit Vactrol slow time constant (ms).
+    pub fn circuit_vactrol_slow_ms_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(circuit_vactrol_slow_ms_dispatch!(self, slot))
+    }
+
+    /// Per-slot Modulate PllTear damping factor.
+    pub fn modulate_damping_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(modulate_damping_dispatch!(self, slot))
+    }
+
+    /// Per-slot Modulate PllTear tear angle (radians).
+    pub fn modulate_tear_angle_rad_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(modulate_tear_angle_rad_dispatch!(self, slot))
+    }
+
+    /// Per-slot Contrast mean window width (semitones, Spatial mode).
+    pub fn contrast_mean_window_st_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(contrast_mean_window_st_dispatch!(self, slot))
+    }
+
+    /// Per-slot Contrast tilt slope (dB/octave, Tilt mode).
+    pub fn contrast_tilt_slope_db_per_oct_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(contrast_tilt_slope_db_per_oct_dispatch!(self, slot))
+    }
+
+    /// Per-slot Contrast GR smoothing width (semitones, all modes).
+    pub fn contrast_gr_smoothing_st_param(&self, slot: usize) -> Option<&FloatParam> {
+        use crate::param_ids::NUM_SLOTS;
+        if slot >= NUM_SLOTS { return None; }
+        Some(contrast_gr_smoothing_st_dispatch!(self, slot))
+    }
+
     /// Reset every automatable Param to its nih-plug default via the ParamSetter.
     ///
     /// Iterates `param_map()` using the raw GuiContext API so host automation is properly
@@ -1012,6 +1172,7 @@ unsafe impl Params for SpectralForgeParams {
         persist_out!("slot_life_mode",     slot_life_mode);
         persist_out!("slot_past_mode",     slot_past_mode);
         persist_out!("slot_past_sort_key", slot_past_sort_key);
+        persist_out!("slot_contrast_mode",          slot_contrast_mode);
         persist_out!("slot_kinetics_mode",         slot_kinetics_mode);
         persist_out!("slot_kinetics_well_source",  slot_kinetics_well_source);
         persist_out!("slot_kinetics_mass_source",  slot_kinetics_mass_source);
@@ -1077,6 +1238,7 @@ unsafe impl Params for SpectralForgeParams {
                 "slot_life_mode"      => persist_in!("slot_life_mode",      slot_life_mode,      data),
                 "slot_past_mode"      => persist_in!("slot_past_mode",      slot_past_mode,      data),
                 "slot_past_sort_key"  => persist_in!("slot_past_sort_key",  slot_past_sort_key,  data),
+                "slot_contrast_mode"          => persist_in!("slot_contrast_mode",          slot_contrast_mode,          data),
                 "slot_kinetics_mode"         => persist_in!("slot_kinetics_mode",         slot_kinetics_mode,         data),
                 "slot_kinetics_well_source"  => persist_in!("slot_kinetics_well_source",  slot_kinetics_well_source,  data),
                 "slot_kinetics_mass_source"  => persist_in!("slot_kinetics_mass_source",  slot_kinetics_mass_source,  data),

@@ -17,6 +17,16 @@ pub mod mod_ring;
 pub use mod_ring::{ModRingState, ModRingToggle};
 pub mod rhythm_panel;
 pub mod past_panel;
+#[cfg(feature = "dev-build")]
+pub mod life_panel;
+#[cfg(feature = "dev-build")]
+pub mod kinetics_panel;
+#[cfg(feature = "dev-build")]
+pub mod circuit_panel;
+#[cfg(feature = "dev-build")]
+pub mod modulate_panel;
+#[cfg(feature = "dev-build")]
+pub mod contrast_panel;
 pub mod help_box;
 
 /// Show a tooltip for `response` only after the pointer has been stationary
